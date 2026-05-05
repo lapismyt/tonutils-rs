@@ -1,6 +1,6 @@
 use crate::adnl::helper_types::AdnlError;
-use thiserror::Error;
 use crate::tl::TlError;
+use thiserror::Error;
 use tower::Service;
 
 use crate::tl::{request::WrappedRequest, response::Response};
@@ -16,9 +16,18 @@ pub enum LiteError {
     #[error("ADNL error")]
     AdnlError(#[from] AdnlError),
     #[error("Unknown error")]
-    UnknownError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>)
+    UnknownError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
-pub trait LiteService: Service<WrappedRequest, Response = Response, Error = LiteError> where Self::Future: Send + 'static {}
+pub trait LiteService: Service<WrappedRequest, Response = Response, Error = LiteError>
+where
+    Self::Future: Send + 'static,
+{
+}
 
-impl<T> LiteService for T where T: Service<WrappedRequest, Response = Response, Error = LiteError>, T::Future: Send + 'static {}
+impl<T> LiteService for T
+where
+    T: Service<WrappedRequest, Response = Response, Error = LiteError>,
+    T::Future: Send + 'static,
+{
+}

@@ -1,5 +1,5 @@
-use sha2::{Digest, Sha256};
 use crate::adnl::crypto::PublicKey;
+use sha2::{Digest, Sha256};
 use std::{array::TryFromSliceError, io::Error};
 use thiserror::Error;
 

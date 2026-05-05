@@ -34,7 +34,10 @@ impl AdnlPeer<TcpStream> {
         let transport = TcpStream::connect(server_address).await?;
         log::debug!("Connected to {:?}, handshaking...", transport.peer_addr());
         let client = Self::perform_handshake(transport, server_public).await?;
-        log::debug!("Handshake completed, connected to {:?}", client.connection_info.remote_address());
+        log::debug!(
+            "Handshake completed, connected to {:?}",
+            client.connection_info.remote_address()
+        );
         Ok(client)
     }
 }

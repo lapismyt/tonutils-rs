@@ -1,6 +1,7 @@
 //! Integration tests and additional test coverage for TVM modules
 
 use crate::tvm::*;
+use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
 
 /// Helper function to create a cell with specific data
@@ -115,10 +116,14 @@ fn test_boc_with_references() {
         deserialized.reference(0),
         deserialized.reference(1),
         root.reference(0),
-        root.reference(1)
+        root.reference(1),
     ) {
         println!("Original refs: {:?}, {:?}", o_ref_0.hash(), o_ref_1.hash());
-        println!("Deserialized refs: {:?}, {:?}", d_ref_0.hash(), d_ref_1.hash());
+        println!(
+            "Deserialized refs: {:?}, {:?}",
+            d_ref_0.hash(),
+            d_ref_1.hash()
+        );
     }
 
     assert_eq!(root.hash(), deserialized.hash());
@@ -197,13 +202,151 @@ fn test_var_uint_operations() {
 
     let cell = builder.build().unwrap();
 
-    println!("Var uint cell bits: {}, data: {:?}", cell.bit_len(), cell.data());
+    println!(
+        "Var uint cell bits: {}, data: {:?}",
+        cell.bit_len(),
+        cell.data()
+    );
 
     let mut slice = Slice::new(cell);
     let var_uint = slice.load_var_uint(4).unwrap();
     println!("Loaded var_uint: {}", var_uint);
 
     assert_eq!(var_uint, 0x42);
+}
+
+#[test]
+fn test_big_uint_roundtrips_for_builder_and_cell_builder() {
+    for bits in [0usize, 1, 64, 65, 256, 267, 1023] {
+        let value = big_uint_value_for_bits(bits);
+
+        let mut cell_builder = CellBuilder::new();
+        cell_builder.store_big_uint(&value, bits).unwrap();
+        let mut slice = Slice::new(cell_builder.build().unwrap());
+        assert_eq!(slice.load_big_uint(bits).unwrap(), value);
+
+        let mut builder = Builder::new();
+        builder.store_big_uint(&value, bits).unwrap();
+        let mut slice = builder.to_slice().unwrap();
+        assert_eq!(slice.load_big_uint(bits).unwrap(), value);
+    }
+}
+
+#[test]
+fn test_big_int_roundtrips() {
+    for bits in [1usize, 8, 65, 257] {
+        let min = -(BigInt::from(BigUint::from(1u8) << (bits - 1)));
+        let max = BigInt::from((BigUint::from(1u8) << (bits - 1)) - BigUint::from(1u8));
+        let mut values = vec![BigInt::from(0), BigInt::from(-1), min, max];
+        if bits > 1 {
+            values.push(BigInt::from(1));
+        }
+
+        for value in values {
+            let mut cell_builder = CellBuilder::new();
+            cell_builder.store_big_int(&value, bits).unwrap();
+            let mut slice = Slice::new(cell_builder.build().unwrap());
+            assert_eq!(slice.load_big_int(bits).unwrap(), value);
+
+            let mut builder = Builder::new();
+            builder.store_big_int(&value, bits).unwrap();
+            let mut slice = builder.to_slice().unwrap();
+            assert_eq!(slice.load_big_int(bits).unwrap(), value);
+        }
+    }
+}
+
+#[test]
+fn test_big_integer_bit_layout_for_partial_bytes() {
+    let mut builder = CellBuilder::new();
+    builder.store_big_uint(&BigUint::from(0b101u8), 3).unwrap();
+    let cell = builder.build().unwrap();
+    assert_eq!(cell.bit_len(), 3);
+    assert_eq!(cell.data(), &[0b1010_0000]);
+
+    let mut builder = CellBuilder::new();
+    builder
+        .store_big_uint(&BigUint::from(0b1_0000_0001u16), 9)
+        .unwrap();
+    let cell = builder.build().unwrap();
+    assert_eq!(cell.bit_len(), 9);
+    assert_eq!(cell.data(), &[0b1000_0000, 0b1000_0000]);
+}
+
+#[test]
+fn test_big_uint_matches_address_bit_layout() {
+    let addr = Address::new(-1, [0x5Au8; 32]);
+    let mut address_builder = Builder::new();
+    address_builder.store_address(Some(&addr)).unwrap();
+    let address_cell = address_builder.build().unwrap();
+
+    let mut address_slice = Slice::new(address_cell.clone());
+    let address_bits = address_slice.load_big_uint(267).unwrap();
+
+    let mut integer_builder = CellBuilder::new();
+    integer_builder.store_big_uint(&address_bits, 267).unwrap();
+    let integer_cell = integer_builder.build().unwrap();
+
+    assert_eq!(integer_cell.bit_len(), 267);
+    assert_eq!(integer_cell.data(), address_cell.data());
+}
+
+#[test]
+fn test_big_integer_rejects_overflow_and_zero_width_nonzero() {
+    let mut builder = CellBuilder::new();
+    assert!(builder.store_big_uint(&BigUint::from(8u8), 3).is_err());
+    assert!(builder.store_big_uint(&BigUint::from(1u8), 0).is_err());
+    assert!(builder.store_big_int(&BigInt::from(128), 8).is_err());
+    assert!(builder.store_big_int(&BigInt::from(-129), 8).is_err());
+    assert!(builder.store_big_int(&BigInt::from(1), 0).is_err());
+}
+
+#[test]
+fn test_big_integer_reader_underflow_errors() {
+    let mut builder = CellBuilder::new();
+    builder.store_big_uint(&BigUint::from(0b101u8), 3).unwrap();
+    let mut slice = Slice::new(builder.build().unwrap());
+
+    assert!(slice.load_big_uint(4).is_err());
+    assert_eq!(slice.remaining_bits(), 3);
+}
+
+#[test]
+fn test_var_big_uint_roundtrips() {
+    let values = [
+        BigUint::from(0u8),
+        BigUint::from(0xABu8),
+        BigUint::from_bytes_be(&[0x11; 15]),
+        BigUint::from_bytes_be(&[0x22; 100]),
+    ];
+
+    for value in values {
+        let mut builder = Builder::new();
+        builder.store_var_big_uint(&value, 8).unwrap();
+        let mut slice = builder.to_slice().unwrap();
+        assert_eq!(slice.load_var_big_uint(8).unwrap(), value);
+    }
+}
+
+#[test]
+fn test_var_big_uint_rejects_length_overflow() {
+    let value = BigUint::from_bytes_be(&[0xFF; 16]);
+    let mut builder = Builder::new();
+    assert!(builder.store_var_big_uint(&value, 4).is_err());
+}
+
+#[test]
+fn test_coins_reject_16_byte_value() {
+    let mut builder = Builder::new();
+    assert!(builder.store_coins(u128::MAX).is_err());
+}
+
+fn big_uint_value_for_bits(bits: usize) -> BigUint {
+    match bits {
+        0 => BigUint::from(0u8),
+        1 => BigUint::from(1u8),
+        _ => (BigUint::from(1u8) << (bits - 1)) | BigUint::from(0xA5u8),
+    }
 }
 
 /// Test external address handling

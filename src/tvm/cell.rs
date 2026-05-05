@@ -4,6 +4,7 @@
 //! of data and maintain up to 4 references to other cells.
 
 use anyhow::{Result, bail};
+use num_bigint::{BigInt, BigUint};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
@@ -66,6 +67,13 @@ impl Cell {
                 data.len(),
                 bit_len
             );
+        }
+
+        let mut data = data[..required_bytes].to_vec();
+        if bit_len % 8 != 0 {
+            let unused_bits = 8 - (bit_len % 8);
+            let mask = 0xFFu8 << unused_bits;
+            data[required_bytes - 1] &= mask;
         }
 
         Ok(Self {
@@ -248,7 +256,7 @@ impl Default for Cell {
 /// # Example
 ///
 /// ```rust
-/// use tonutils_rs::tvm::CellBuilder;
+/// use tonutils::tvm::CellBuilder;
 ///
 /// let mut builder = CellBuilder::new();
 /// builder.store_u32(0x12345678).unwrap();
@@ -269,6 +277,26 @@ impl CellBuilder {
             bit_len: 0,
             references: Vec::new(),
         }
+    }
+
+    /// Returns the number of bits already stored in this builder.
+    pub fn bit_len(&self) -> usize {
+        self.bit_len
+    }
+
+    /// Returns the number of references already stored in this builder.
+    pub fn ref_count(&self) -> usize {
+        self.references.len()
+    }
+
+    /// Returns the number of bits that can still be stored in this builder.
+    pub fn available_bits(&self) -> usize {
+        MAX_CELL_BITS.saturating_sub(self.bit_len)
+    }
+
+    /// Returns the number of references that can still be stored in this builder.
+    pub fn available_refs(&self) -> usize {
+        MAX_CELL_REFS.saturating_sub(self.references.len())
     }
 
     /// Stores bits from a byte slice
@@ -331,24 +359,74 @@ impl CellBuilder {
     /// Stores a specific number of bits from a u64
     /// Stores the least significant `bits` of the value in big-endian bit order
     pub fn store_uint(&mut self, value: u64, bits: usize) -> Result<&mut Self> {
-        if bits > 64 {
-            bail!("Cannot store more than 64 bits from u64");
+        self.store_big_uint(&BigUint::from(value), bits)
+    }
+
+    /// Stores an unsigned integer with an exact fixed bit length.
+    pub fn store_big_uint(&mut self, value: &BigUint, bits: usize) -> Result<&mut Self> {
+        if bits > MAX_CELL_BITS {
+            bail!("Cannot store {} bits: exceeds maximum cell size", bits);
+        }
+        if bits > self.available_bits() {
+            bail!(
+                "Cannot store {} bits: only {} bits available",
+                bits,
+                self.available_bits()
+            );
+        }
+        if bits == 0 {
+            if value == &BigUint::from(0u8) {
+                return Ok(self);
+            }
+            bail!("Cannot store non-zero unsigned integer in 0 bits");
+        }
+        if value.bits() as usize > bits {
+            bail!("Unsigned integer does not fit in {} bits", bits);
         }
 
-        // Extract the least significant `bits` from value and store them
-        // We need to pack these bits into bytes and then store them with the right bit alignment
+        let value_bytes = value.to_bytes_be();
         let mut temp = vec![0u8; (bits + 7) / 8];
+        let start = temp.len().saturating_sub(value_bytes.len());
+        temp[start..].copy_from_slice(&value_bytes);
 
-        // Store bits in big-endian order (MSB first)
-        for i in 0..bits {
-            if (value & (1u64 << (bits - 1 - i))) != 0 {
-                let byte_idx = i / 8;
-                let bit_idx = 7 - (i % 8); // MSB first within each byte
-                temp[byte_idx] |= 1 << bit_idx;
-            }
+        let unused_low_bits = temp.len() * 8 - bits;
+        if unused_low_bits > 0 {
+            shift_left_in_place(&mut temp, unused_low_bits);
         }
 
         self.store_bits(&temp, bits)
+    }
+
+    /// Stores a signed integer with an exact fixed bit length using two's complement.
+    pub fn store_big_int(&mut self, value: &BigInt, bits: usize) -> Result<&mut Self> {
+        if bits > MAX_CELL_BITS {
+            bail!("Cannot store {} bits: exceeds maximum cell size", bits);
+        }
+        if bits == 0 {
+            if value == &BigInt::from(0) {
+                return Ok(self);
+            }
+            bail!("Cannot store non-zero signed integer in 0 bits");
+        }
+
+        let magnitude = BigInt::from(BigUint::from(1u8) << (bits - 1));
+        let min = -magnitude.clone();
+        let max = magnitude - BigInt::from(1);
+        if value < &min || value > &max {
+            bail!("Signed integer does not fit in {} bits", bits);
+        }
+
+        let unsigned = if value < &BigInt::from(0) {
+            (BigInt::from(BigUint::from(1u8) << bits) + value)
+                .to_biguint()
+                .ok_or_else(|| anyhow::anyhow!("Invalid two's-complement value"))?
+        } else {
+            value
+                .to_biguint()
+                .ok_or_else(|| anyhow::anyhow!("Invalid signed integer value"))?
+        };
+
+        self.store_big_uint(&unsigned, bits)
     }
 
     /// Stores a single bit
@@ -380,6 +458,20 @@ impl CellBuilder {
     }
 }
 
+fn shift_left_in_place(bytes: &mut [u8], shift: usize) {
+    debug_assert!(shift < 8);
+    if shift == 0 || bytes.is_empty() {
+        return;
+    }
+
+    let mut carry = 0u8;
+    for byte in bytes.iter_mut().rev() {
+        let next_carry = *byte >> (8 - shift);
+        *byte = (*byte << shift) | carry;
+        carry = next_carry;
+    }
+}
+
 impl Default for CellBuilder {
     fn default() -> Self {
         Self::new()
@@ -405,6 +497,63 @@ mod tests {
         let cell = Cell::with_data(data, 8).unwrap();
         assert_eq!(cell.bit_len(), 8);
         assert_eq!(cell.data()[0], 0x0F);
+    }
+
+    #[test]
+    fn test_cell_with_data_canonicalizes_partial_byte() {
+        let cell = Cell::with_data(vec![0xFF, 0xAA], 1).unwrap();
+        assert_eq!(cell.bit_len(), 1);
+        assert_eq!(cell.data(), &[0x80]);
+        assert_eq!(cell.serialize_data(), vec![0xC0]);
+    }
+
+    #[test]
+    fn test_cell_with_data_preserves_full_byte_data() {
+        let cell = Cell::with_data(vec![0xFF, 0xAA], 8).unwrap();
+        assert_eq!(cell.data(), &[0xFF]);
+        assert_eq!(cell.serialize_data(), vec![0xFF]);
+    }
+
+    #[test]
+    fn test_cell_descriptors_for_partial_and_full_bytes() {
+        assert_eq!(
+            Cell::with_data(vec![0x80], 1).unwrap().descriptors(),
+            [0, 1]
+        );
+        assert_eq!(
+            Cell::with_data(vec![0xFE], 7).unwrap().descriptors(),
+            [0, 1]
+        );
+        assert_eq!(
+            Cell::with_data(vec![0xFF], 8).unwrap().descriptors(),
+            [0, 2]
+        );
+        assert_eq!(
+            Cell::with_data(vec![0xFF, 0x80], 9).unwrap().descriptors(),
+            [0, 3]
+        );
+    }
+
+    #[test]
+    fn test_cell_serialize_data_top_up_bit() {
+        assert_eq!(
+            Cell::with_data(vec![0x80], 1).unwrap().serialize_data(),
+            vec![0xC0]
+        );
+        assert_eq!(
+            Cell::with_data(vec![0xFE], 7).unwrap().serialize_data(),
+            vec![0xFF]
+        );
+        assert_eq!(
+            Cell::with_data(vec![0xAB], 8).unwrap().serialize_data(),
+            vec![0xAB]
+        );
+        assert_eq!(
+            Cell::with_data(vec![0xFF, 0x80], 9)
+                .unwrap()
+                .serialize_data(),
+            vec![0xFF, 0xC0]
+        );
     }
 
     #[test]

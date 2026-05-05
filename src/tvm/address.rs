@@ -2,10 +2,10 @@
 //!
 //! Supports both internal addresses (workchain + hash) and external addresses.
 
+use crate::tl::{Int256, common::AccountId};
 use anyhow::{Result, bail};
 use base64::Engine;
 use std::fmt;
-use crate::tl::{common::AccountId, Int256};
 
 /// CRC16 calculation for address validation
 fn crc16(data: &[u8]) -> [u8; 2] {

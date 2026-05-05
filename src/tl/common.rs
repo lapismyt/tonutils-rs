@@ -1,10 +1,10 @@
 use core::fmt;
 use std::{fmt::Display, str::FromStr};
 
+use super::utils::*;
 use derivative::Derivative;
 use hex::FromHex;
 use tl_proto::{TlRead, TlWrite};
-use super::utils::*;
 
 /// true = True;
 #[derive(TlRead, TlWrite, Derivative)]
@@ -92,7 +92,15 @@ pub struct BlockIdExt {
 
 impl fmt::Display for BlockIdExt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "({},{:X},{}):{}:{}", self.workchain, self.shard, self.seqno, self.root_hash.to_string(), self.file_hash.to_string())
+        write!(
+            f,
+            "({},{:X},{}):{}:{}",
+            self.workchain,
+            self.shard,
+            self.seqno,
+            self.root_hash.to_string(),
+            self.file_hash.to_string()
+        )
     }
 }
 
@@ -121,18 +129,32 @@ pub struct Signature {
     pub signature: Vec<u8>,
 }
 
-/// liteServer.signatureSet validator_set_hash:int catchain_seqno:int signatures:(vector liteServer.signature) = liteServer.SignatureSet;
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq)]
 #[tl(
     boxed,
-    id = "liteServer.signatureSet",
-    scheme_inline = r##"liteServer.signatureSet validator_set_hash:int catchain_seqno:int signatures:(vector liteServer.signature) = liteServer.SignatureSet;"##
+    scheme_inline = r##"liteServer.signatureSet.ordinary#f644a6e6 validator_set_hash:int catchain_seqno:int signatures:(vector liteServer.signature) = liteServer.SignatureSet;
+        liteServer.signatureSet.simplex cc_seqno:int validator_set_hash:int signatures:(vector liteServer.signature) session_id:int256 slot:int candidate:bytes = liteServer.SignatureSet;"##
 )]
-pub struct SignatureSet {
-    pub validator_set_hash: i32,
-    pub catchain_seqno: i32,
-    pub signatures: Vec<Signature>,
+pub enum SignatureSet {
+    /// liteServer.signatureSet.ordinary#f644a6e6 validator_set_hash:int catchain_seqno:int signatures:(vector liteServer.signature) = liteServer.SignatureSet;
+    #[tl(id = 0xf644a6e6)]
+    Ordinary {
+        validator_set_hash: i32,
+        catchain_seqno: i32,
+        signatures: Vec<Signature>,
+    },
+    /// liteServer.signatureSet.simplex cc_seqno:int validator_set_hash:int signatures:(vector liteServer.signature) session_id:int256 slot:int candidate:bytes = liteServer.SignatureSet;
+    #[tl(id = "liteServer.signatureSet.simplex")]
+    Simplex {
+        cc_seqno: i32,
+        validator_set_hash: i32,
+        signatures: Vec<Signature>,
+        session_id: Int256,
+        slot: i32,
+        #[derivative(Debug(format_with = "fmt_bytes"))]
+        candidate: Vec<u8>,
+    },
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -202,4 +224,24 @@ pub struct LibraryEntry {
     pub hash: Int256,
     #[derivative(Debug(format_with = "fmt_bytes"))]
     pub data: Vec<u8>,
+}
+
+/// liteServer.nonfinal.candidateId block_id:tonNode.blockIdExt creator:int256 collated_data_hash:int256 = liteServer.nonfinal.CandidateId;
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq)]
+pub struct NonfinalCandidateId {
+    pub block_id: BlockIdExt,
+    pub creator: Int256,
+    pub collated_data_hash: Int256,
+}
+
+/// liteServer.nonfinal.candidateInfo id:liteServer.nonfinal.candidateId available:Bool approved_weight:long signed_weight:long total_weight:long = liteServer.nonfinal.CandidateInfo;
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq)]
+pub struct NonfinalCandidateInfo {
+    pub id: NonfinalCandidateId,
+    pub available: bool,
+    pub approved_weight: u64,
+    pub signed_weight: u64,
+    pub total_weight: u64,
 }

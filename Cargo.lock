@@ -1720,7 +1720,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "tonutils-rs"
+name = "tonutils"
 version = "0.1.0"
 dependencies = [
  "aes",
@@ -1750,6 +1750,7 @@ dependencies = [
  "sha2",
  "thiserror",
  "tl-proto",
+ "tl-scheme",
  "tokio",
  "tokio-test",
  "tokio-tower",

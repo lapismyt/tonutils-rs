@@ -3,8 +3,9 @@
 //! A Slice provides a way to read data from a Cell sequentially,
 //! tracking the current position in both bits and references.
 
-use crate::tvm::cell::Cell;
+use crate::tvm::cell::{Cell, MAX_CELL_BITS};
 use anyhow::{Result, bail};
+use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
 
 /// A slice for reading data from a cell
@@ -124,23 +125,30 @@ impl Slice {
             bail!("Cannot load more than 64 bits into u64");
         }
 
+        let value = self.load_big_uint(bits)?;
+        let digits = value.to_u64_digits();
+        let result = digits.first().copied().unwrap_or(0);
+
+        Ok(result)
+    }
+
+    /// Loads an unsigned big integer with a specific number of bits.
+    pub fn load_big_uint(&mut self, bits: usize) -> Result<BigUint> {
+        if bits > MAX_CELL_BITS {
+            bail!("Cannot load {} bits: exceeds maximum cell size", bits);
+        }
         if bits == 0 {
-            return Ok(0);
+            return Ok(BigUint::from(0u8));
         }
 
         let bytes = self.load_bits(bits)?;
-        let mut result = 0u64;
-
-        for (i, &byte) in bytes.iter().enumerate() {
-            let shift = (bytes.len() - 1 - i) * 8;
-            result |= (byte as u64) << shift;
+        let mut value = BigUint::from_bytes_be(&bytes);
+        let unused_low_bits = bytes.len() * 8 - bits;
+        if unused_low_bits > 0 {
+            value >>= unused_low_bits;
         }
 
-        // Adjust for partial bytes
-        let extra_bits = (bytes.len() * 8) - bits;
-        result >>= extra_bits;
-
-        Ok(result)
+        Ok(value)
     }
 
     /// Loads a signed integer with a specific number of bits
@@ -149,20 +157,25 @@ impl Slice {
             bail!("Cannot load more than 64 bits into i64");
         }
 
+        let value = self.load_big_int(bits)?;
+        i64::try_from(value).map_err(|_| anyhow::anyhow!("Loaded signed integer does not fit i64"))
+    }
+
+    /// Loads a signed big integer with a specific number of bits using two's complement.
+    pub fn load_big_int(&mut self, bits: usize) -> Result<BigInt> {
+        if bits > MAX_CELL_BITS {
+            bail!("Cannot load {} bits: exceeds maximum cell size", bits);
+        }
         if bits == 0 {
-            return Ok(0);
+            return Ok(BigInt::from(0));
         }
 
-        let unsigned = self.load_uint(bits)?;
-
-        // Check if the sign bit is set
-        let sign_bit = 1u64 << (bits - 1);
-        if unsigned & sign_bit != 0 {
-            // Negative number - extend sign
-            let mask = !0u64 << bits;
-            Ok((unsigned | mask) as i64)
+        let unsigned = self.load_big_uint(bits)?;
+        let sign_bit = BigUint::from(1u8) << (bits - 1);
+        if (&unsigned & &sign_bit) != BigUint::from(0u8) {
+            Ok(BigInt::from(unsigned) - BigInt::from(BigUint::from(1u8) << bits))
         } else {
-            Ok(unsigned as i64)
+            Ok(BigInt::from(unsigned))
         }
     }
 
@@ -275,28 +288,47 @@ impl Slice {
     /// Loads a variable-length integer (VarUInteger)
     /// First length_bits encode the byte length, then that many bytes of data
     pub fn load_var_uint(&mut self, length_bits: usize) -> Result<u64> {
-        if length_bits > 8 {
-            bail!("VarUInteger length_bits cannot exceed 8");
+        let value = self.load_var_big_uint(length_bits)?;
+        let digits = value.to_u64_digits();
+        if digits.len() > 1 {
+            bail!("Loaded VarUInteger does not fit u64");
         }
+        Ok(digits.first().copied().unwrap_or(0))
+    }
 
-        // Read length (number of bytes to follow)
-        let byte_len = self.load_uint(length_bits)? as usize;
-        if byte_len > 8 {
-            bail!("VarUInteger byte length {} exceeds maximum 8", byte_len);
+    /// Loads a variable-length unsigned big integer (VarUInteger).
+    pub fn load_var_big_uint(&mut self, length_bits: usize) -> Result<BigUint> {
+        let byte_len_big = self.load_big_uint(length_bits)?;
+        let byte_len_digits = byte_len_big.to_u64_digits();
+        if byte_len_digits.len() > 1 {
+            bail!("VarUInteger byte length does not fit usize");
+        }
+        let byte_len = usize::try_from(byte_len_digits.first().copied().unwrap_or(0))
+            .map_err(|_| anyhow::anyhow!("VarUInteger byte length does not fit usize"))?;
+        if BigUint::from(byte_len) >= (BigUint::from(1u8) << length_bits) {
+            bail!(
+                "VarUInteger byte length {} does not fit in {} length bits",
+                byte_len,
+                length_bits
+            );
+        }
+        let value_bits = byte_len
+            .checked_mul(8)
+            .ok_or_else(|| anyhow::anyhow!("VarUInteger byte length overflow"))?;
+        if value_bits > self.remaining_bits() {
+            bail!(
+                "Not enough bits remaining: requested {}, available {}",
+                value_bits,
+                self.remaining_bits()
+            );
         }
 
         if byte_len == 0 {
-            return Ok(0);
+            return Ok(BigUint::from(0u8));
         }
 
-        // Read the actual value bytes (already big-endian)
         let bytes = self.load_bytes(byte_len)?;
-        let mut result = 0u64;
-        for &byte in &bytes {
-            result = (result << 8) | (byte as u64);
-        }
-
-        Ok(result)
+        Ok(BigUint::from_bytes_be(&bytes))
     }
 
     /// Loads coins (VarUInteger 16)
@@ -304,8 +336,8 @@ impl Slice {
     pub fn load_coins(&mut self) -> Result<u128> {
         // Length encoded in 4 bits (like store_coins in builder)
         let len = self.load_uint(4)? as usize;
-        if len > 16 {
-            bail!("Coins length {} exceeds maximum 16", len);
+        if len > 15 {
+            bail!("Coins length {} exceeds maximum 15", len);
         }
 
         if len == 0 {

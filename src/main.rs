@@ -1,6 +1,5 @@
-use tonutils_rs::cli::Cli;
-use tonutils_rs::utils::init_logger;
-
+use tonutils::cli::Cli;
+use tonutils::utils::init_logger;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

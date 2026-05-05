@@ -28,7 +28,7 @@ fn test_lite_server_address_roundtrip() {
 #[test]
 fn test_lite_server_address_deref() {
     let addr = LiteServerAddress(Ipv4Addr::new(10, 0, 0, 1));
-    
+
     // Should be able to use Ipv4Addr methods through Deref
     assert!(addr.is_private());
     assert!(!addr.is_loopback());
@@ -37,7 +37,7 @@ fn test_lite_server_address_deref() {
 #[test]
 fn test_lite_server_address_deref_mut() {
     let mut addr = LiteServerAddress(Ipv4Addr::new(10, 0, 0, 1));
-    
+
     // Should be able to mutate through DerefMut
     *addr = Ipv4Addr::new(127, 0, 0, 1);
     assert_eq!(*addr, Ipv4Addr::new(127, 0, 0, 1));
@@ -47,7 +47,7 @@ fn test_lite_server_address_deref_mut() {
 fn test_config_public_key_ed25519() {
     let key = [42u8; 32];
     let pubkey = ConfigPublicKey::Ed25519 { key };
-    
+
     match pubkey {
         ConfigPublicKey::Ed25519 { key: k } => {
             assert_eq!(k, [42u8; 32]);
@@ -59,9 +59,18 @@ fn test_config_public_key_ed25519() {
 fn test_config_public_key_into_bytes() {
     let key = [99u8; 32];
     let pubkey = ConfigPublicKey::Ed25519 { key };
-    
+
     let bytes: [u8; 32] = pubkey.into();
     assert_eq!(bytes, [99u8; 32]);
+}
+
+#[test]
+fn test_config_public_key_borrowed_bytes() {
+    let key = [7u8; 32];
+    let pubkey = ConfigPublicKey::Ed25519 { key };
+
+    assert_eq!(pubkey.as_bytes(), &[7u8; 32]);
+    assert_eq!(pubkey.to_bytes(), [7u8; 32]);
 }
 
 #[test]
@@ -72,10 +81,21 @@ fn test_config_lite_server_socket_addr() {
         port: 8080,
         id: ConfigPublicKey::Ed25519 { key: [0; 32] },
     };
-    
+
     let socket_addr = server.socket_addr();
     assert_eq!(socket_addr.ip(), &Ipv4Addr::new(127, 0, 0, 1));
     assert_eq!(socket_addr.port(), 8080);
+}
+
+#[test]
+fn test_config_lite_server_public_key() {
+    let server = ConfigLiteServer {
+        ip: LiteServerAddress::from(0x7F000001i32),
+        port: 8080,
+        id: ConfigPublicKey::Ed25519 { key: [8u8; 32] },
+    };
+
+    assert_eq!(server.public_key(), [8u8; 32]);
 }
 
 #[test]
@@ -92,9 +112,9 @@ fn test_config_global_deserialization() {
             }
         ]
     }"#;
-    
+
     let config: ConfigGlobal = json.parse().unwrap();
-    
+
     assert_eq!(config.liteservers.len(), 1);
     assert_eq!(config.liteservers[0].port, 46427);
 }
@@ -121,19 +141,56 @@ fn test_config_global_multiple_servers() {
             }
         ]
     }"#;
-    
+
     let config: ConfigGlobal = json.parse().unwrap();
-    
+
     assert_eq!(config.liteservers.len(), 2);
     assert_eq!(config.liteservers[0].port, 8001);
     assert_eq!(config.liteservers[1].port, 8002);
 }
 
 #[test]
+fn test_config_global_liteserver_selection() {
+    let config = ConfigGlobal {
+        liteservers: vec![
+            ConfigLiteServer {
+                ip: LiteServerAddress::from(0x7F000001i32),
+                port: 8001,
+                id: ConfigPublicKey::Ed25519 { key: [1u8; 32] },
+            },
+            ConfigLiteServer {
+                ip: LiteServerAddress::from(0x7F000002i32),
+                port: 8002,
+                id: ConfigPublicKey::Ed25519 { key: [2u8; 32] },
+            },
+        ],
+    };
+
+    assert_eq!(config.first_liteserver().unwrap().port, 8001);
+    assert_eq!(config.liteserver(1).unwrap().port, 8002);
+}
+
+#[test]
+fn test_config_global_liteserver_selection_errors() {
+    let config = ConfigGlobal {
+        liteservers: Vec::new(),
+    };
+
+    assert!(matches!(
+        config.first_liteserver(),
+        Err(ConfigError::EmptyLiteServers)
+    ));
+    assert!(matches!(
+        config.liteserver(0),
+        Err(ConfigError::LiteServerIndexOutOfBounds { index: 0, len: 0 })
+    ));
+}
+
+#[test]
 fn test_config_global_from_str_error() {
     let invalid_json = "{ invalid json }";
     let result = ConfigGlobal::from_str(invalid_json);
-    
+
     assert!(result.is_err());
 }
 
@@ -144,10 +201,10 @@ fn test_config_lite_server_serialization_roundtrip() {
         port: 9000,
         id: ConfigPublicKey::Ed25519 { key: [55u8; 32] },
     };
-    
+
     let json = serde_json::to_string(&server).unwrap();
     let deserialized: ConfigLiteServer = serde_json::from_str(&json).unwrap();
-    
+
     assert_eq!(server.port, deserialized.port);
     let original_ip: i32 = server.ip.into();
     let deserialized_ip: i32 = deserialized.ip.into();
@@ -157,18 +214,16 @@ fn test_config_lite_server_serialization_roundtrip() {
 #[test]
 fn test_config_global_serialization_roundtrip() {
     let config = ConfigGlobal {
-        liteservers: vec![
-            ConfigLiteServer {
-                ip: LiteServerAddress::from(0x08080808i32),
-                port: 443,
-                id: ConfigPublicKey::Ed25519 { key: [1u8; 32] },
-            }
-        ],
+        liteservers: vec![ConfigLiteServer {
+            ip: LiteServerAddress::from(0x08080808i32),
+            port: 443,
+            id: ConfigPublicKey::Ed25519 { key: [1u8; 32] },
+        }],
     };
-    
+
     let json = serde_json::to_string(&config).unwrap();
     let deserialized: ConfigGlobal = serde_json::from_str(&json).unwrap();
-    
+
     assert_eq!(config.liteservers.len(), deserialized.liteservers.len());
     assert_eq!(config.liteservers[0].port, deserialized.liteservers[0].port);
 }
@@ -197,9 +252,9 @@ fn test_config_public_key_base64_deserialization() {
         "@type": "pub.ed25519",
         "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
     }"#;
-    
+
     let pubkey: ConfigPublicKey = serde_json::from_str(json).unwrap();
-    
+
     match pubkey {
         ConfigPublicKey::Ed25519 { key } => {
             assert_eq!(key, [0u8; 32]);
@@ -213,9 +268,9 @@ fn test_config_public_key_non_zero_base64() {
         "@type": "pub.ed25519",
         "key": "//////////////////////////////////////////8="
     }"#;
-    
+
     let pubkey: ConfigPublicKey = serde_json::from_str(json).unwrap();
-    
+
     match pubkey {
         ConfigPublicKey::Ed25519 { key } => {
             assert_eq!(key, [255u8; 32]);
@@ -226,14 +281,14 @@ fn test_config_public_key_non_zero_base64() {
 #[test]
 fn test_lite_server_various_ports() {
     let ports = [80, 443, 8080, 3000, 65535];
-    
+
     for port in ports {
         let server = ConfigLiteServer {
             ip: LiteServerAddress::from(0x7F000001i32),
             port,
             id: ConfigPublicKey::Ed25519 { key: [0; 32] },
         };
-        
+
         assert_eq!(server.socket_addr().port(), port);
     }
 }
@@ -242,7 +297,7 @@ fn test_lite_server_various_ports() {
 fn test_config_global_empty_servers() {
     let json = r#"{ "liteservers": [] }"#;
     let config: ConfigGlobal = json.parse().unwrap();
-    
+
     assert_eq!(config.liteservers.len(), 0);
 }
 
@@ -261,7 +316,7 @@ fn test_config_lite_server_debug_format() {
         port: 8080,
         id: ConfigPublicKey::Ed25519 { key: [42u8; 32] },
     };
-    
+
     let debug_str = format!("{:?}", server);
     assert!(debug_str.contains("ConfigLiteServer"));
 }
@@ -276,15 +331,13 @@ fn test_config_public_key_debug_format() {
 #[test]
 fn test_config_global_clone() {
     let config = ConfigGlobal {
-        liteservers: vec![
-            ConfigLiteServer {
-                ip: LiteServerAddress::from(0x7F000001i32),
-                port: 8080,
-                id: ConfigPublicKey::Ed25519 { key: [1u8; 32] },
-            }
-        ],
+        liteservers: vec![ConfigLiteServer {
+            ip: LiteServerAddress::from(0x7F000001i32),
+            port: 8080,
+            id: ConfigPublicKey::Ed25519 { key: [1u8; 32] },
+        }],
     };
-    
+
     let cloned = config.clone();
     assert_eq!(config.liteservers.len(), cloned.liteservers.len());
     assert_eq!(config.liteservers[0].port, cloned.liteservers[0].port);

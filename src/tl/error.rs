@@ -13,4 +13,4 @@ pub enum TlError {
 }
 
 // Re-export from tl_proto for convenience
-pub use tl_proto::{TlRead, TlWrite, TlResult, TlPacket};
+pub use tl_proto::{TlPacket, TlRead, TlResult, TlWrite};

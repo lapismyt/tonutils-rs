@@ -1,7 +1,25 @@
 [package]
-name = "tonutils-rs"
+name = "tonutils"
 version = "0.1.0"
 edition = "2024"
+
+[features]
+default = ["std", "adnl-tcp", "liteclient"]
+std = []
+tl = []
+tvm = ["tl"]
+adnl = ["tl"]
+adnl-tcp = ["adnl", "dep:futures", "dep:pin-project", "dep:tokio", "dep:tokio-util"]
+liteclient = ["adnl-tcp", "tvm", "dep:tokio-tower", "dep:tower"]
+network-config = ["dep:serde_json", "dep:serde_with"]
+cli = [
+    "liteclient",
+    "network-config",
+    "dep:clap",
+    "dep:pretty_env_logger",
+    "dep:ureq",
+]
+full = ["std", "tl", "tvm", "adnl", "adnl-tcp", "liteclient", "network-config", "cli"]
 
 [dependencies]
 anyhow = "1.0.99"
@@ -10,10 +28,10 @@ base64 = "0.22"
 hex = "0.4"
 num-bigint = "0.4.6"
 serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.143"
-serde_with = { version = "3.12", features = ["base64"] }
+serde_json = { version = "1.0.143", optional = true }
+serde_with = { version = "3.12", features = ["base64"], optional = true }
 sha2 = "0.10"
-tokio = { version = "1.47.1", features = ["full", "time"] }
+tokio = { version = "1.47.1", features = ["full", "time"], optional = true }
 byteorder = "1.5"
 ed25519-dalek = "2.1"
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
@@ -22,25 +40,68 @@ rand = "0.8"
 aes = "0.8"
 ctr = "0.9"
 log = "0.4"
-futures = "0.3"
+futures = { version = "0.3", optional = true }
 crc = "3.3.0"
 thiserror = "2.0.17"
 bytes = "1.10.1"
 chrono = "0.4"
 crc32fast = "1.4"
 derivative = "2.2"
-tower = { version = "0.5", features = ["make", "util"] }
-clap = { version = "4.5", features = ["derive"] }
-tokio-tower = "0.6.0"
-tokio-util = { version = "0.7.16", features = ["codec"] }
-pin-project = "1.1.10"
-ureq = { version = "3.1.2", features = ["socks-proxy"] }
-pretty_env_logger = "0.5.0"
+tower = { version = "0.5", features = ["make", "util"], optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
+tokio-tower = { version = "0.6.0", optional = true }
+tokio-util = { version = "0.7.16", features = ["codec"], optional = true }
+pin-project = { version = "1.1.10", optional = true }
+ureq = { version = "3.1.2", features = ["socks-proxy"], optional = true }
+pretty_env_logger = { version = "0.5.0", optional = true }
 tl-proto = { version = "0.5.3", features = ["derive"] }
 
 [dev-dependencies]
+serde_json = "1.0.143"
+tl-scheme = "0.3.0"
 tokio-test = "0.4"
 
+[[bin]]
+name = "tonutils"
+path = "src/main.rs"
+required-features = ["cli"]
+
 [[example]]
-name = "block_scanner"
-path = "examples/blocks/main.rs"
+name = "liteclient_masterchain_info"
+required-features = ["liteclient", "network-config"]
+
+[[example]]
+name = "liteclient_raw_query"
+required-features = ["liteclient", "network-config"]
+
+[[example]]
+name = "network_config"
+required-features = ["network-config"]
+
+[[example]]
+name = "contract_get_state"
+required-features = ["liteclient", "network-config"]
+
+[[example]]
+name = "contract_get_method"
+required-features = ["liteclient", "network-config"]
+
+[[example]]
+name = "litebalancer_failover"
+required-features = ["liteclient", "network-config"]
+
+[[example]]
+name = "adnl_ping"
+required-features = ["adnl-tcp"]
+
+[[example]]
+name = "tvm_cell_builder"
+required-features = ["tvm"]
+
+[[example]]
+name = "tvm_boc_roundtrip"
+required-features = ["tvm"]
+
+[[example]]
+name = "tvm_stack_run_method"
+required-features = ["liteclient", "network-config"]

@@ -45,7 +45,7 @@ pub struct Version {
 #[derivative(Debug, Clone, PartialEq)]
 pub struct BlockData {
     pub id: BlockIdExt,
-    #[derivative(Debug(format_with="fmt_bytes"))]
+    #[derivative(Debug(format_with = "fmt_bytes"))]
     pub data: Vec<u8>,
 }
 
@@ -55,7 +55,7 @@ pub struct BlockState {
     pub id: BlockIdExt,
     pub root_hash: Int256,
     pub file_hash: Int256,
-    #[derivative(Debug(format_with="fmt_bytes"))]
+    #[derivative(Debug(format_with = "fmt_bytes"))]
     pub data: Vec<u8>,
 }
 
@@ -75,7 +75,7 @@ pub struct BlockHeader {
     pub with_shard_hashes: Option<()>,
     #[tl(flags_bit = "mode.6")]
     pub with_prev_blk_signatures: Option<()>,
-    #[derivative(Debug(format_with="fmt_bytes"))]
+    #[derivative(Debug(format_with = "fmt_bytes"))]
     pub header_proof: Vec<u8>,
 }
 
@@ -106,23 +106,23 @@ pub struct RunMethodResult {
     pub id: BlockIdExt,
     pub shardblk: BlockIdExt,
     #[tl(flags_bit = "mode.0")]
-    #[derivative(Debug(format_with="fmt_opt_bytes"))] 
+    #[derivative(Debug(format_with = "fmt_opt_bytes"))]
     pub shard_proof: Option<Vec<u8>>,
     #[tl(flags_bit = "mode.0")]
-    #[derivative(Debug(format_with="fmt_opt_bytes"))] 
+    #[derivative(Debug(format_with = "fmt_opt_bytes"))]
     pub proof: Option<Vec<u8>>,
     #[tl(flags_bit = "mode.1")]
-    #[derivative(Debug(format_with="fmt_opt_bytes"))] 
+    #[derivative(Debug(format_with = "fmt_opt_bytes"))]
     pub state_proof: Option<Vec<u8>>,
     #[tl(flags_bit = "mode.3")]
-    #[derivative(Debug(format_with="fmt_opt_bytes"))] 
+    #[derivative(Debug(format_with = "fmt_opt_bytes"))]
     pub init_c7: Option<Vec<u8>>,
     #[tl(flags_bit = "mode.4")]
-    #[derivative(Debug(format_with="fmt_opt_bytes"))] 
+    #[derivative(Debug(format_with = "fmt_opt_bytes"))]
     pub lib_extras: Option<Vec<u8>>,
     pub exit_code: i32,
     #[tl(flags_bit = "mode.2")]
-    #[derivative(Debug(format_with="fmt_opt_bytes"))] 
+    #[derivative(Debug(format_with = "fmt_opt_bytes"))]
     pub result: Option<Vec<u8>>,
 }
 
@@ -397,6 +397,38 @@ pub struct DispatchQueueMessages {
 
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq)]
+pub struct NonfinalCandidate {
+    pub id: NonfinalCandidateId,
+    #[derivative(Debug(format_with = "fmt_bytes"))]
+    pub data: Vec<u8>,
+    #[derivative(Debug(format_with = "fmt_bytes"))]
+    pub collated_data: Vec<u8>,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq)]
+pub struct NonfinalValidatorGroupInfo {
+    pub next_block_id: BlockId,
+    pub cc_seqno: i32,
+    pub prev: Vec<BlockIdExt>,
+    pub candidates: Vec<NonfinalCandidateInfo>,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq)]
+pub struct NonfinalValidatorGroups {
+    pub groups: Vec<NonfinalValidatorGroupInfo>,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq)]
+pub struct NonfinalPendingShardBlocks {
+    pub signed_blocks: Vec<BlockIdExt>,
+    pub candidates: Vec<BlockIdExt>,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq)]
 pub struct Error {
     pub code: i32,
     #[derivative(Debug(format_with = "String::fmt"))]
@@ -464,12 +496,16 @@ pub enum Response {
     TransactionList(TransactionList),
 
     /// liteServer.transactionId mode:# account:mode.0?int256 lt:mode.1?long hash:mode.2?int256 metadata:mode.8?liteServer.transactionMetadata = liteServer.TransactionId;
-    #[tl(id = 0xb12f65af)]
+    #[tl(id = 0xab101c41)]
     TransactionId(TransactionId),
 
     /// liteServer.blockTransactions id:tonNode.blockIdExt req_count:# incomplete:Bool ids:(vector liteServer.transactionId) proof:bytes = liteServer.BlockTransactions;
     #[tl(id = 0xbd8cad2b)]
     BlockTransactions(BlockTransactions),
+
+    /// liteServer.blockTransactionsExt id:tonNode.blockIdExt req_count:# incomplete:Bool transactions:bytes proof:bytes = liteServer.BlockTransactionsExt;
+    #[tl(id = 0xfb8ffce4)]
+    BlockTransactionsExt(BlockTransactionsExt),
 
     /// liteServer.partialBlockProof complete:Bool from:tonNode.blockIdExt to:tonNode.blockIdExt steps:(vector liteServer.BlockLink) = liteServer.PartialBlockProof;
     #[tl(id = 0x8ed0d2c1)]
@@ -514,6 +550,18 @@ pub enum Response {
     /// liteServer.dispatchQueueMessages mode:# id:tonNode.blockIdExt messages:(vector liteServer.dispatchQueueMessage) complete:Bool proof:mode.0?bytes messages_boc:mode.2?bytes = liteServer.DispatchQueueMessages;
     #[tl(id = 0x4b407931)]
     DispatchQueueMessages(DispatchQueueMessages),
+
+    /// liteServer.nonfinal.candidate id:liteServer.nonfinal.candidateId data:bytes collated_data:bytes = liteServer.nonfinal.Candidate;
+    #[tl(id = 0x80c3468c)]
+    NonfinalCandidate(NonfinalCandidate),
+
+    /// liteServer.nonfinal.validatorGroups groups:(vector liteServer.nonfinal.validatorGroupInfo) = liteServer.nonfinal.ValidatorGroups;
+    #[tl(id = 0x8d0b9dfe)]
+    NonfinalValidatorGroups(NonfinalValidatorGroups),
+
+    /// liteServer.nonfinal.pendingShardBlocks signed_blocks:(vector tonNode.blockIdExt) candidates:(vector tonNode.blockIdExt) = liteServer.nonfinal.PendingShardBlocks;
+    #[tl(id = 0x1fd06e4d)]
+    NonfinalPendingShardBlocks(NonfinalPendingShardBlocks),
 
     /// liteServer.error code:int message:string = liteServer.Error;
     #[tl(id = 0xbba9e148)]

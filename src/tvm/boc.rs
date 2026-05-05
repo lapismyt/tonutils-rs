@@ -23,7 +23,9 @@ pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
     let cells = collect_cells(root)?;
 
     // Find the root index in the cells vector
-    let root_index = cells.iter().position(|cell| cell.hash() == root.hash())
+    let root_index = cells
+        .iter()
+        .position(|cell| cell.hash() == root.hash())
         .ok_or_else(|| anyhow::anyhow!("Root cell not found in collected cells"))?;
 
     // Serialize each cell
@@ -116,10 +118,18 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
     let flags_and_size = data[pos];
     pos += 1;
 
-    let _has_idx = (flags_and_size & 0x80) != 0;
+    let has_idx = (flags_and_size & 0x80) != 0;
     let has_crc32 = (flags_and_size & 0x40) != 0;
-    let _has_cache_bits = (flags_and_size & 0x20) != 0;
+    let has_cache_bits = (flags_and_size & 0x20) != 0;
     let size_bytes = (flags_and_size & 0x07) as usize;
+
+    if has_idx {
+        bail!("BoC index table flag is not supported");
+    }
+
+    if has_cache_bits {
+        bail!("BoC cache bits flag is not supported");
+    }
 
     if size_bytes == 0 || size_bytes > 8 {
         bail!("Invalid size_bytes: {}", size_bytes);
@@ -156,10 +166,23 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
 
     // Parse cells
     let cells_start = pos;
-    let cells_end = cells_start + cells_size;
+    let cells_end = cells_start
+        .checked_add(cells_size)
+        .ok_or_else(|| anyhow::anyhow!("Invalid cells size"))?;
 
-    if cells_end > data.len() - if has_crc32 { 4 } else { 0 } {
+    let checksum_size = if has_crc32 { 4 } else { 0 };
+    let payload_end = data
+        .len()
+        .checked_sub(checksum_size)
+        .ok_or_else(|| anyhow::anyhow!("Missing CRC32"))?;
+
+    if cells_end > payload_end {
         bail!("Invalid cells size");
+    }
+
+    let expected_len = cells_end + checksum_size;
+    if data.len() != expected_len {
+        bail!("Trailing bytes after BoC cell payload");
     }
 
     let cells_data = &data[cells_start..cells_end];
@@ -232,7 +255,7 @@ fn parse_cells(data: &[u8], count: usize) -> Result<Vec<Arc<Cell>>> {
             bail!("Cell data exceeds buffer");
         }
 
-        let cell_data = data[pos..pos + data_size].to_vec();
+        let serialized_cell_data = data[pos..pos + data_size].to_vec();
         pos += data_size;
 
         // Read reference indices
@@ -251,39 +274,15 @@ fn parse_cells(data: &[u8], count: usize) -> Result<Vec<Arc<Cell>>> {
         // For b bits: if b % 8 == 0, then d2 = 2*(b/8), so b = d2*4
         //             if b % 8 != 0, then d2 = 2*floor(b/8) + 1, so b is between (d2-1)*4 and d2*4
         // We need to find the exact bit length by looking at the padding bit
-        let bit_len = if data_size > 0 && d2 > 0 {
-            // Check if we have full bytes (d2 is even) or partial byte (d2 is odd)
-            if d2 % 2 == 0 {
-                // Full bytes, no padding needed
-                (d2 as usize / 2) * 8
-            } else {
-                // Partial byte - find the padding bit
-                let last_byte = cell_data[cell_data.len() - 1];
-                let mut bits_in_last_byte = 0;
-
-                // Find the rightmost 1 bit (padding marker) from right to left
-                for i in 0..8 {
-                    if (last_byte >> i) & 1 == 1 {
-                        bits_in_last_byte = 8 - i;
-                        break;
-                    }
-                }
-
-                // Total bits = full bytes + bits in last byte - 1 (for padding bit)
-                if bits_in_last_byte > 0 {
-                    (cell_data.len() - 1) * 8 + bits_in_last_byte - 1
-                } else {
-                    // No padding bit found, assume full bytes
-                    cell_data.len() * 8
-                }
-            }
-        } else {
-            0
-        };
+        let (cell_data, bit_len) = decode_cell_data(&serialized_cell_data, d2)?;
 
         // Create cell (without references for now)
         let cell = Cell::with_data(cell_data, bit_len)?;
         cells.push(Arc::new(cell));
+    }
+
+    if pos != data.len() {
+        bail!("Trailing bytes after parsed cells");
     }
 
     // Second pass: resolve references
@@ -306,6 +305,44 @@ fn parse_cells(data: &[u8], count: usize) -> Result<Vec<Arc<Cell>>> {
     }
 
     Ok(cells)
+}
+
+fn decode_cell_data(data: &[u8], d2: u8) -> Result<(Vec<u8>, usize)> {
+    let data_size = (d2 as usize + 1) / 2;
+    if data.len() != data_size {
+        bail!("Cell data size does not match descriptor");
+    }
+
+    if d2 == 0 {
+        return Ok((Vec::new(), 0));
+    }
+
+    if d2 % 2 == 0 {
+        return Ok((data.to_vec(), (d2 as usize / 2) * 8));
+    }
+
+    let mut cell_data = data.to_vec();
+    let last_byte = *cell_data
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("Partial cell data is missing top-up byte"))?;
+    if last_byte == 0 {
+        bail!("Malformed partial cell data: missing top-up bit");
+    }
+
+    let zero_padding_bits = last_byte.trailing_zeros() as usize;
+    let data_bits_in_last_byte = 7usize
+        .checked_sub(zero_padding_bits)
+        .ok_or_else(|| anyhow::anyhow!("Malformed partial cell data: invalid top-up bit"))?;
+    if data_bits_in_last_byte == 0 {
+        bail!("Malformed partial cell data: top-up bit without data bits");
+    }
+
+    let last_idx = cell_data.len() - 1;
+    let data_mask = 0xFFu8 << (8 - data_bits_in_last_byte);
+    cell_data[last_idx] &= data_mask;
+    let bit_len = last_idx * 8 + data_bits_in_last_byte;
+
+    Ok((cell_data, bit_len))
 }
 
 fn serialize_cell(cell: &Arc<Cell>, cell_map: &HashMap<[u8; 32], usize>) -> Result<Vec<u8>> {
@@ -433,7 +470,7 @@ pub fn base64_to_boc(b64: &str) -> Result<Arc<Cell>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tvm::cell::CellBuilder;
+    use crate::tvm::cell::{CellBuilder, MAX_CELL_BITS};
 
     #[test]
     fn test_serialize_deserialize_simple() {
@@ -457,5 +494,108 @@ mod tests {
         let decoded = hex_to_boc(&hex).unwrap();
 
         assert_eq!(cell.hash(), decoded.hash());
+    }
+
+    #[test]
+    fn test_partial_byte_boc_roundtrips() {
+        for bit_len in [1, 7, 9, MAX_CELL_BITS] {
+            let data = vec![0xFF; bit_len.div_ceil(8)];
+            let cell = Arc::new(Cell::with_data(data, bit_len).unwrap());
+            let boc = serialize_boc(&cell, false).unwrap();
+            let decoded = deserialize_boc(&boc).unwrap();
+
+            assert_eq!(decoded.bit_len(), bit_len);
+            assert_eq!(decoded.data(), cell.data());
+            assert_eq!(decoded.hash(), cell.hash());
+        }
+    }
+
+    #[test]
+    fn test_partial_byte_boc_decoding_removes_top_up_marker() {
+        let cell = Arc::new(Cell::with_data(vec![0x80], 1).unwrap());
+        let boc = serialize_boc(&cell, false).unwrap();
+        let decoded = deserialize_boc(&boc).unwrap();
+
+        assert_eq!(decoded.bit_len(), 1);
+        assert_eq!(decoded.data(), &[0x80]);
+        assert_eq!(decoded.serialize_data(), vec![0xC0]);
+    }
+
+    #[test]
+    fn test_nested_reference_roundtrip_with_partial_child() {
+        let partial_child = Arc::new(Cell::with_data(vec![0xFE], 7).unwrap());
+        let full_child = Arc::new(Cell::with_data(vec![0x12, 0x34], 16).unwrap());
+        let mut root = Cell::with_data(vec![0x80], 1).unwrap();
+        root.add_reference(partial_child.clone()).unwrap();
+        root.add_reference(full_child).unwrap();
+        let root = Arc::new(root);
+
+        let boc = serialize_boc(&root, false).unwrap();
+        let decoded = deserialize_boc(&boc).unwrap();
+
+        assert_eq!(decoded.hash(), root.hash());
+        assert_eq!(decoded.reference_count(), 2);
+        assert_eq!(decoded.reference(0).unwrap().bit_len(), 7);
+        assert_eq!(decoded.reference(0).unwrap().data(), partial_child.data());
+    }
+
+    #[test]
+    fn test_deserialize_rejects_unsupported_index_flag() {
+        let cell = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let mut boc = serialize_boc(&cell, false).unwrap();
+        boc[4] |= 0x80;
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("index table flag"));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_unsupported_cache_bits_flag() {
+        let cell = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let mut boc = serialize_boc(&cell, false).unwrap();
+        boc[4] |= 0x20;
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("cache bits flag"));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_trailing_bytes_without_checksum() {
+        let cell = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let mut boc = serialize_boc(&cell, false).unwrap();
+        boc.push(0);
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("Trailing bytes"));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_malformed_partial_byte_without_top_up() {
+        let boc = vec![
+            0xB5, 0xEE, 0x9C, 0x72, // generic magic
+            0x01, // no flags, size_bytes = 1
+            0x01, // offset_bytes = 1
+            0x01, // cells count
+            0x01, // roots count
+            0x00, // absent count
+            0x03, // cells size
+            0x00, // root index
+            0x00, // d1
+            0x01, // d2: one partial data byte
+            0x00, // malformed: no top-up marker
+        ];
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("missing top-up bit"));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_top_up_only_partial_byte() {
+        let boc = vec![
+            0xB5, 0xEE, 0x9C, 0x72, 0x01, 0x01, 0x01, 0x01, 0x00, 0x03, 0x00, 0x00, 0x01, 0x80,
+        ];
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("top-up bit without data bits"));
     }
 }

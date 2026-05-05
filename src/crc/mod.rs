@@ -1,4 +1,4 @@
-use crc::{Crc, CRC_16_IBM_SDLC, CRC_32_ISO_HDLC};
+use crc::{CRC_16_IBM_SDLC, CRC_32_ISO_HDLC, Crc};
 
 /// CRC16 implementation
 pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_IBM_SDLC);

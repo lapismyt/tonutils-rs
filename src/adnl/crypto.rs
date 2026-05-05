@@ -469,7 +469,6 @@ mod tests {
         assert!(pubkey.verify_tl(data, &signature))
     }
 
-    
     #[test]
     fn correct_shared_secret() {
         let first = ExpandedSecretKey::from(&SecretKey::from_bytes([

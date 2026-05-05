@@ -14,10 +14,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
-use crate::liteclient::{client::LiteClient, types::LiteError};
+use crate::liteclient::{
+    client::LiteClient,
+    rate_limit::{RateLimiter, RequestRateLimit},
+    types::LiteError,
+};
 use crate::tl::common::*;
 use crate::tl::response::*;
-use crate::tvm::Address;
+use crate::tvm::{Address, TvmStack};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BalancerError {
@@ -36,6 +40,14 @@ pub enum BalancerError {
 }
 
 type Result<T> = std::result::Result<T, BalancerError>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerState {
+    Healthy,
+    Suspect,
+    Dead,
+    Recovering,
+}
 
 struct PeerStats {
     mc_block_seqno: u32,
@@ -60,8 +72,10 @@ pub struct LiteBalancer {
     alive_peers: Arc<RwLock<HashSet<usize>>>,
     archival_peers: Arc<RwLock<HashSet<usize>>>,
     peer_stats: Arc<RwLock<HashMap<usize, PeerStats>>>,
+    peer_states: Arc<RwLock<HashMap<usize, PeerState>>>,
     checker_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
-    
+    global_rate_limiter: Option<RateLimiter>,
+
     pub max_req_per_peer: usize,
     pub max_retries: usize,
     pub timeout: Duration,
@@ -75,7 +89,9 @@ impl LiteBalancer {
             alive_peers: Arc::new(RwLock::new(HashSet::new())),
             archival_peers: Arc::new(RwLock::new(HashSet::new())),
             peer_stats: Arc::new(RwLock::new(HashMap::new())),
+            peer_states: Arc::new(RwLock::new(HashMap::new())),
             checker_handle: Arc::new(RwLock::new(None)),
+            global_rate_limiter: None,
             max_req_per_peer: 100,
             max_retries: 1,
             timeout,
@@ -83,27 +99,40 @@ impl LiteBalancer {
         }
     }
 
+    pub fn with_rate_limit_per_peer(mut self, limit: RequestRateLimit) -> Self {
+        for peer in &mut self.peers {
+            peer.set_rate_limit(limit);
+        }
+        self
+    }
+
+    pub fn with_global_rate_limit(mut self, limit: RequestRateLimit) -> Self {
+        self.global_rate_limiter = Some(RateLimiter::new(limit));
+        self
+    }
+
     pub async fn start_up(&mut self) -> Result<()> {
         let mut tasks = Vec::new();
-        
+
         for (i, client) in self.peers.iter_mut().enumerate() {
             let result = Self::connect_to_peer(client).await;
             if result {
                 self.alive_peers.write().await.insert(i);
+                self.peer_states.write().await.insert(i, PeerState::Healthy);
             }
             tasks.push(result);
         }
 
         self.find_archives().await;
-        
+
         // Start health checker
         let checker = self.spawn_health_checker();
         *self.checker_handle.write().await = Some(checker);
-        
+
         // Don't delete peers on startup - they haven't made any requests yet
         // delete_unsync_peers will be called after first requests complete
         *self.inited.write().await = true;
-        
+
         Ok(())
     }
 
@@ -120,19 +149,22 @@ impl LiteBalancer {
             shard: -9223372036854775808i64,
             seqno: rand::random::<i32>() % 1024 + 1,
         };
-        
-        match client.lookup_block(
-            (),
-            block_id,
-            Some(()),
-            None,
-            None,
-            false,
-            false,
-            false,
-            false,
-            false,
-        ).await {
+
+        match client
+            .lookup_block(
+                (),
+                block_id,
+                Some(()),
+                None,
+                None,
+                false,
+                false,
+                false,
+                false,
+                false,
+            )
+            .await
+        {
             Ok(_) => true,
             Err(_) => false,
         }
@@ -141,7 +173,7 @@ impl LiteBalancer {
     async fn find_archives(&mut self) {
         let alive_peers: Vec<usize> = self.alive_peers.read().await.iter().copied().collect();
         let mut archival = HashSet::new();
-        
+
         for i in alive_peers {
             if let Some(client) = self.peers.get_mut(i) {
                 if Self::check_archive(client).await {
@@ -149,7 +181,7 @@ impl LiteBalancer {
                 }
             }
         }
-        
+
         *self.archival_peers.write().await = archival;
     }
 
@@ -168,33 +200,37 @@ impl LiteBalancer {
         } else {
             self.alive_peers.read().await.iter().copied().collect()
         };
-        
+
         let stats = self.peer_stats.read().await;
         let timeout_ms = self.timeout.as_millis() as u64;
-        
+
         let mut peers_vec: Vec<usize> = peers;
         peers_vec.sort_by(|a, b| {
             let stats_a = stats.get(a);
             let stats_b = stats.get(b);
-            
+
             let seqno_a = stats_a.map(|s| s.mc_block_seqno).unwrap_or(0);
             let seqno_b = stats_b.map(|s| s.mc_block_seqno).unwrap_or(0);
-            let time_a = stats_a.map(|s| s.avg_response_time_ms).unwrap_or(timeout_ms);
-            let time_b = stats_b.map(|s| s.avg_response_time_ms).unwrap_or(timeout_ms);
-            
+            let time_a = stats_a
+                .map(|s| s.avg_response_time_ms)
+                .unwrap_or(timeout_ms);
+            let time_b = stats_b
+                .map(|s| s.avg_response_time_ms)
+                .unwrap_or(timeout_ms);
+
             // Sort by seqno descending, then by response time ascending
             match seqno_b.cmp(&seqno_a) {
                 std::cmp::Ordering::Equal => time_a.cmp(&time_b),
                 other => other,
             }
         });
-        
+
         peers_vec
     }
 
     async fn choose_peer(&self, only_archive: bool) -> Result<usize> {
         let peers = self.build_priority_list(only_archive).await;
-        
+
         if peers.is_empty() {
             return Err(if only_archive {
                 BalancerError::NoArchivePeers
@@ -202,37 +238,54 @@ impl LiteBalancer {
                 BalancerError::NoAlivePeers
             });
         }
-        
+
         let stats = self.peer_stats.read().await;
+        let states = self.peer_states.read().await;
         let mut min_req = usize::MAX;
-        
+
         // First pass: find peer with acceptable load
         for &peer_idx in &peers {
+            if matches!(
+                states.get(&peer_idx),
+                Some(PeerState::Dead | PeerState::Recovering)
+            ) {
+                continue;
+            }
             let current_req = stats
                 .get(&peer_idx)
                 .map(|s| s.current_requests as usize)
                 .unwrap_or(0);
-            
+
             if current_req <= self.max_req_per_peer {
                 return Ok(peer_idx);
             }
-            
+
             min_req = min_req.min(current_req);
         }
-        
+
         // Second pass: find peer with minimum load
         for &peer_idx in &peers {
+            if matches!(
+                states.get(&peer_idx),
+                Some(PeerState::Dead | PeerState::Recovering)
+            ) {
+                continue;
+            }
             let current_req = stats
                 .get(&peer_idx)
                 .map(|s| s.current_requests as usize)
                 .unwrap_or(0);
-            
+
             if current_req <= min_req {
                 return Ok(peer_idx);
             }
         }
-        
-        Ok(peers[0])
+
+        Err(if only_archive {
+            BalancerError::NoArchivePeers
+        } else {
+            BalancerError::NoAlivePeers
+        })
     }
 
     fn calc_new_average(old_avg: u64, n: u64, new_value: u64) -> u64 {
@@ -246,7 +299,7 @@ impl LiteBalancer {
     async fn update_average_request_time(&self, peer_idx: usize, request_time_ms: u64) {
         let mut stats = self.peer_stats.write().await;
         let peer_stats = stats.entry(peer_idx).or_insert_with(PeerStats::default);
-        
+
         peer_stats.avg_response_time_ms = Self::calc_new_average(
             peer_stats.avg_response_time_ms,
             peer_stats.total_requests,
@@ -258,11 +311,11 @@ impl LiteBalancer {
     async fn find_consensus_block(&self) -> u32 {
         let stats = self.peer_stats.read().await;
         let mut seqnos: Vec<u32> = stats.values().map(|s| s.mc_block_seqno).collect();
-        
+
         if seqnos.is_empty() {
             return 0;
         }
-        
+
         seqnos.sort_by(|a, b| b.cmp(a));
         let consensus_idx = (seqnos.len() * 2) / 3;
         seqnos.get(consensus_idx).copied().unwrap_or(0)
@@ -272,7 +325,7 @@ impl LiteBalancer {
         let consensus_block = self.find_consensus_block().await;
         let stats = self.peer_stats.read().await;
         let mut alive = self.alive_peers.write().await;
-        
+
         alive.retain(|&peer_idx| {
             stats
                 .get(&peer_idx)
@@ -301,31 +354,38 @@ impl LiteBalancer {
         if let Some(handle) = self.checker_handle.write().await.take() {
             handle.abort();
         }
-        
+
         *self.inited.write().await = false;
         Ok(())
     }
 
-    async fn execute_request<T>(
-        &mut self,
-        only_archive: bool,
-    ) -> Result<(usize, Instant)> {
+    async fn execute_request<T>(&mut self, only_archive: bool) -> Result<(usize, Instant)> {
+        let _ = std::marker::PhantomData::<T>;
         let peer_idx = self.choose_peer(only_archive).await?;
-        
+
+        if let Some(limiter) = &self.global_rate_limiter {
+            limiter.acquire().await;
+        }
+
         // Increment current request count
         {
             let mut stats = self.peer_stats.write().await;
             let peer_stats = stats.entry(peer_idx).or_insert_with(PeerStats::default);
             peer_stats.current_requests += 1;
         }
-        
+
         let start = Instant::now();
         Ok((peer_idx, start))
     }
 
+    #[cfg(test)]
+    async fn execute_request_for_test(&mut self, only_archive: bool) -> Result<(usize, Instant)> {
+        self.execute_request::<()>(only_archive).await
+    }
+
     async fn complete_request(&mut self, peer_idx: usize, start: Instant, success: bool) {
         let elapsed = start.elapsed().as_millis() as u64;
-        
+
         // Decrement current request count
         {
             let mut stats = self.peer_stats.write().await;
@@ -333,13 +393,28 @@ impl LiteBalancer {
                 peer_stats.current_requests = peer_stats.current_requests.saturating_sub(1);
             }
         }
-        
+
         if success {
             self.update_average_request_time(peer_idx, elapsed).await;
+            self.peer_states
+                .write()
+                .await
+                .insert(peer_idx, PeerState::Healthy);
         } else {
-            self.update_average_request_time(peer_idx, self.timeout.as_millis() as u64).await;
+            self.update_average_request_time(peer_idx, self.timeout.as_millis() as u64)
+                .await;
             self.alive_peers.write().await.remove(&peer_idx);
+            self.peer_states
+                .write()
+                .await
+                .insert(peer_idx, PeerState::Dead);
         }
+    }
+
+    async fn update_peer_seqno(&self, peer_idx: usize, seqno: u32) {
+        let mut stats = self.peer_stats.write().await;
+        let peer_stats = stats.entry(peer_idx).or_insert_with(PeerStats::default);
+        peer_stats.mc_block_seqno = seqno;
     }
 
     // Delegate methods to underlying clients with load balancing
@@ -347,10 +422,13 @@ impl LiteBalancer {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<MasterchainInfo>(false).await?;
             let result = self.peers[peer_idx].get_masterchain_info().await;
-            
+
             match result {
                 Ok(response) => {
+                    self.update_peer_seqno(peer_idx, response.last.seqno as u32)
+                        .await;
                     self.complete_request(peer_idx, start, true).await;
+                    self.delete_unsync_peers().await;
                     return Ok(response);
                 }
                 Err(e) => {
@@ -369,7 +447,7 @@ impl LiteBalancer {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<MasterchainInfoExt>(false).await?;
             let result = self.peers[peer_idx].get_masterchain_info_ext(mode).await;
-            
+
             match result {
                 Ok(response) => {
                     self.complete_request(peer_idx, start, true).await;
@@ -391,7 +469,7 @@ impl LiteBalancer {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<u32>(false).await?;
             let result = self.peers[peer_idx].get_time().await;
-            
+
             match result {
                 Ok(response) => {
                     self.complete_request(peer_idx, start, true).await;
@@ -413,7 +491,7 @@ impl LiteBalancer {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<Version>(false).await?;
             let result = self.peers[peer_idx].get_version().await;
-            
+
             match result {
                 Ok(response) => {
                     self.complete_request(peer_idx, start, true).await;
@@ -435,7 +513,7 @@ impl LiteBalancer {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<Vec<u8>>(false).await?;
             let result = self.peers[peer_idx].get_block(id.clone()).await;
-            
+
             match result {
                 Ok(response) => {
                     self.complete_request(peer_idx, start, true).await;
@@ -457,7 +535,7 @@ impl LiteBalancer {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<BlockState>(false).await?;
             let result = self.peers[peer_idx].get_state(id.clone()).await;
-            
+
             match result {
                 Ok(response) => {
                     self.complete_request(peer_idx, start, true).await;
@@ -486,15 +564,17 @@ impl LiteBalancer {
     ) -> Result<Vec<u8>> {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<Vec<u8>>(false).await?;
-            let result = self.peers[peer_idx].get_block_header(
-                id.clone(),
-                with_state_update,
-                with_value_flow,
-                with_extra,
-                with_shard_hashes,
-                with_prev_blk_signatures,
-            ).await;
-            
+            let result = self.peers[peer_idx]
+                .get_block_header(
+                    id.clone(),
+                    with_state_update,
+                    with_value_flow,
+                    with_extra,
+                    with_shard_hashes,
+                    with_prev_blk_signatures,
+                )
+                .await;
+
             match result {
                 Ok(response) => {
                     self.complete_request(peer_idx, start, true).await;
@@ -518,13 +598,13 @@ impl LiteBalancer {
             let alive_count = self.alive_peers.read().await.len();
             if alive_count < 12 { 4 } else { alive_count / 3 }
         };
-        
+
         let mut results = Vec::new();
         for _ in 0..k.min(self.peers.len()) {
             for _attempt in 0..self.max_retries {
                 let (peer_idx, start) = self.execute_request::<u32>(false).await?;
                 let result = self.peers[peer_idx].send_message(body.clone()).await;
-                
+
                 match result {
                     Ok(status) => {
                         self.complete_request(peer_idx, start, true).await;
@@ -542,22 +622,28 @@ impl LiteBalancer {
                 }
             }
         }
-        
+
         // Return success if any peer succeeded
         for result in results {
             if let Ok(status) = result {
                 return Ok(status);
             }
         }
-        
+
         Err(BalancerError::Timeout)
     }
 
-    pub async fn get_account_state(&mut self, id: BlockIdExt, account: AccountId) -> Result<AccountState> {
+    pub async fn get_account_state(
+        &mut self,
+        id: BlockIdExt,
+        account: AccountId,
+    ) -> Result<AccountState> {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<AccountState>(false).await?;
-            let result = self.peers[peer_idx].get_account_state(id.clone(), account.clone()).await;
-            
+            let result = self.peers[peer_idx]
+                .get_account_state(id.clone(), account.clone())
+                .await;
+
             match result {
                 Ok(response) => {
                     self.complete_request(peer_idx, start, true).await;
@@ -580,19 +666,15 @@ impl LiteBalancer {
         mode: u32,
         id: BlockIdExt,
         account: Address,
-        method_id: u16,
+        method_id: u64,
         params: Vec<u8>,
     ) -> Result<RunMethodResult> {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<RunMethodResult>(false).await?;
-            let result = self.peers[peer_idx].run_smc_method(
-                mode,
-                id.clone(),
-                account.clone(),
-                method_id,
-                params.clone(),
-            ).await;
-            
+            let result = self.peers[peer_idx]
+                .run_smc_method(mode, id.clone(), account.clone(), method_id, params.clone())
+                .await;
+
             match result {
                 Ok(response) => {
                     self.complete_request(peer_idx, start, true).await;
@@ -610,6 +692,41 @@ impl LiteBalancer {
         Err(BalancerError::Timeout)
     }
 
+    pub async fn run_get_method(
+        &mut self,
+        mode: u32,
+        id: BlockIdExt,
+        account: Address,
+        method_id: u64,
+        stack: TvmStack,
+    ) -> Result<RunMethodResult> {
+        let params = stack.to_boc().map_err(|e| {
+            BalancerError::LiteError(LiteError::TlError(crate::tl::TlError::ParseError(
+                e.to_string(),
+            )))
+        })?;
+        self.run_smc_method(mode, id, account, method_id, params)
+            .await
+    }
+
+    pub async fn run_get_method_by_name(
+        &mut self,
+        mode: u32,
+        id: BlockIdExt,
+        account: Address,
+        method: &str,
+        stack: TvmStack,
+    ) -> Result<RunMethodResult> {
+        self.run_get_method(
+            mode,
+            id,
+            account,
+            crate::utils::method_name_to_id(method),
+            stack,
+        )
+        .await
+    }
+
     pub async fn get_transactions(
         &mut self,
         count: u32,
@@ -619,13 +736,10 @@ impl LiteBalancer {
     ) -> Result<TransactionList> {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<TransactionList>(false).await?;
-            let result = self.peers[peer_idx].get_transactions(
-                count,
-                account.clone(),
-                lt,
-                hash.clone(),
-            ).await;
-            
+            let result = self.peers[peer_idx]
+                .get_transactions(count, account.clone(), lt, hash.clone())
+                .await;
+
             match result {
                 Ok(response) => {
                     self.complete_request(peer_idx, start, true).await;
@@ -647,7 +761,34 @@ impl LiteBalancer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use std::time::Duration;
+    use tokio::sync::Mutex;
+    use tower::service_fn;
+
+    fn mock_client() -> LiteClient {
+        LiteClient::from_service(service_fn(
+            |request: crate::tl::request::RawWrappedRequest| async move {
+                Ok::<_, LiteError>(request.request)
+            },
+        ))
+    }
+
+    fn send_message_client(calls: Arc<Mutex<usize>>) -> LiteClient {
+        LiteClient::from_service(service_fn(
+            move |_request: crate::tl::request::RawWrappedRequest| {
+                let calls = Arc::clone(&calls);
+                async move {
+                    *calls.lock().await += 1;
+                    Ok::<_, LiteError>(tl_proto::serialize(
+                        crate::tl::response::Response::SendMsgStatus(
+                            crate::tl::response::SendMsgStatus { status: 1 },
+                        ),
+                    ))
+                }
+            },
+        ))
+    }
 
     #[test]
     fn test_balancer_error_display() {
@@ -693,7 +834,7 @@ mod tests {
     async fn test_balancer_initialization() {
         let peers = Vec::new();
         let balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         assert_eq!(balancer.peers_num(), 0);
         assert_eq!(balancer.alive_peers_num().await, 0);
         assert_eq!(balancer.archival_peers_num().await, 0);
@@ -707,20 +848,74 @@ mod tests {
     async fn test_balancer_configuration() {
         let peers = Vec::new();
         let mut balancer = LiteBalancer::new(peers, Duration::from_secs(5));
-        
+
         balancer.max_req_per_peer = 50;
         balancer.max_retries = 3;
-        
+
         assert_eq!(balancer.max_req_per_peer, 50);
         assert_eq!(balancer.max_retries, 3);
         assert_eq!(balancer.timeout, Duration::from_secs(5));
     }
 
     #[tokio::test]
+    async fn per_peer_rate_limit_is_attached_to_all_peers() {
+        let peers = vec![mock_client(), mock_client()];
+        let balancer = LiteBalancer::new(peers, Duration::from_secs(10))
+            .with_rate_limit_per_peer(RequestRateLimit::per_second(5).unwrap());
+
+        assert!(balancer.peers.iter().all(LiteClient::has_rate_limiter));
+    }
+
+    #[tokio::test]
+    async fn global_rate_limit_is_acquired_per_execute_request_attempt() {
+        let mut balancer = LiteBalancer::new(Vec::new(), Duration::from_secs(10))
+            .with_global_rate_limit(RequestRateLimit::with_burst(1, 1).unwrap());
+        balancer.alive_peers.write().await.insert(0);
+
+        let (peer_idx, start) = balancer.execute_request_for_test(false).await.unwrap();
+        balancer.complete_request(peer_idx, start, true).await;
+
+        let pending = tokio::time::timeout(
+            Duration::from_millis(10),
+            balancer.execute_request_for_test(false),
+        )
+        .await;
+        assert!(pending.is_err());
+        assert_eq!(
+            balancer
+                .peer_stats
+                .read()
+                .await
+                .get(&0)
+                .map(|stats| stats.current_requests),
+            Some(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn send_message_global_rate_limit_counts_each_peer_attempt() {
+        let calls = Arc::new(Mutex::new(0usize));
+        let peers = vec![
+            send_message_client(Arc::clone(&calls)),
+            send_message_client(Arc::clone(&calls)),
+        ];
+        let mut balancer = LiteBalancer::new(peers, Duration::from_secs(10))
+            .with_global_rate_limit(RequestRateLimit::with_burst(1, 1).unwrap());
+        balancer.alive_peers.write().await.insert(0);
+        balancer.alive_peers.write().await.insert(1);
+
+        let pending =
+            tokio::time::timeout(Duration::from_millis(10), balancer.send_message(vec![1])).await;
+
+        assert!(pending.is_err());
+        assert_eq!(*calls.lock().await, 1);
+    }
+
+    #[tokio::test]
     async fn test_empty_balancer_choose_peer() {
         let peers = Vec::new();
         let balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         let result = balancer.choose_peer(false).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), BalancerError::NoAlivePeers));
@@ -730,7 +925,7 @@ mod tests {
     async fn test_empty_balancer_choose_archive_peer() {
         let peers = Vec::new();
         let balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         let result = balancer.choose_peer(true).await;
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), BalancerError::NoArchivePeers));
@@ -740,7 +935,7 @@ mod tests {
     async fn test_consensus_block_empty() {
         let peers = Vec::new();
         let balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         let consensus = balancer.find_consensus_block().await;
         assert_eq!(consensus, 0);
     }
@@ -749,44 +944,59 @@ mod tests {
     async fn test_consensus_block_calculation() {
         let peers = Vec::new();
         let balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         // Add some peer stats manually
         {
             let mut stats = balancer.peer_stats.write().await;
-            
+
             // Add 5 peers with different seqnos
-            stats.insert(0, PeerStats {
-                mc_block_seqno: 100,
-                avg_response_time_ms: 50,
-                total_requests: 10,
-                current_requests: 0,
-            });
-            stats.insert(1, PeerStats {
-                mc_block_seqno: 100,
-                avg_response_time_ms: 60,
-                total_requests: 8,
-                current_requests: 0,
-            });
-            stats.insert(2, PeerStats {
-                mc_block_seqno: 99,
-                avg_response_time_ms: 40,
-                total_requests: 12,
-                current_requests: 0,
-            });
-            stats.insert(3, PeerStats {
-                mc_block_seqno: 101,
-                avg_response_time_ms: 55,
-                total_requests: 9,
-                current_requests: 0,
-            });
-            stats.insert(4, PeerStats {
-                mc_block_seqno: 98,
-                avg_response_time_ms: 70,
-                total_requests: 5,
-                current_requests: 0,
-            });
+            stats.insert(
+                0,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    avg_response_time_ms: 50,
+                    total_requests: 10,
+                    current_requests: 0,
+                },
+            );
+            stats.insert(
+                1,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    avg_response_time_ms: 60,
+                    total_requests: 8,
+                    current_requests: 0,
+                },
+            );
+            stats.insert(
+                2,
+                PeerStats {
+                    mc_block_seqno: 99,
+                    avg_response_time_ms: 40,
+                    total_requests: 12,
+                    current_requests: 0,
+                },
+            );
+            stats.insert(
+                3,
+                PeerStats {
+                    mc_block_seqno: 101,
+                    avg_response_time_ms: 55,
+                    total_requests: 9,
+                    current_requests: 0,
+                },
+            );
+            stats.insert(
+                4,
+                PeerStats {
+                    mc_block_seqno: 98,
+                    avg_response_time_ms: 70,
+                    total_requests: 5,
+                    current_requests: 0,
+                },
+            );
         }
-        
+
         let consensus = balancer.find_consensus_block().await;
         // With 5 peers, 2/3 index = 3, sorted descending: [101, 100, 100, 99, 98]
         // consensus should be at index 3, which is 99
@@ -797,7 +1007,7 @@ mod tests {
     async fn test_build_priority_list_sorting() {
         let peers = Vec::new();
         let balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         // Add some alive peers
         {
             let mut alive = balancer.alive_peers.write().await;
@@ -805,38 +1015,47 @@ mod tests {
             alive.insert(1);
             alive.insert(2);
         }
-        
+
         // Add peer stats with different characteristics
         {
             let mut stats = balancer.peer_stats.write().await;
-            
+
             // Peer 0: high seqno, medium response time
-            stats.insert(0, PeerStats {
-                mc_block_seqno: 100,
-                avg_response_time_ms: 50,
-                total_requests: 10,
-                current_requests: 0,
-            });
-            
+            stats.insert(
+                0,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    avg_response_time_ms: 50,
+                    total_requests: 10,
+                    current_requests: 0,
+                },
+            );
+
             // Peer 1: high seqno, low response time (should be first)
-            stats.insert(1, PeerStats {
-                mc_block_seqno: 100,
-                avg_response_time_ms: 30,
-                total_requests: 15,
-                current_requests: 0,
-            });
-            
+            stats.insert(
+                1,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    avg_response_time_ms: 30,
+                    total_requests: 15,
+                    current_requests: 0,
+                },
+            );
+
             // Peer 2: low seqno, low response time (should be last)
-            stats.insert(2, PeerStats {
-                mc_block_seqno: 95,
-                avg_response_time_ms: 25,
-                total_requests: 20,
-                current_requests: 0,
-            });
+            stats.insert(
+                2,
+                PeerStats {
+                    mc_block_seqno: 95,
+                    avg_response_time_ms: 25,
+                    total_requests: 20,
+                    current_requests: 0,
+                },
+            );
         }
-        
+
         let priority_list = balancer.build_priority_list(false).await;
-        
+
         // Expected order: peer 1 (seqno 100, 30ms), peer 0 (seqno 100, 50ms), peer 2 (seqno 95, 25ms)
         assert_eq!(priority_list.len(), 3);
         assert_eq!(priority_list[0], 1); // Best peer
@@ -848,7 +1067,7 @@ mod tests {
     async fn test_update_average_request_time() {
         let peers = Vec::new();
         let balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         // First update
         balancer.update_average_request_time(0, 100).await;
         {
@@ -857,7 +1076,7 @@ mod tests {
             assert_eq!(peer_stats.avg_response_time_ms, 100);
             assert_eq!(peer_stats.total_requests, 1);
         }
-        
+
         // Second update
         balancer.update_average_request_time(0, 200).await;
         {
@@ -866,7 +1085,7 @@ mod tests {
             assert_eq!(peer_stats.avg_response_time_ms, 150);
             assert_eq!(peer_stats.total_requests, 2);
         }
-        
+
         // Third update
         balancer.update_average_request_time(0, 300).await;
         {
@@ -881,7 +1100,7 @@ mod tests {
     async fn test_delete_unsync_peers() {
         let peers = Vec::new();
         let balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         // Add alive peers
         {
             let mut alive = balancer.alive_peers.write().await;
@@ -890,30 +1109,42 @@ mod tests {
             alive.insert(2);
             alive.insert(3);
         }
-        
+
         // Add peer stats
         {
             let mut stats = balancer.peer_stats.write().await;
-            stats.insert(0, PeerStats {
-                mc_block_seqno: 100,
-                ..Default::default()
-            });
-            stats.insert(1, PeerStats {
-                mc_block_seqno: 100,
-                ..Default::default()
-            });
-            stats.insert(2, PeerStats {
-                mc_block_seqno: 98, // Out of sync
-                ..Default::default()
-            });
-            stats.insert(3, PeerStats {
-                mc_block_seqno: 99,
-                ..Default::default()
-            });
+            stats.insert(
+                0,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    ..Default::default()
+                },
+            );
+            stats.insert(
+                1,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    ..Default::default()
+                },
+            );
+            stats.insert(
+                2,
+                PeerStats {
+                    mc_block_seqno: 98, // Out of sync
+                    ..Default::default()
+                },
+            );
+            stats.insert(
+                3,
+                PeerStats {
+                    mc_block_seqno: 99,
+                    ..Default::default()
+                },
+            );
         }
-        
+
         balancer.delete_unsync_peers().await;
-        
+
         let alive = balancer.alive_peers.read().await;
         // Consensus should be 99 or 100 depending on calculation
         // Peers with seqno >= consensus should remain
@@ -926,7 +1157,7 @@ mod tests {
         let peers = Vec::new();
         let mut balancer = LiteBalancer::new(peers, Duration::from_secs(10));
         balancer.max_req_per_peer = 5;
-        
+
         // Add alive peers
         {
             let mut alive = balancer.alive_peers.write().await;
@@ -934,36 +1165,45 @@ mod tests {
             alive.insert(1);
             alive.insert(2);
         }
-        
+
         // Add peer stats with different loads
         {
             let mut stats = balancer.peer_stats.write().await;
-            
+
             // Peer 0: overloaded
-            stats.insert(0, PeerStats {
-                mc_block_seqno: 100,
-                avg_response_time_ms: 50,
-                total_requests: 10,
-                current_requests: 10, // Over limit
-            });
-            
+            stats.insert(
+                0,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    avg_response_time_ms: 50,
+                    total_requests: 10,
+                    current_requests: 10, // Over limit
+                },
+            );
+
             // Peer 1: available (should be chosen)
-            stats.insert(1, PeerStats {
-                mc_block_seqno: 100,
-                avg_response_time_ms: 60,
-                total_requests: 5,
-                current_requests: 2, // Under limit
-            });
-            
+            stats.insert(
+                1,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    avg_response_time_ms: 60,
+                    total_requests: 5,
+                    current_requests: 2, // Under limit
+                },
+            );
+
             // Peer 2: available but slower
-            stats.insert(2, PeerStats {
-                mc_block_seqno: 100,
-                avg_response_time_ms: 80,
-                total_requests: 8,
-                current_requests: 3, // Under limit
-            });
+            stats.insert(
+                2,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    avg_response_time_ms: 80,
+                    total_requests: 8,
+                    current_requests: 3, // Under limit
+                },
+            );
         }
-        
+
         let chosen = balancer.choose_peer(false).await.unwrap();
         // Should choose peer 1 (under limit and faster than peer 2)
         assert_eq!(chosen, 1);
@@ -973,7 +1213,7 @@ mod tests {
     async fn test_archival_peers_filtering() {
         let peers = Vec::new();
         let balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         // Add some alive and archival peers
         {
             let mut alive = balancer.alive_peers.write().await;
@@ -981,17 +1221,17 @@ mod tests {
             alive.insert(1);
             alive.insert(2);
         }
-        
+
         {
             let mut archival = balancer.archival_peers.write().await;
             archival.insert(1); // Only peer 1 is archival
         }
-        
+
         // Build priority list for archival only
         let archival_list = balancer.build_priority_list(true).await;
         assert_eq!(archival_list.len(), 1);
         assert_eq!(archival_list[0], 1);
-        
+
         // Build priority list for all
         let all_list = balancer.build_priority_list(false).await;
         assert_eq!(all_list.len(), 3);
@@ -1001,21 +1241,21 @@ mod tests {
     async fn test_balancer_close_all() {
         let peers = Vec::new();
         let mut balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         // Manually set inited to true
         *balancer.inited.write().await = true;
-        
+
         // Start a dummy health checker
         let handle = tokio::spawn(async {
             tokio::time::sleep(Duration::from_secs(1000)).await;
         });
         *balancer.checker_handle.write().await = Some(handle);
-        
+
         assert!(balancer.is_inited().await);
-        
+
         // Close all
         balancer.close_all().await.unwrap();
-        
+
         assert!(!balancer.is_inited().await);
         assert!(balancer.checker_handle.read().await.is_none());
     }
@@ -1024,7 +1264,7 @@ mod tests {
     fn test_balancer_error_from_lite_error() {
         let lite_err = LiteError::UnexpectedMessage;
         let balancer_err: BalancerError = lite_err.into();
-        
+
         assert!(matches!(balancer_err, BalancerError::LiteError(_)));
     }
 
@@ -1032,16 +1272,16 @@ mod tests {
     async fn test_execute_request_increments_counter() {
         let peers = Vec::new();
         let mut balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         // Add an alive peer
         {
             let mut alive = balancer.alive_peers.write().await;
             alive.insert(0);
         }
-        
+
         // Execute request
         let (_peer_idx, _start) = balancer.execute_request::<()>(false).await.unwrap();
-        
+
         // Check that counter was incremented
         let stats = balancer.peer_stats.read().await;
         let peer_stats = stats.get(&0).unwrap();
@@ -1052,21 +1292,24 @@ mod tests {
     async fn test_complete_request_decrements_counter() {
         let peers = Vec::new();
         let mut balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         // Add peer with active request
         {
             let mut stats = balancer.peer_stats.write().await;
-            stats.insert(0, PeerStats {
-                mc_block_seqno: 100,
-                avg_response_time_ms: 50,
-                total_requests: 5,
-                current_requests: 3,
-            });
+            stats.insert(
+                0,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    avg_response_time_ms: 50,
+                    total_requests: 5,
+                    current_requests: 3,
+                },
+            );
         }
-        
+
         let start = Instant::now();
         balancer.complete_request(0, start, true).await;
-        
+
         // Check that counter was decremented
         let stats = balancer.peer_stats.read().await;
         let peer_stats = stats.get(&0).unwrap();
@@ -1077,16 +1320,16 @@ mod tests {
     async fn test_complete_request_removes_failed_peer() {
         let peers = Vec::new();
         let mut balancer = LiteBalancer::new(peers, Duration::from_secs(10));
-        
+
         // Add alive peer
         {
             let mut alive = balancer.alive_peers.write().await;
             alive.insert(0);
         }
-        
+
         let start = Instant::now();
         balancer.complete_request(0, start, false).await;
-        
+
         // Check that peer was removed from alive set
         let alive = balancer.alive_peers.read().await;
         assert!(!alive.contains(&0));

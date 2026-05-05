@@ -28,7 +28,7 @@
 //! # Examples
 //!
 //! ```rust
-//! use tonutils_rs::tvm::{Builder, Address};
+//! use tonutils::tvm::{Builder, Address};
 //!
 //! let mut builder = Builder::new();
 //!
@@ -50,6 +50,7 @@ use crate::tvm::address::{Address, ExternalAddress};
 use crate::tvm::cell::{Cell, CellBuilder, MAX_CELL_BITS, MAX_CELL_REFS};
 use crate::tvm::slice::Slice;
 use anyhow::{Result, bail};
+use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
 
 /// Extended builder with convenience methods
@@ -67,10 +68,7 @@ impl Builder {
 
     /// Returns the number of bits used
     pub fn bit_len(&self) -> usize {
-        // Count bits by building a temporary cell
-        // This is a workaround since CellBuilder fields are private
-        // In practice, we'd track this internally
-        0 // Placeholder - will be calculated when needed
+        self.inner.bit_len()
     }
 
     /// Returns the number of available bits
@@ -85,8 +83,7 @@ impl Builder {
 
     /// Returns the number of references
     pub fn ref_count(&self) -> usize {
-        // Placeholder - will be tracked internally
-        0
+        self.inner.ref_count()
     }
 
     /// Returns the number of available references
@@ -136,21 +133,22 @@ impl Builder {
         Ok(self)
     }
 
+    /// Stores an unsigned big integer with specific bit length
+    pub fn store_big_uint(&mut self, value: &BigUint, bits: usize) -> Result<&mut Self> {
+        self.inner.store_big_uint(value, bits)?;
+        Ok(self)
+    }
+
     /// Stores a signed integer with specific bit length
     pub fn store_int(&mut self, value: i64, bits: usize) -> Result<&mut Self> {
-        if bits > 64 {
-            bail!("Cannot store more than 64 bits");
-        }
+        self.inner.store_big_int(&BigInt::from(value), bits)?;
+        Ok(self)
+    }
 
-        // Convert signed to unsigned representation
-        let unsigned = if value < 0 {
-            let mask = (1u64 << bits) - 1;
-            (value as u64) & mask
-        } else {
-            value as u64
-        };
-
-        self.store_uint(unsigned, bits)
+    /// Stores a signed big integer with specific bit length
+    pub fn store_big_int(&mut self, value: &BigInt, bits: usize) -> Result<&mut Self> {
+        self.inner.store_big_int(value, bits)?;
+        Ok(self)
     }
 
     /// Stores a boolean value as a single bit
@@ -217,13 +215,36 @@ impl Builder {
 
     /// Stores a variable-length unsigned integer (VarUInteger)
     pub fn store_var_uint(&mut self, value: u64, length_bits: usize) -> Result<&mut Self> {
-        if value == 0 {
-            return self.store_uint(0, length_bits);
+        self.store_var_big_uint(&BigUint::from(value), length_bits)
+    }
+
+    /// Stores a variable-length unsigned big integer (VarUInteger).
+    pub fn store_var_big_uint(&mut self, value: &BigUint, length_bits: usize) -> Result<&mut Self> {
+        if length_bits > MAX_CELL_BITS {
+            bail!(
+                "VarUInteger length field {} exceeds maximum cell size",
+                length_bits
+            );
         }
 
-        let byte_len = ((64 - value.leading_zeros()) as usize + 7) / 8;
-        self.store_uint(byte_len as u64, length_bits)?;
-        self.store_uint(value, byte_len * 8)?;
+        let byte_len = if value == &BigUint::from(0u8) {
+            0
+        } else {
+            value.to_bytes_be().len()
+        };
+
+        if BigUint::from(byte_len) >= (BigUint::from(1u8) << length_bits) {
+            bail!(
+                "VarUInteger byte length {} does not fit in {} length bits",
+                byte_len,
+                length_bits
+            );
+        }
+
+        self.store_big_uint(&BigUint::from(byte_len), length_bits)?;
+        if byte_len > 0 {
+            self.store_bytes(&value.to_bytes_be())?;
+        }
         Ok(self)
     }
 
@@ -247,18 +268,16 @@ impl Builder {
 
     /// Stores coins (VarUInteger 16)
     pub fn store_coins(&mut self, amount: u128) -> Result<&mut Self> {
+        let byte_len = ((128 - amount.leading_zeros()) as usize + 7) / 8;
+        if byte_len > 15 {
+            bail!("Coins value too large for VarUInteger 16");
+        }
+
         if amount == 0 {
             return self.store_uint(0, 4);
         }
 
-        let byte_len = ((128 - amount.leading_zeros()) as usize + 7) / 8;
-        if byte_len > 16 {
-            bail!("Coins value too large");
-        }
-
         self.store_uint(byte_len as u64, 4)?;
-
-        // Store the value in big-endian
         let bytes = amount.to_be_bytes();
         let start = 16 - byte_len;
         self.store_bytes(&bytes[start..])?;

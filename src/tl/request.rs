@@ -17,12 +17,41 @@ pub struct LiteQuery {
     pub wrapped_request: WrappedRequest,
 }
 
+/// liteServer.query data:bytes = Object;
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq)]
+#[tl(
+    boxed,
+    id = "liteServer.query",
+    scheme_inline = r##"liteServer.query data:bytes = Object;"##
+)]
+pub struct LiteQueryRaw {
+    pub data: Vec<u8>,
+}
+
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq)]
 pub struct WrappedRequest {
     #[tl(read_with = "lossy_read")]
     pub wait_masterchain_seqno: Option<WaitMasterchainSeqno>,
     pub request: Request,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawWrappedRequest {
+    pub wait_masterchain_seqno: Option<WaitMasterchainSeqno>,
+    pub request: Vec<u8>,
+}
+
+impl RawWrappedRequest {
+    pub fn into_lite_query(self) -> LiteQueryRaw {
+        let mut data = Vec::new();
+        if let Some(wait_masterchain_seqno) = self.wait_masterchain_seqno {
+            data.extend(tl_proto::serialize(wait_masterchain_seqno));
+        }
+        data.extend(self.request);
+        LiteQueryRaw { data }
+    }
 }
 
 /// liteServer.waitMasterchainSeqno seqno:int timeout_ms:int = Object;
@@ -41,7 +70,7 @@ pub struct WaitMasterchainSeqno {
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq)]
 pub struct GetMasterchainInfoExt {
-    pub mode: u32
+    pub mode: u32,
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -93,7 +122,7 @@ pub struct RunSmcMethod {
     pub mode: u32,
     pub id: BlockIdExt,
     pub account: AccountId,
-    pub method_id: u32,
+    pub method_id: u64,
     pub params: Vec<u8>,
 }
 
@@ -160,22 +189,10 @@ pub struct LookupBlockWithProof {
     pub mode: (),
     pub id: BlockId,
     pub mc_block_id: BlockIdExt,
-    #[tl(flags_bit = "mode.0")]
-    pub seqno: Option<()>,
     #[tl(flags_bit = "mode.1")]
     pub lt: Option<u64>,
     #[tl(flags_bit = "mode.2")]
     pub utime: Option<u32>,
-    #[tl(flags_bit = "mode.4")]
-    pub with_state_update: Option<()>,
-    #[tl(flags_bit = "mode.5")]
-    pub with_value_flow: Option<()>,
-    #[tl(flags_bit = "mode.8")]
-    pub with_extra: Option<()>,
-    #[tl(flags_bit = "mode.9")]
-    pub with_shard_hashes: Option<()>,
-    #[tl(flags_bit = "mode.10")]
-    pub with_prev_blk_signatures: Option<()>,
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -308,7 +325,9 @@ pub struct GetOutMsgQueueSizes {
     #[tl(flags)]
     pub mode: (),
     #[tl(flags_bit = "mode.0")]
-    pub shard_id: Option<(u32, u64)>,
+    pub wc: Option<i32>,
+    #[tl(flags_bit = "mode.0")]
+    pub shard: Option<u64>,
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -349,6 +368,34 @@ pub struct GetDispatchQueueMessages {
     pub one_account: Option<()>,
     #[tl(flags_bit = "mode.2")]
     pub message_boc: Option<()>,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq)]
+pub struct NonfinalGetValidatorGroups {
+    #[tl(flags)]
+    pub mode: (),
+    #[tl(flags_bit = "mode.0")]
+    pub wc: Option<i32>,
+    #[tl(flags_bit = "mode.0")]
+    pub shard: Option<u64>,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq)]
+pub struct NonfinalGetCandidate {
+    pub id: NonfinalCandidateId,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq)]
+pub struct NonfinalGetPendingShardBlocks {
+    #[tl(flags)]
+    pub mode: (),
+    #[tl(flags_bit = "mode.0")]
+    pub wc: Option<i32>,
+    #[tl(flags_bit = "mode.0")]
+    pub shard: Option<u64>,
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -474,4 +521,16 @@ pub enum Request {
     /// liteServer.getDispatchQueueMessages mode:# id:tonNode.blockIdExt addr:int256 after_lt:long max_messages:int want_proof:mode.0?true one_account:mode.1?true messages_boc:mode.2?true = liteServer.DispatchQueueMessages;
     #[tl(id = 0xbbfd6439)]
     GetDispatchQueueMessages(GetDispatchQueueMessages),
+
+    /// liteServer.nonfinal.getValidatorGroups mode:# wc:mode.0?int shard:mode.0?long = liteServer.nonfinal.ValidatorGroups;
+    #[tl(id = 0xa59915e3)]
+    NonfinalGetValidatorGroups(NonfinalGetValidatorGroups),
+
+    /// liteServer.nonfinal.getCandidate id:liteServer.nonfinal.candidateId = liteServer.nonfinal.Candidate;
+    #[tl(id = 0x300794de)]
+    NonfinalGetCandidate(NonfinalGetCandidate),
+
+    /// liteServer.nonfinal.getPendingShardBlocks mode:# wc:mode.0?int shard:mode.0?long = liteServer.nonfinal.PendingShardBlocks;
+    #[tl(id = 0x5a8ee82c)]
+    NonfinalGetPendingShardBlocks(NonfinalGetPendingShardBlocks),
 }

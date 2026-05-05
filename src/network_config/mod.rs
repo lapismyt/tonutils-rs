@@ -3,6 +3,14 @@ use std::net::{Ipv4Addr, SocketAddrV4};
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("network config has no liteservers")]
+    EmptyLiteServers,
+    #[error("liteserver index {index} is out of bounds for {len} configured liteservers")]
+    LiteServerIndexOutOfBounds { index: usize, len: usize },
+}
+
 #[serde_with::serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "@type")]
@@ -47,6 +55,18 @@ impl Into<[u8; 32]> for ConfigPublicKey {
     }
 }
 
+impl ConfigPublicKey {
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        match self {
+            ConfigPublicKey::Ed25519 { key } => key,
+        }
+    }
+
+    pub fn to_bytes(&self) -> [u8; 32] {
+        *self.as_bytes()
+    }
+}
+
 impl Deref for LiteServerAddress {
     type Target = Ipv4Addr;
 
@@ -76,6 +96,27 @@ impl From<LiteServerAddress> for i32 {
 impl ConfigLiteServer {
     pub fn socket_addr(&self) -> SocketAddrV4 {
         SocketAddrV4::new(*self.ip, self.port)
+    }
+
+    pub fn public_key(&self) -> [u8; 32] {
+        self.id.to_bytes()
+    }
+}
+
+impl ConfigGlobal {
+    pub fn liteserver(&self, index: usize) -> Result<&ConfigLiteServer, ConfigError> {
+        self.liteservers
+            .get(index)
+            .ok_or(ConfigError::LiteServerIndexOutOfBounds {
+                index,
+                len: self.liteservers.len(),
+            })
+    }
+
+    pub fn first_liteserver(&self) -> Result<&ConfigLiteServer, ConfigError> {
+        self.liteservers
+            .first()
+            .ok_or(ConfigError::EmptyLiteServers)
     }
 }
 
