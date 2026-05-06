@@ -31,17 +31,17 @@ pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
     // Serialize each cell
     let mut serialized_cells = Vec::new();
     let mut cell_map = HashMap::new();
+    let size_bytes = bytes_needed(cells.len());
 
     for (idx, cell) in cells.iter().enumerate() {
         cell_map.insert(cell_hash(cell), idx);
-        serialized_cells.push(serialize_cell(cell, &cell_map)?);
+        serialized_cells.push(serialize_cell(cell, &cell_map, size_bytes)?);
     }
 
     // Calculate total size of serialized cells
     let cells_size: usize = serialized_cells.iter().map(|c| c.len()).sum();
 
     // Determine size parameters
-    let size_bytes = bytes_needed(cells.len());
     let offset_bytes = bytes_needed(cells_size);
 
     // Build header
@@ -123,12 +123,8 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
     let has_cache_bits = (flags_and_size & 0x20) != 0;
     let size_bytes = (flags_and_size & 0x07) as usize;
 
-    if has_idx {
-        bail!("BoC index table flag is not supported");
-    }
-
     if has_cache_bits {
-        bail!("BoC cache bits flag is not supported");
+        bail!("BoC cache bits flag is unsupported for ordinary-cell decoding");
     }
 
     if size_bytes == 0 || size_bytes > 8 {
@@ -163,6 +159,24 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
 
     // Root cell index
     let root_idx = read_uint(data, &mut pos, size_bytes)?;
+    if root_idx >= cells_count {
+        bail!("Invalid root index: {}", root_idx);
+    }
+
+    if has_idx {
+        let mut previous_offset = 0usize;
+        for index in 0..cells_count {
+            let offset = read_uint(data, &mut pos, offset_bytes)
+                .map_err(|_| anyhow::anyhow!("Malformed BoC index table"))?;
+            if offset < previous_offset || offset > cells_size {
+                bail!("Malformed BoC index table");
+            }
+            previous_offset = offset;
+            if index + 1 == cells_count && offset != cells_size {
+                bail!("Malformed BoC index table");
+            }
+        }
+    }
 
     // Parse cells
     let cells_start = pos;
@@ -186,7 +200,7 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
     }
 
     let cells_data = &data[cells_start..cells_end];
-    let cells = parse_cells(cells_data, cells_count)?;
+    let cells = parse_cells(cells_data, cells_count, size_bytes)?;
 
     // Verify CRC32 if present
     if has_crc32 {
@@ -210,16 +224,16 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
     }
 
     // Return root cell
-    if root_idx >= cells.len() {
-        bail!("Invalid root index: {}", root_idx);
-    }
-
     Ok(cells[root_idx].clone())
 }
 
-fn parse_cells(data: &[u8], count: usize) -> Result<Vec<Arc<Cell>>> {
+fn parse_cells(data: &[u8], count: usize, ref_index_size: usize) -> Result<Vec<Arc<Cell>>> {
     let mut cells = Vec::with_capacity(count);
     let mut cell_refs: Vec<Vec<usize>> = Vec::with_capacity(count);
+    let mut cell_is_exotic = Vec::with_capacity(count);
+    let mut cell_levels = Vec::with_capacity(count);
+    let mut cell_raw_data = Vec::with_capacity(count);
+    let mut cell_bit_lens = Vec::with_capacity(count);
     let mut pos = 0;
 
     // First pass: parse cell data and reference indices
@@ -241,8 +255,11 @@ fn parse_cells(data: &[u8], count: usize) -> Result<Vec<Arc<Cell>>> {
 
         // Parse descriptor 1
         let ref_count = (d1 & 0x07) as usize;
-        let _is_exotic = (d1 & 0x08) != 0;
-        let _level = (d1 >> 5) & 0x03;
+        let is_exotic = (d1 & 0x08) != 0;
+        let level = (d1 >> 5) & 0x03;
+        if d1 & 0x10 != 0 || d1 & 0x80 != 0 {
+            bail!("Invalid cell descriptor: reserved bits are set");
+        }
 
         // Parse descriptor 2
         // d2 = floor(b/8) + ceil(b/8) where b is the number of bits
@@ -261,13 +278,13 @@ fn parse_cells(data: &[u8], count: usize) -> Result<Vec<Arc<Cell>>> {
         // Read reference indices
         let mut refs = Vec::new();
         for _ in 0..ref_count {
-            if pos >= data.len() {
-                bail!("Unexpected end of cells data while reading references");
-            }
-            refs.push(data[pos] as usize);
-            pos += 1;
+            refs.push(read_uint(data, &mut pos, ref_index_size).map_err(|_| {
+                anyhow::anyhow!("Unexpected end of cells data while reading references")
+            })?);
         }
         cell_refs.push(refs);
+        cell_is_exotic.push(is_exotic);
+        cell_levels.push(level);
 
         // Calculate bit length from descriptor d2
         // d2 = floor(b/8) + ceil(b/8)
@@ -275,6 +292,8 @@ fn parse_cells(data: &[u8], count: usize) -> Result<Vec<Arc<Cell>>> {
         //             if b % 8 != 0, then d2 = 2*floor(b/8) + 1, so b is between (d2-1)*4 and d2*4
         // We need to find the exact bit length by looking at the padding bit
         let (cell_data, bit_len) = decode_cell_data(&serialized_cell_data, d2)?;
+        cell_raw_data.push(cell_data.clone());
+        cell_bit_lens.push(bit_len);
 
         // Create cell (without references for now)
         let cell = Cell::with_data(cell_data, bit_len)?;
@@ -286,22 +305,36 @@ fn parse_cells(data: &[u8], count: usize) -> Result<Vec<Arc<Cell>>> {
     }
 
     // Second pass: resolve references
-    for (i, refs) in cell_refs.iter().enumerate() {
-        if !refs.is_empty() {
-            // We need to create a new cell with references
-            // Since Cell doesn't allow modification after creation, we need to rebuild
-            let old_cell = &cells[i];
-            let mut new_cell = Cell::with_data(old_cell.data().to_vec(), old_cell.bit_len())?;
-
-            for &ref_idx in refs {
-                if ref_idx >= cells.len() {
-                    bail!("Invalid reference index: {}", ref_idx);
-                }
-                new_cell.add_reference(cells[ref_idx].clone())?;
+    for i in 0..cells.len() {
+        let refs = &cell_refs[i];
+        let mut references = Vec::with_capacity(refs.len());
+        for &ref_idx in refs {
+            if ref_idx >= cells.len() {
+                bail!("Invalid reference index: {}", ref_idx);
             }
-
-            cells[i] = Arc::new(new_cell);
+            references.push(cells[ref_idx].clone());
         }
+
+        let new_cell = if cell_is_exotic[i] {
+            Cell::with_exotic_data(cell_raw_data[i].clone(), cell_bit_lens[i], references)
+                .map_err(|err| anyhow::anyhow!("Invalid exotic cell: {}", err))?
+        } else {
+            let mut cell = Cell::with_data(cell_raw_data[i].clone(), cell_bit_lens[i])?;
+            for reference in references {
+                cell.add_reference(reference)?;
+            }
+            cell
+        };
+
+        if new_cell.level() != cell_levels[i] {
+            bail!(
+                "Invalid cell descriptor level: expected {}, got {}",
+                new_cell.level(),
+                cell_levels[i]
+            );
+        }
+
+        cells[i] = Arc::new(new_cell);
     }
 
     Ok(cells)
@@ -345,7 +378,11 @@ fn decode_cell_data(data: &[u8], d2: u8) -> Result<(Vec<u8>, usize)> {
     Ok((cell_data, bit_len))
 }
 
-fn serialize_cell(cell: &Arc<Cell>, cell_map: &HashMap<[u8; 32], usize>) -> Result<Vec<u8>> {
+fn serialize_cell(
+    cell: &Arc<Cell>,
+    cell_map: &HashMap<[u8; 32], usize>,
+    ref_index_size: usize,
+) -> Result<Vec<u8>> {
     let mut result = Vec::new();
 
     // Add descriptors
@@ -363,9 +400,7 @@ fn serialize_cell(cell: &Arc<Cell>, cell_map: &HashMap<[u8; 32], usize>) -> Resu
             .get(&ref_hash)
             .ok_or_else(|| anyhow::anyhow!("Reference not found in cell map"))?;
 
-        // Write reference index (size depends on total cell count)
-        // For simplicity, using 1 byte for now
-        result.push(*ref_idx as u8);
+        write_uint(&mut result, *ref_idx, ref_index_size);
     }
 
     Ok(result)
@@ -470,7 +505,99 @@ pub fn base64_to_boc(b64: &str) -> Result<Arc<Cell>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tvm::cell::ExoticCellKind;
     use crate::tvm::cell::{CellBuilder, MAX_CELL_BITS};
+
+    const EMPTY_CELL_BOC_HEX: &str = "b5ee9c72010101010002000000";
+    const ONE_BYTE_CELL_BOC_HEX: &str = "b5ee9c72010101010003000002aa";
+    const REF_CELL_BOC_HEX: &str = "b5ee9c72010102010007010002aa0102bb00";
+    const INDEXED_REF_CELL_BOC_HEX: &str = "b5ee9c728101020100070103070002aa0102bb00";
+    const LIBRARY_REFERENCE_BOC_HEX: &str = "b5ee9c72010101010023000842023333333333333333333333333333333333333333333333333333333333333333";
+
+    fn single_cell_boc(cell_bytes: &[u8]) -> Vec<u8> {
+        let mut boc = vec![
+            0xB5,
+            0xEE,
+            0x9C,
+            0x72, // generic magic
+            0x01, // no flags, size_bytes = 1
+            0x01, // offset_bytes = 1
+            0x01, // cells count
+            0x01, // roots count
+            0x00, // absent count
+            cell_bytes.len() as u8,
+            0x00, // root index
+        ];
+        boc.extend_from_slice(cell_bytes);
+        boc
+    }
+
+    fn decode_hex_fixture(hex: &str) -> Vec<u8> {
+        hex::decode(hex).unwrap()
+    }
+
+    #[test]
+    fn test_ordinary_boc_golden_fixtures() {
+        let empty = deserialize_boc(&decode_hex_fixture(EMPTY_CELL_BOC_HEX)).unwrap();
+        assert_eq!(empty.bit_len(), 0);
+        assert_eq!(empty.reference_count(), 0);
+        assert_eq!(
+            serialize_boc(&empty, false).unwrap(),
+            decode_hex_fixture(EMPTY_CELL_BOC_HEX)
+        );
+
+        let one_byte = deserialize_boc(&decode_hex_fixture(ONE_BYTE_CELL_BOC_HEX)).unwrap();
+        assert_eq!(one_byte.bit_len(), 8);
+        assert_eq!(one_byte.data(), &[0xAA]);
+        assert_eq!(
+            serialize_boc(&one_byte, false).unwrap(),
+            decode_hex_fixture(ONE_BYTE_CELL_BOC_HEX)
+        );
+    }
+
+    #[test]
+    fn test_indexed_boc_golden_fixture_decodes_to_canonical_unindexed_form() {
+        let decoded = deserialize_boc(&decode_hex_fixture(INDEXED_REF_CELL_BOC_HEX)).unwrap();
+        assert_eq!(decoded.bit_len(), 8);
+        assert_eq!(decoded.data(), &[0xBB]);
+        assert_eq!(decoded.reference_count(), 1);
+        assert_eq!(decoded.reference(0).unwrap().data(), &[0xAA]);
+        assert_eq!(
+            serialize_boc(&decoded, false).unwrap(),
+            decode_hex_fixture(REF_CELL_BOC_HEX)
+        );
+    }
+
+    #[test]
+    fn test_exotic_library_reference_boc_golden_fixture() {
+        let decoded = deserialize_boc(&decode_hex_fixture(LIBRARY_REFERENCE_BOC_HEX)).unwrap();
+        let expected_hash = [0x33u8; 32];
+
+        assert!(decoded.is_exotic());
+        assert_eq!(decoded.bit_len(), 264);
+        assert_eq!(decoded.reference_count(), 0);
+        assert_eq!(decoded.descriptors(), [0x08, 0x42]);
+        assert_eq!(
+            decoded.exotic_kind(),
+            Some(&ExoticCellKind::LibraryReference {
+                hash: expected_hash
+            })
+        );
+        assert_eq!(
+            serialize_boc(&decoded, false).unwrap(),
+            decode_hex_fixture(LIBRARY_REFERENCE_BOC_HEX)
+        );
+    }
+
+    #[test]
+    fn test_cache_bit_fixture_is_rejected_by_policy() {
+        let mut boc = decode_hex_fixture(EMPTY_CELL_BOC_HEX);
+        boc[4] |= 0x20;
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("cache bits flag"));
+        assert!(err.contains("unsupported"));
+    }
 
     #[test]
     fn test_serialize_deserialize_simple() {
@@ -540,13 +667,26 @@ mod tests {
     }
 
     #[test]
-    fn test_deserialize_rejects_unsupported_index_flag() {
+    fn test_deserialize_accepts_index_table() {
         let cell = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
         let mut boc = serialize_boc(&cell, false).unwrap();
         boc[4] |= 0x80;
+        let cells_size = boc[9];
+        boc.insert(11, cells_size);
+
+        let decoded = deserialize_boc(&boc).unwrap();
+        assert_eq!(decoded.hash(), cell.hash());
+    }
+
+    #[test]
+    fn test_deserialize_rejects_malformed_index_table() {
+        let cell = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let mut boc = serialize_boc(&cell, false).unwrap();
+        boc[4] |= 0x80;
+        boc.insert(11, 0);
 
         let err = deserialize_boc(&boc).unwrap_err().to_string();
-        assert!(err.contains("index table flag"));
+        assert!(err.contains("index table"));
     }
 
     #[test]
@@ -557,6 +697,42 @@ mod tests {
 
         let err = deserialize_boc(&boc).unwrap_err().to_string();
         assert!(err.contains("cache bits flag"));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_crc_mismatch() {
+        let cell = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let mut boc = serialize_boc(&cell, true).unwrap();
+        let last = boc.len() - 1;
+        boc[last] ^= 1;
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("CRC32 mismatch"));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_invalid_root_index() {
+        let cell = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let mut boc = serialize_boc(&cell, false).unwrap();
+        boc[10] = 1;
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("Invalid root index"));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_invalid_reference_index() {
+        let child = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let mut root = Cell::with_data(vec![0xBB], 8).unwrap();
+        root.add_reference(child).unwrap();
+        let root = Arc::new(root);
+
+        let mut boc = serialize_boc(&root, false).unwrap();
+        let last = boc.len() - 1;
+        boc[last] = 2;
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("Invalid reference index"));
     }
 
     #[test]
@@ -597,5 +773,148 @@ mod tests {
 
         let err = deserialize_boc(&boc).unwrap_err().to_string();
         assert!(err.contains("top-up bit without data bits"));
+    }
+
+    #[test]
+    fn test_base64_conversion_with_crc_roundtrips() {
+        let mut builder = CellBuilder::new();
+        builder.store_u32(0xDEADBEEF).unwrap();
+        let cell = builder.build().unwrap();
+
+        let b64 = boc_to_base64(&cell, true).unwrap();
+        let decoded = base64_to_boc(&b64).unwrap();
+
+        assert_eq!(cell.hash(), decoded.hash());
+    }
+
+    #[test]
+    fn test_deserialize_exotic_descriptor_does_not_become_ordinary_cell() {
+        let library_hash = [0x11u8; 32];
+        let mut data = vec![0x02];
+        data.extend_from_slice(&library_hash);
+        let cell = Arc::new(Cell::with_exotic_data(data, 264, Vec::new()).unwrap());
+
+        let boc = serialize_boc(&cell, false).unwrap();
+        let decoded = deserialize_boc(&boc).unwrap();
+
+        assert!(decoded.is_exotic());
+        assert_eq!(decoded.level(), 0);
+        assert_eq!(decoded.reference_count(), 0);
+        assert_eq!(decoded.descriptors(), [0x08, 0x42]);
+        assert_eq!(decoded.hash(), cell.hash());
+        assert_eq!(
+            decoded.exotic_kind(),
+            Some(&ExoticCellKind::LibraryReference { hash: library_hash })
+        );
+    }
+
+    #[test]
+    fn test_deserialize_rejects_invalid_exotic_payload() {
+        let boc = single_cell_boc(&[
+            0x08, // exotic descriptor, level 0, no refs
+            0x02, // one full payload byte
+            0x02, // library reference tag without the required 256-bit hash
+        ]);
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("Invalid exotic cell"));
+        assert!(err.contains("library reference payload length"));
+    }
+
+    #[test]
+    fn test_deserialize_rejects_unsupported_exotic_type() {
+        let boc = single_cell_boc(&[
+            0x08, // exotic descriptor, level 0, no refs
+            0x02, // one full payload byte
+            0xFF, // unsupported exotic tag
+        ]);
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("Unsupported exotic cell type"));
+    }
+
+    #[test]
+    fn test_exotic_pruned_branch_descriptor_level_depth_and_hash_roundtrip() {
+        let pruned_hash = [0x22u8; 32];
+        let pruned_depth = 7u16;
+        let mut data = vec![0x01, 0x01];
+        data.extend_from_slice(&pruned_hash);
+        data.extend_from_slice(&pruned_depth.to_be_bytes());
+        let cell = Arc::new(Cell::with_exotic_data(data, 288, Vec::new()).unwrap());
+
+        assert!(cell.is_exotic());
+        assert_eq!(cell.level(), 1);
+        assert_eq!(cell.depth(), 0);
+        assert_eq!(cell.descriptors(), [0x28, 0x48]);
+        assert_eq!(
+            cell.exotic_kind(),
+            Some(&ExoticCellKind::PrunedBranch {
+                level_mask: 0x01,
+                hashes: vec![pruned_hash],
+                depths: vec![pruned_depth],
+            })
+        );
+
+        let decoded = deserialize_boc(&serialize_boc(&cell, false).unwrap()).unwrap();
+        assert_eq!(decoded.exotic_kind(), cell.exotic_kind());
+        assert_eq!(decoded.hash(), cell.hash());
+    }
+
+    #[test]
+    fn test_exotic_library_reference_descriptor_level_depth_and_hash_roundtrip() {
+        let library_hash = [0x33u8; 32];
+        let mut data = vec![0x02];
+        data.extend_from_slice(&library_hash);
+        let cell = Arc::new(Cell::with_exotic_data(data, 264, Vec::new()).unwrap());
+
+        assert!(cell.is_exotic());
+        assert_eq!(cell.level(), 0);
+        assert_eq!(cell.depth(), 0);
+        assert_eq!(cell.descriptors(), [0x08, 0x42]);
+
+        let decoded = deserialize_boc(&serialize_boc(&cell, false).unwrap()).unwrap();
+        assert_eq!(decoded.exotic_kind(), cell.exotic_kind());
+        assert_eq!(decoded.hash(), cell.hash());
+    }
+
+    #[test]
+    fn test_exotic_merkle_proof_descriptor_level_depth_and_hash_roundtrip() {
+        let child = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let proof_hash = child.hash();
+        let proof_depth = child.depth();
+        let mut data = vec![0x03];
+        data.extend_from_slice(&proof_hash);
+        data.extend_from_slice(&proof_depth.to_be_bytes());
+        let cell = Arc::new(Cell::with_exotic_data(data, 280, vec![child]).unwrap());
+
+        assert!(cell.is_exotic());
+        assert_eq!(cell.level(), 0);
+        assert_eq!(cell.depth(), 1);
+        assert_eq!(cell.descriptors(), [0x09, 0x46]);
+
+        let decoded = deserialize_boc(&serialize_boc(&cell, false).unwrap()).unwrap();
+        assert_eq!(decoded.exotic_kind(), cell.exotic_kind());
+        assert_eq!(decoded.hash(), cell.hash());
+    }
+
+    #[test]
+    fn test_exotic_merkle_update_descriptor_level_depth_and_hash_roundtrip() {
+        let old = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let new = Arc::new(Cell::with_data(vec![0xBB], 8).unwrap());
+        let mut data = vec![0x04];
+        data.extend_from_slice(&old.hash());
+        data.extend_from_slice(&new.hash());
+        data.extend_from_slice(&old.depth().to_be_bytes());
+        data.extend_from_slice(&new.depth().to_be_bytes());
+        let cell = Arc::new(Cell::with_exotic_data(data, 552, vec![old, new]).unwrap());
+
+        assert!(cell.is_exotic());
+        assert_eq!(cell.level(), 0);
+        assert_eq!(cell.depth(), 1);
+        assert_eq!(cell.descriptors(), [0x0A, 0x8A]);
+
+        let decoded = deserialize_boc(&serialize_boc(&cell, false).unwrap()).unwrap();
+        assert_eq!(decoded.exotic_kind(), cell.exotic_kind());
+        assert_eq!(decoded.hash(), cell.hash());
     }
 }

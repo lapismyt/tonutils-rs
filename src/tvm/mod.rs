@@ -23,7 +23,7 @@ pub use boc::{
     base64_to_boc, boc_to_base64, boc_to_hex, deserialize_boc, hex_to_boc, serialize_boc,
 };
 pub use builder::Builder;
-pub use cell::{Cell, CellBuilder, MAX_CELL_BITS, MAX_CELL_LEVEL, MAX_CELL_REFS};
+pub use cell::{Cell, CellBuilder, ExoticCellKind, MAX_CELL_BITS, MAX_CELL_LEVEL, MAX_CELL_REFS};
 pub use dict::{BitKey, Dict, DictKey, DictValue, HashmapE};
 pub use slice::Slice;
 pub use stack::{TvmStack, TvmStackEntry};

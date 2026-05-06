@@ -1,62 +1,165 @@
 # Bag Of Cells
 
-BoC serializes a directed acyclic graph of cells into bytes.
+## Purpose And Scope
 
-## Responsibilities
+Bag of Cells serializes a directed acyclic graph of TON cells into bytes. This
+page documents the ordinary-cell BoC baseline implemented in `src/tvm/boc.rs`.
+The current implementation is intended to support future TL-B and contract work
+without depending on a third-party Rust TON SDK.
 
-BoC must preserve:
+This slice covers generic BoC decoding and encoding for ordinary and supported
+exotic cells, optional CRC32, optional index tables during decode, and string
+conversion helpers.
 
-- root cells,
-- cell data bits,
-- references,
-- topological order,
-- optional index table,
-- optional CRC32C.
+## Wire Format
 
-## Header Concepts
+The supported generic BoC magic is:
 
-A BoC header contains:
+```text
+b5 ee 9c 72
+```
 
-- magic prefix,
-- flags,
-- size byte widths,
-- cell count,
-- root count,
-- absent count,
-- total cell size,
-- root indexes,
-- optional index offsets.
+The generic header fields are read in this order:
+
+```text
+magic:4
+flags_and_size:1
+offset_bytes:1
+cells_count:size_bytes
+roots_count:size_bytes
+absent_count:size_bytes
+cells_size:offset_bytes
+root_index:size_bytes
+index_table:cells_count * offset_bytes, only when has_idx is set
+cells:cells_size
+crc32:4, only when has_crc32 is set
+```
+
+`flags_and_size` contains:
+
+- bit 7: index table flag,
+- bit 6: CRC32 flag,
+- bit 5: cache bits flag,
+- low 3 bits: `size_bytes`.
+
+Integer fields are big-endian. The CRC32 trailer used by this crate is stored
+little-endian, matching the existing serializer behavior.
 
 ## Cell Serialization
 
-Each cell serializes:
+Each cell serializes as:
 
-1. descriptor bytes,
-2. padded data bytes,
-3. reference indexes.
+```text
+refs_descriptor:1
+bits_descriptor:1
+data:ceil(bits / 8)
+ref_indexes:ref_count * size_bytes
+```
 
-Reference indexes point to other serialized cells.
+The first descriptor stores reference count in bits `0..=2`, the exotic flag in
+bit `3`, and level in bits `5..=6`. Reserved bits must be unset. For ordinary
+cells, the level is the maximum level of all references. For exotic cells, the
+decoder derives the level from the parsed exotic kind and rejects a descriptor
+whose level does not match.
 
-## Validation Rules
+The second descriptor is `floor(bits / 8) + ceil(bits / 8)`. For partial-byte
+cell data, the serialized data includes a top-up `1` bit immediately after the
+last data bit and zero padding after that marker. The decoder removes the
+top-up marker and restores the exact bit length.
 
-Decoder must reject:
+Reference indexes are read using `size_bytes`, not a hard-coded one-byte index.
+Indexes must point to a parsed cell index.
 
-- unknown magic,
-- truncated header,
-- unsupported flags,
+Supported exotic payloads:
+
+- pruned branch: tag `0x01`, mask `1..=7`, one hash and one depth per set mask
+  bit, no references,
+- library reference: tag `0x02`, one 32-byte hash, no references,
+- Merkle proof: tag `0x03`, one proof hash and proof depth, one reference,
+- Merkle update: tag `0x04`, old/new proof hashes and depths, two references.
+
+The decoder preserves exotic cells as `Cell::exotic_kind()` instead of
+rebuilding them as ordinary cells. Unsupported tags and invalid kind-specific
+payloads fail decoding with an `Invalid exotic cell` error context.
+
+## Invariants And Edge Cases
+
+The decoder currently accepts:
+
+- one root only,
+- zero absent cells,
+- generic BoC magic `b5ee9c72`,
+- ordinary cells with up to four references,
+- optional index tables when `has_idx` is set,
+- optional CRC32 trailers,
+- supported exotic cells with exact payload lengths and reference counts,
+- hex and standard base64 string wrappers through `hex_to_boc()` and
+  `base64_to_boc()`.
+
+The decoder rejects:
+
+- unknown magic values,
+- legacy indexed magic values that are not the generic BoC layout,
+- truncated header or cell data,
+- `size_bytes` or `offset_bytes` outside `1..=8`,
+- multiple roots,
+- cache-bit BoCs with the explicit error that cache bits are unsupported for
+  ordinary-cell decoding,
+- cell descriptors with reserved bits set,
+- exotic-cell descriptor levels that do not match the level derived from the
+  exotic payload and references,
+- unsupported exotic-cell type tags,
+- invalid exotic-cell payloads, including short type tags, invalid pruned masks,
+  wrong payload lengths, and wrong reference counts,
+- malformed index tables, including non-monotonic offsets or a final offset
+  that does not equal `cells_size`,
 - root index out of range,
 - reference index out of range,
-- duplicate or cyclic invalid structure,
-- CRC mismatch,
-- trailing bytes when not allowed.
+- malformed partial-byte top-up markers,
+- CRC32 mismatch,
+- trailing bytes after the cell payload when CRC32 is absent, or after the CRC32
+  trailer when it is present.
 
 ## Crate Mapping
 
-- `src/tvm/boc.rs`
+- `serialize_boc(root, has_crc32)` writes generic BoCs without an index table.
+- `deserialize_boc(data)` reads generic BoCs with or without index tables and
+  preserves supported exotic-cell kinds.
+- `hex_to_boc()` and `boc_to_hex()` wrap byte-level BoC conversion.
+- `base64_to_boc()` and `boc_to_base64()` use standard base64 for BoC strings.
+
+## Fixture Coverage
+
+Current embedded fixture tests cover:
+
+- empty ordinary generic BoC,
+- one-byte ordinary generic BoC,
+- ordinary generic BoC with one reference, with and without an index table,
+- exotic library-reference BoC,
+- malformed cache-bit BoC rejection.
+
+These fixtures are intentionally small hex constants in `src/tvm/boc.rs`. They
+are derived from the TON `serialized_boc#b5ee9c72` layout and cross-check the
+crate's canonical serializer output for supported cases.
+
+## Cache-Bit Policy
+
+Cache-bit BoCs remain unsupported in this crate. The generic BoC header can
+signal cache bits, but the current SDK has no public representation for cached
+hash/depth material and no fixture proving that ignoring those bits is lossless
+for all supported cell kinds. Decoding such payloads by silently discarding the
+extra metadata would make compatibility ambiguous, especially for future proof
+and archive workflows.
+
+Until a concrete upstream fixture requires cache-bit preservation, the decoder
+rejects these BoCs with `BoC cache bits flag is unsupported for ordinary-cell
+decoding`. Serialization always writes the cache-bit flag as zero.
 
 ## Missing Work
 
-- Full support for all common BoC magic variants.
-- Index table modes.
-- Cache bits.
-- More malformed fixture tests.
+- Multi-level exotic hash/depth helper APIs for proof verification.
+- Legacy indexed magic variants `68ff65f3` and `acc3a728`.
+- Additional captured golden BoCs from upstream TON or pytoniq-core for account
+  states, messages, and proof cells.
+- Encoding with an index table when callers need that output mode.
+- Full multi-root BoC support if future APIs require it.

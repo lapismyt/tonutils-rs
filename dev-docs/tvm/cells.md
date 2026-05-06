@@ -65,16 +65,67 @@ For ordinary cells:
 4. reference hashes,
 5. SHA-256.
 
+Golden fixtures for ordinary cells are checked directly against this preimage,
+not against BoC bytes:
+
+| Cell | Representation preimage | SHA-256 representation hash |
+| --- | --- | --- |
+| Empty ordinary cell | `0000` | `96a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7` |
+| One-bit ordinary cell containing `1` | `0001c0` | `7c6c1a965fd501d2938c2c0e06626bdaa3531357016e169070c9ef79c4c46bc0` |
+| Full-byte ordinary cell containing `ab` | `0002ab` | `57c2a1a13baa2762109ed68be0c396f2303ce17e3dde7917d0e74b4072b1dbc7` |
+| 32-bit ordinary cell containing `0000000f` | `00080000000f` | `57b520dbcb9d135863fc33963cde9f6db2ded1430d88056810a2c9434a3860f9` |
+| One-bit root containing `1`, with refs to the empty and one-bit fixtures | `0201c00000000096a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc77c6c1a965fd501d2938c2c0e06626bdaa3531357016e169070c9ef79c4c46bc0` | `383598f93bde0afbe68b632ae75d5ffa6747df1284e2f4abb86cd2c5840514fe` |
+| One-bit middle containing `1`, with ref to the empty fixture | `0101c0000096a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7` | `9770d42f6d781e048a432b849b56d5329de4667b37cfb918429a23f90cb9884b` |
+| Full-byte root containing `ab`, with ref to the one-bit middle fixture | `0102ab00019770d42f6d781e048a432b849b56d5329de4667b37cfb918429a23f90cb9884b` | `9f19f1fa052329a70f79c2adaef4e9f4e73eb88be389918473adc5f9a2801181` |
+| Full-byte root containing `ab`, with refs to the empty and one-bit middle fixtures | `0202ab0000000196a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc79770d42f6d781e048a432b849b56d5329de4667b37cfb918429a23f90cb9884b` | `6d112e22e9b4f47922b27cb78ffb8c4c3be4be304cdcb9ad24560e3104827eb6` |
+
+The multi-level fixtures above keep ordinary-cell depth handling explicit:
+
+- the empty leaf has depth `0`, descriptor `0000`, and no child data,
+- the one-bit middle cell has depth `1`, descriptor `0101`, and child depth bytes `0000`,
+- the full-byte chained root has depth `2`, descriptor `0102`, and child depth bytes `0001`,
+- the two-reference root has depth `2`, descriptor `0202`, and child depth bytes `0000 0001` before both child hashes.
+
 ## Exotic Cells
 
-Types still required:
+The crate models supported exotic cells explicitly through `ExoticCellKind`.
+Ordinary constructors such as `Cell::new()` and `Cell::with_data()` always
+create ordinary cells. Exotic cells are constructed by BoC decoding or by
+`Cell::with_exotic_data(data, bit_len, references)`, which validates the tag,
+payload length, reference count, and derived level.
 
-- pruned branch,
-- library reference,
-- Merkle proof,
-- Merkle update.
+The first byte of every exotic cell data payload is the type tag:
 
-Exotic level and hash rules differ from ordinary cells. Proof verification depends on them.
+| Tag | Kind | Payload | References | Derived level |
+| --- | --- | --- | --- | --- |
+| `0x01` | Pruned branch | tag, one-byte level mask `1..=7`, one 32-byte hash for each set mask bit, then one two-byte big-endian depth for each set mask bit | `0` | index of the most significant set mask bit plus one, therefore `1..=3` |
+| `0x02` | Library reference | tag plus a 32-byte library cell representation hash, exactly `264` bits | `0` | `0` |
+| `0x03` | Merkle proof | tag, one 32-byte proof hash, one two-byte big-endian proof depth, exactly `280` bits | `1` | `max(ref.level - 1, 0)` |
+| `0x04` | Merkle update | tag, old 32-byte proof hash, new 32-byte proof hash, old two-byte depth, new two-byte depth, exactly `552` bits | `2` | `max(old_ref.level - 1, new_ref.level - 1, 0)` |
+
+The BoC descriptor still carries the exotic flag outside the data bits:
+
+```text
+refs_count + 8 * 1 + 32 * derived_level
+```
+
+BoC decoding rejects an exotic cell if the descriptor level does not match the
+level derived from its kind-specific rules. The decoder also rejects unsupported
+exotic tags, tags missing from short payloads, invalid pruned branch masks,
+wrong reference counts, and wrong exact payload lengths.
+
+`Cell::hash()` remains the SHA-256 representation hash of the serialized cell
+representation, including the exotic descriptor bit and top-up-padded data.
+`Cell::depth()` remains the representation depth of the decoded cell graph:
+pruned and library cells have no references and therefore depth `0`; Merkle
+proof and Merkle update cells have graph depth based on their explicit
+references. Kind-specific proof depths and pruned-branch depths are available
+through `ExoticCellKind`; callers must use those fields for proof semantics
+instead of treating `Cell::depth()` as the deleted subtree depth.
+
+The implementation does not yet expose `hash_i`/`depth_i` multi-level helpers.
+Proof verification code must add those helpers before validating higher hashes
+with `CHASHI`/`CHASHIX`-style semantics.
 
 ## Crate Mapping
 
@@ -84,8 +135,5 @@ Exotic level and hash rules differ from ordinary cells. Proof verification depen
 
 ## Tests Needed
 
-- descriptor fixtures,
-- top-up bit fixtures,
-- hash fixtures from known cells,
-- exotic cell fixtures,
 - overflow and underflow tests.
+- upstream or pytoniq-core golden fixtures for exotic cells and BoC bytes.

@@ -62,7 +62,7 @@ tl-scheme = "0.3.0"
 tokio-test = "0.4"
 
 [[bin]]
-name = "tonutils"
+name = "tonutils-rs"
 path = "src/main.rs"
 required-features = ["cli"]
 

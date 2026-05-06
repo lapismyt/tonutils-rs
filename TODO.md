@@ -1,6 +1,38 @@
 # TODO
 
-This file follows the `todo-md/todo-md` format. Active work is currently prioritized around pytoniq behavioral parity and a full ABI stack comparable to tongo. Completed work moves to `# DONE`; postponed work moves to `# BACKLOG`.
+This file follows the `todo-md/todo-md` format. Active work is currently prioritized around the Phase 1 TVM, BoC, Address, TL, and TL-B foundation needed before higher-level contract clients and ABI work. Completed work moves to `# DONE`; postponed work moves to `# BACKLOG`.
+
+## Phase 1 TVM, BoC, Address, TL, And TL-B Foundation
+
+- [-] Establish pytoniq-core-compatible Address and ordinary BoC baseline #tvm #boc #address #tests #docs
+  - [x] Document supported raw and user-friendly address formats in `dev-docs/tvm/addresses.md` #tvm #address #docs
+  - [x] Add strict raw `workchain:hash` parsing and formatting helpers #tvm #address
+  - [x] Support user-friendly base64 and base64url input with and without padding #tvm #address
+  - [x] Preserve bounceable, non-bounceable, and test-only flags through parsing and explicit formatting helpers #tvm #address
+  - [x] Add address validation tests for invalid tag, checksum, length, workchain, and hash input #tvm #address #tests
+  - [x] Document ordinary-cell BoC support, index table handling, cache-bit rejection, and missing exotic-cell work in `dev-docs/tvm/boc.md` #tvm #boc #docs
+  - [x] Decode ordinary generic BoC index tables when present #tvm #boc
+  - [x] Reject cache-bit BoCs with a precise unsupported-feature error #tvm #boc
+  - [x] Add BoC regression tests for indexed decode, malformed index table, CRC mismatch, invalid root/reference indexes, trailing bytes, and string roundtrips #tvm #boc #tests
+  - [x] Add embedded TON Docs address fixtures and schema-derived BoC compatibility fixtures #tvm #boc #address #tests
+  - [ ] Add captured upstream TON or pytoniq-core BoC fixtures for account/message/proof compatibility #tvm #boc #tests
+- [x] Complete remaining TVM primitive compatibility before TL-B macros #tvm #tlb
+  - [x] Audit ordinary cell representation hash against TON golden fixtures #tvm #tests
+  - [x] Add exotic cell support for pruned branch, library reference, Merkle proof, and Merkle update #tvm #boc
+  - [x] Decide whether cache-bit BoCs can be decoded without semantic ambiguity and document the chosen behavior #tvm #boc #docs
+  - [x] Add full TL-B schema macro design after Address and ordinary BoC behavior are stable #tvm #tlb #docs
+- [x] Implement TL-B runtime trait foundation #tvm #tlb
+  - [x] Add `TlbSerialize`, `TlbDeserialize`, `TlbScheme`, and `TlbError` with exact decode semantics #tvm #tlb
+  - [x] Map TL-B codec errors to builder, slice, tag, reference, and non-canonical encoding failures #tvm #tlb #tests
+  - [x] Add focused tests for tags, `Maybe`, `Either`, refs, `VarUInteger`, and trailing data #tvm #tlb #tests
+- [ ] Decide TL-B derive/proc-macro crate shape #tvm #tlb #features
+  - [ ] Decide whether derive support lives in a separate workspace proc-macro crate #tvm #tlb #features
+  - [ ] Keep macro support optional and avoid adding compile cost to low-level TVM users #tvm #tlb #features
+  - [ ] Define schema-driven drift checks against upstream TON TL-B sources #tvm #tlb #tests
+- [ ] Implement first core TL-B models from the documented design #tvm #tlb
+  - [ ] Start with hand-written `CommonMsgInfo`, `Message`, and `StateInit` codecs before deriving them #tvm #tlb
+  - [ ] Add fixture-backed roundtrip tests that compare cell hashes #tvm #tlb #tests
+  - [ ] Record upstream schema revision and source links for each model family #tvm #tlb #docs
 
 ## Pytoniq Behavioral Parity
 
@@ -220,14 +252,16 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
 ## TVM Cells, BoC, Slice, Builder, Dictionary
 
 - [ ] Make TVM primitives spec-accurate #tvm
-  - [ ] Audit ordinary cell hash computation against TON representation hash rules #tvm #tests
-    - [ ] Add golden cell hash fixtures #tvm #tests
-    - [ ] Add multi-level reference depth fixtures #tvm #tests
-  - [ ] Add exotic cell support #tvm
-    - [ ] Pruned branch #tvm
-    - [ ] Library reference #tvm
-    - [ ] Merkle proof #tvm
-    - [ ] Merkle update #tvm
+  - [x] Audit ordinary cell hash computation against TON representation hash rules #tvm #tests
+    - [x] Add golden cell hash fixtures #tvm #tests
+    - [x] Add multi-level reference depth fixtures #tvm #tests
+  - [-] Add exotic cell support #tvm
+    - [x] Pruned branch #tvm
+    - [x] Library reference #tvm
+    - [x] Merkle proof #tvm
+    - [x] Merkle update #tvm
+    - [ ] Add multi-level hash and depth helper APIs for exotic proof verification #tvm #proofs
+    - [ ] Add upstream or pytoniq-core golden fixtures for exotic cells and proof BoCs #tvm #boc #tests
   - [ ] Improve BoC serialization and deserialization #tvm
     - [ ] Support index table modes #tvm
     - [ ] Support cache bits where required #tvm
@@ -260,7 +294,7 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
 
 ## TON Blocks, Accounts, Transactions, And Messages
 
-- [ ] Implement TLB models for core blockchain data #tlb #tvm
+- [ ] Implement TL-B models for core blockchain data #tlb #tvm
   - [ ] Message and CommonMsgInfo #tlb
   - [ ] Account and AccountState #tlb
   - [ ] Transaction and transaction phases #tlb

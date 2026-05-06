@@ -23,77 +23,112 @@ The project has a strong foundation (feature gates, ADNL TCP transport,
 LiteClient/LiteBalancer surfaces, TVM primitives, contract wrappers, CLI, and
 dev-docs). These are enablers, not the top priority.
 
-Immediate priority is now:
+Immediate priority is now the SDK foundation needed for pytoniq-core-like TVM
+and contract ergonomics:
 
-1. Behavioral parity with `pytoniq` for the full user-facing SDK scope.
-2. A full ABI stack comparable to `tongo` (types, encode/decode, JSON ABI,
-   contract integration, and fixture-backed compatibility tests).
+1. Complete TVM types.
+2. Complete BoC handling, including an `Address` type with pytoniq-core-like
+   capabilities.
+3. Add macros for TL-B work.
+4. Add TL-B schema support, including user-defined TL and TL-B schemas.
+5. Add built-in TL and TL-B schemas.
+6. Close important LiteClient and LiteBalancer methods for contract data,
+   balance, transactions, code, and data.
+7. Add custom smart-contract client support similar to pytoniq.
+8. Add built-in smart-contract wrappers for wallets and jettons.
+9. Add an ABI module organized by protocol, version, and contract family.
 
 Hardening, productionization, and broad protocol expansion remain important but
-are intentionally deferred until parity and ABI milestones are complete.
+are intentionally deferred until these foundation, contract, and ABI milestones
+are complete.
 
-## Phase 1: Pytoniq Behavioral Parity Program
+## Phase 1: TVM, BoC, TL, And TL-B Foundation
 
-Deliver pytoniq-equivalent behavior (not 1:1 internal architecture) across the
-full user-facing surface:
+Build the low-level primitives needed to decode, encode, and model TON data
+without depending on third-party Rust TON SDK crates:
 
-- TVM and schema primitives expected by pytoniq users: `TlbScheme`, `Cell`,
-  `Slice`, `Builder`, and related serialization and decoding behavior.
-- Full LiteClient method parity: all pytoniq-exposed LiteClient methods and
-  their expected request/response and error behavior.
-- Full LiteBalancer method parity: all pytoniq-exposed balancer methods and
-  expected failover/request semantics.
-- RPS control beyond pytoniq parity: configurable per-peer and global request
-  rate limiting suitable for rented liteservers (including tonconsole-style
-  quotas), with predictable throttling behavior.
-- Contract and wallet flows: `Contract` wrappers, wallet operations, and
-  end-to-end call/message workflows expected by pytoniq users.
-- Mnemonic workflows: generation, import/export, seed/key derivation, and
-  validation behavior compatible with pytoniq expectations.
-- Networking behavior expected by pytoniq-style usage: timeout defaults,
-  retries/failover semantics, and error surfaces that are predictable in
-  scripts and integrations.
-- Build and maintain a parity matrix that maps each pytoniq-facing workflow to
-  status, known deviations, tests, and planned closure.
-- Add fixture-backed and ignored live-network compatibility tests for parity
-  acceptance criteria.
+- Complete all required TVM value types and make `Cell`, `Slice`, `Builder`,
+  stack values, dictionaries, and numeric codecs spec-accurate.
+- Complete BoC serialization and deserialization, including common BoC variants,
+  CRC handling, index/cache-bit behavior where required, exotic cells, golden
+  fixtures, and string conversions.
+- Bring `Address` to pytoniq-core-level capability: raw, user-friendly,
+  bounceable/non-bounceable, testnet, base64/base64url, hex/raw forms, external
+  addresses, and precise parse/format validation.
+- Add macro support for TL-B definitions so crate code can express cell-level
+  schemas with checked serialization and deserialization.
+- Add support for user-defined TL and TL-B schemas, while keeping checked schema
+  maintenance and generated or derived code deterministic.
+- Add built-in TL and TL-B schemas for core TON objects needed by the SDK,
+  including messages, accounts, transactions, blocks, config objects, wallet
+  payloads, and jetton payloads.
 
 Exit criteria for Phase 1:
 
-- Documented parity acceptance criteria for the full pytoniq-facing surface.
-- Compatibility matrix with explicit pass/fail status and tracked gaps.
-- Reproducible tests covering successful and failure-mode behavior.
-- Verified RPS limiting behavior for tonconsole-style rented liteserver usage.
+- BoC strings can be parsed into cells and serialized back across supported
+  ordinary and required exotic cell cases.
+- Core TL-B data models roundtrip through cells with golden fixtures.
+- Custom TL/TL-B schemas can be defined by crate users through the supported
+  macro/schema workflow.
+- Address behavior is compatible with pytoniq-core expectations.
 
-Current status: local per-peer and global RPS throttling is implemented for
-`LiteClient`, `LiteBalancer`, and CLI workflows. Live tonconsole-style rented
-liteserver validation remains open until credentials or a test endpoint are
-available.
+Current Phase 1 fixture status:
 
-## Phase 2: Full ABI Stack (Tongo-Level Capability)
+- Address parsing and formatting are locked against embedded TON Docs vectors
+  for raw, bounceable, non-bounceable, test-only, URL-safe, and standard
+  base64 forms.
+- Ordinary BoC and library-reference exotic BoC behavior are locked against
+  small schema-derived embedded fixtures, including indexed decode and cache-bit
+  rejection policy.
+- TL-B runtime and macro direction is documented in `dev-docs/tvm/tlb.md`,
+  including intended trait shape, constructor tag handling, references,
+  `Maybe`, `Either`, `VarUInteger`, `HashmapE`, and error behavior.
+- The minimal TL-B runtime trait foundation is implemented in `src/tlb/mod.rs`,
+  including exact top-level decode, fixed tag helpers, `Maybe`, `Either`,
+  referenced value helpers, canonical `VarUInteger` checks, and focused unit
+  coverage.
+- Captured upstream TON or pytoniq-core BoCs for account state, message, and
+  proof workflows remain follow-up work in `TODO.md`.
+- TL-B macro/proc-macro crate decisions and first core blockchain models remain
+  pending Phase 1 work tracked in `TODO.md`.
 
-Implement a full ABI subsystem comparable in scope to tongo:
+## Phase 2: LiteClient, Contract Clients, Wrappers, And ABI
 
-- ABI data model: contracts, functions, events, inputs/outputs, tuples,
-  optional fields, arrays, dictionaries, and TVM-relevant scalar types.
-- Encoding and decoding engine: ABI value to TVM stack/cell/message payload and
-  inverse decoding for method outputs and event payloads.
-- JSON ABI parser and loader with schema validation and precise diagnostics.
-- Contract integration: get-method argument encoding and external message body
-  construction driven by ABI definitions.
-- Fixture-backed golden tests and cross-reference validation against known
-  tongo/TON behavior.
+Build ergonomic high-level SDK surfaces on top of the TVM, BoC, TL, and TL-B
+foundation:
+
+- Close important LiteClient and LiteBalancer methods for contract workflows:
+  fetch contract state, balance, transactions, code, data, raw state, and
+  get-method results with typed decoding where available.
+- Add custom smart-contract client support similar to pytoniq. The minimum
+  surface must support contract data serialization/deserialization, address
+  computation from state init plus workchain, deployment by external message,
+  balance lookup, and user-defined contract methods.
+- Add built-in smart-contract wrappers. Initially include wallet wrappers for
+  V4, V5, and Highload wallets, plus jetton wrappers based on a selected
+  available contract variant.
+- Add an `abi` module split by protocol and then by version or contract family.
+  Initial ABI coverage must include wallets V4, V5, Highload, and jettons
+  TEP-74 and TEP-89.
+- Keep a clear distinction between a concrete contract wrapper and an ABI
+  description. As in tongo, contracts with different code must still work when
+  they support the required methods and message shapes.
+- Reuse the previously added TVM, BoC, TL, TL-B, and macro features for wrapper
+  and ABI implementation instead of duplicating serialization logic.
 
 Exit criteria for Phase 2:
 
-- Stable ABI module surface for parse, encode, decode, and integration.
-- Golden fixtures and compatibility tests for representative real-world ABI
-  contracts and edge cases.
-- Clear documentation of supported ABI scope and known limitations.
+- Users can implement their own contract clients with typed data, methods,
+  state-init address derivation, deployment, and balance access.
+- Built-in wallet and jetton wrappers cover the initial contract families.
+- ABI definitions can be used independently from concrete code hashes when the
+  method and message interfaces are compatible.
+- LiteClient and LiteBalancer expose the contract data retrieval methods needed
+  by the wrappers and ABI layer.
 
 ## Phase 3: Hardening, Reliability, And Productionization
 
-After parity and ABI milestones:
+After the foundation, contract, and ABI milestones:
 
 - Harden ADNL TCP behavior around boundaries, timeouts, graceful close, and
   structured diagnostics.

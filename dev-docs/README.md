@@ -13,10 +13,11 @@ This directory is the internal technical reference for implementing `tonutils`. 
 7. [ADNL TCP](network/adnl-tcp.md)
 8. [TVM cells](tvm/cells.md)
 9. [BoC format](tvm/boc.md)
-10. [Blockchain data model](blockchain/data-model.md)
-11. [LiteClient request flow](liteclient/request-flow.md)
-12. [LiteClient rate limiting](liteclient/rate-limiting.md)
-13. [Smart-contract get-methods](contracts/get-methods.md)
+10. [TL-B data models](tvm/tlb.md)
+11. [Blockchain data model](blockchain/data-model.md)
+12. [LiteClient request flow](liteclient/request-flow.md)
+13. [LiteClient rate limiting](liteclient/rate-limiting.md)
+14. [Smart-contract get-methods](contracts/get-methods.md)
 
 ## Directory Map
 
@@ -26,7 +27,7 @@ This directory is the internal technical reference for implementing `tonutils`. 
 - `crypto/`: hashes, checksums, keys, signatures, encryption primitives.
 - `tl/`: TL syntax, schema maintenance, LiteAPI types and function mapping.
 - `network/`: ADNL transport, DHT, overlays, global config.
-- `tvm/`: cells, BoC, addresses, dictionaries, TLB, TVM stack.
+- `tvm/`: cells, BoC, addresses, dictionaries, TL-B, TVM stack.
 - `liteclient/`: request flow, balancer, proof verification.
 - `contracts/`: get-methods, external messages, high-level contract API.
 - `operations/`: source tracking, diagnostics, maintenance workflow.
