@@ -24,3 +24,6 @@ rustc-ice-*.txt
 
 # Claude Code
 .claude
+
+# Network configs
+*.config.json
