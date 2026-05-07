@@ -29,10 +29,20 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
   - [ ] Decide whether derive support lives in a separate workspace proc-macro crate #tvm #tlb #features
   - [ ] Keep macro support optional and avoid adding compile cost to low-level TVM users #tvm #tlb #features
   - [ ] Define schema-driven drift checks against upstream TON TL-B sources #tvm #tlb #tests
-- [ ] Implement first core TL-B models from the documented design #tvm #tlb
-  - [ ] Start with hand-written `CommonMsgInfo`, `Message`, and `StateInit` codecs before deriving them #tvm #tlb
-  - [ ] Add fixture-backed roundtrip tests that compare cell hashes #tvm #tlb #tests
-  - [ ] Record upstream schema revision and source links for each model family #tvm #tlb #docs
+- [-] Implement first core TL-B models from the documented design #tvm #tlb
+  - [x] Start with hand-written `CommonMsgInfo`, `Message`, and `StateInit` codecs before deriving them #tvm #tlb
+  - [x] Add focused unit tests for message address tags, values, state init references, common info variants, and `Message Any` placement #tvm #tlb #tests
+  - [x] Record upstream schema source links for the message model family #tvm #tlb #docs
+  - [x] Add `MsgAddress`, `CommonMsgInfoRelaxed`, `MessageRelaxed`, `SimpleLib`, and `StateInitWithLibs` in a follow-up message-model slice #tvm #tlb
+  - [x] Add focused unit tests for relaxed addresses, relaxed message info variants, `MessageRelaxed Any`, and `StateInitWithLibs` libraries #tvm #tlb #tests
+  - [x] Add hand-written `OutAction` and `LibRef` codecs for send-message, set-code, reserve-currency, and change-library actions #tvm #tlb
+  - [x] Add focused unit tests for `OutAction` variants, referenced relaxed messages, library refs, and invalid action encodings #tvm #tlb #tests
+  - [x] Add `OutList` linked-list models for transaction action phases #tvm #tlb
+  - [x] Add schema-exact `TrActionPhase` metadata with `action_list_hash` and `StorageUsed` #tvm #tlb
+  - [x] Add full transaction descriptions that reference `Maybe ^TrActionPhase` #tvm #tlb
+  - [x] Add full top-level `Transaction`, `Account`, `HASH_UPDATE Account`, and transaction message dictionary models #tvm #tlb
+  - [ ] Add fixture-backed roundtrip tests that compare real upstream or liteserver message cell hashes #tvm #tlb #tests
+  - [ ] Add fixture-backed transaction-description BoCs for real ordinary, tick-tock, split, and merge transactions #tvm #tlb #tests
 
 ## Pytoniq Behavioral Parity
 
@@ -276,7 +286,9 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
     - [x] Implement fixed-width `BitKey` storage and callback-based `HashmapE` APIs #tvm #tlb
     - [x] Implement canonical label encoding #tvm #tlb
     - [x] Implement fork nodes #tvm #tlb
+    - [x] Implement augmentation-preserving `HashmapAug` and `HashmapAugE` APIs #tvm #tlb
     - [ ] Add official golden fixtures for HashmapE encodings #tvm #tests
+    - [ ] Add official golden fixtures for HashmapAug encodings #tvm #tests
     - [ ] Add higher-level typed dictionary value codecs after core TL-B models exist #tvm #tlb
     - [ ] Implement proof-friendly traversal #tvm
 
@@ -295,9 +307,15 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
 ## TON Blocks, Accounts, Transactions, And Messages
 
 - [ ] Implement TL-B models for core blockchain data #tlb #tvm
-  - [ ] Message and CommonMsgInfo #tlb
-  - [ ] Account and AccountState #tlb
-  - [ ] Transaction and transaction phases #tlb
+  - [-] Message and CommonMsgInfo #tlb
+    - [x] Implement hand-written `Message Any`, `CommonMsgInfo`, relaxed messages, and `StateInitWithLibs` #tlb #tvm
+    - [x] Add `OutAction` and `action_send_msg` models #tlb #tvm
+    - [x] Add `OutList` models for transaction action lists #tlb #tvm
+    - [x] Add schema-exact `TrActionPhase` action metadata by action-list hash #tlb #tvm
+    - [ ] Add golden BoC fixtures for real message encodings #tlb #tests
+  - [x] Account and AccountState #tlb
+  - [x] Full Transaction, transaction descriptions, and remaining phases #tlb
+  - [x] Augmented shard/account-block transaction collection models #tlb #tvm
   - [ ] Block header, value flow, extra, and shard hashes #tlb
   - [ ] Config parameters #tlb
 - [ ] Add proof verification primitives #proofs

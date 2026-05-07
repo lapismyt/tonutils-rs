@@ -214,6 +214,29 @@ labels, missing fork references, duplicate decoded keys, and key-width
 mismatches. Typed TL-B models should wrap these callback APIs rather than
 duplicating dictionary traversal.
 
+## HashmapAug And HashmapAugE
+
+`HashmapAug n X Y` uses the same fixed-width Patricia-tree key layout as
+`Hashmap n X`, but every leaf and fork stores an augmentation value of type `Y`:
+
+- `ahm_edge#_ label:(HmLabel ~l n) ... = HashmapAug n X Y`;
+- `ahmn_leaf#_ extra:Y value:X = HashmapAugNode 0 X Y`;
+- `ahmn_fork#_ left:^(HashmapAug n X Y) right:^(HashmapAug n X Y) extra:Y`;
+- `ahme_empty$0 extra:Y = HashmapAugE n X Y`;
+- `ahme_root$1 root:^(HashmapAug n X Y) extra:Y = HashmapAugE n X Y`.
+
+`src/tvm/dict.rs` provides `HashmapAug<V, E>` for non-empty dictionaries and
+`HashmapAugE<V, E>` for optional-root dictionaries with a top-level extra.
+Decoded leaf, fork, and top-level augmentation values are preserved. Canonical
+construction from entries is available for tests and SDK-created values, but it
+requires the caller to provide augmentation values because TON aggregation rules
+are schema-specific.
+
+The callback APIs mirror `HashmapE`: `Builder::store_hashmap_aug_with`,
+`Builder::store_hashmap_aug_e_with`, `Slice::load_hashmap_aug_with`, and
+`Slice::load_hashmap_aug_e_with`. Concrete models supply both value and
+augmentation codecs.
+
 ## Tag And Exact Decode Errors
 
 TL-B decoding errors should be precise enough for fixture debugging and proof
@@ -263,26 +286,112 @@ Current implemented building blocks:
   integration.
 - `src/tvm/builder.rs`: bit, integer, reference, and dictionary storage helpers.
 - `src/tvm/slice.rs`: bit, integer, reference, and dictionary loading helpers.
-- `src/tvm/dict.rs`: canonical `HashmapE` foundation.
+- `src/tvm/dict.rs`: canonical `HashmapE` and augmentation-preserving
+  `HashmapAug`/`HashmapAugE` foundation.
 - `src/tlb/mod.rs`: minimal public TL-B runtime with `TlbSerialize`,
   `TlbDeserialize`, `TlbScheme`, `TlbError`, fixed-tag helpers, exact decode
   checks, `Maybe`, `Either`, referenced value helpers, and canonical
   `VarUInteger` helpers.
 
-The crate does not yet expose derive macros, schema parsing, or built-in TL-B
-blockchain models.
+The crate does not yet expose derive macros or schema parsing.
+
+The first built-in hand-written blockchain model slice is implemented in
+`src/tlb/message.rs` from the current upstream
+`ton-blockchain/ton` `crypto/block/block.tlb` message definitions
+(`https://github.com/ton-blockchain/ton/blob/master/crypto/block/block.tlb`).
+It covers:
+
+- `Anycast` with `depth:(#<= 30)` encoded in five bits and constrained to
+  `1..=30`.
+- `MsgAddressInt` constructors `addr_std$10` and `addr_var$11`.
+- `MsgAddressExt` constructors `addr_none$00` and `addr_extern$01`.
+- `MsgAddress` as an anonymous wrapper over `MsgAddressInt` or
+  `MsgAddressExt`, without an additional tag.
+- `Grams` as canonical `VarUInteger 16`.
+- `CurrencyCollection` with `HashmapE 32 (VarUInteger 32)` extra currencies.
+- `TickTock`.
+- current upstream `StateInit` with
+  `fixed_prefix_length:(Maybe (## 5))`, `special:(Maybe TickTock)`, and
+  `code`, `data`, `library` as `Maybe ^Cell`.
+- `SimpleLib` and current upstream `StateInitWithLibs`, using
+  `library:(HashmapE 256 SimpleLib)`.
+- `CommonMsgInfo` constructors `int_msg_info$0`, `ext_in_msg_info$10`, and
+  `ext_out_msg_info$11`; the internal constructor uses current upstream
+  `extra_flags:(VarUInteger 16)`.
+- `CommonMsgInfoRelaxed` constructors `int_msg_info$0` and
+  `ext_out_msg_info$11`; there is no external-in relaxed constructor, and
+  relaxed internal `src` is `MsgAddress`.
+- `Message Any` with explicit preservation of inline versus referenced
+  `StateInit` and body cells.
+- `MessageRelaxed Any` with the same init and body placement rules and
+  `CommonMsgInfoRelaxed`.
+- `LibRef` constructors `libref_hash$0` and `libref_ref$1`.
+- The closed `OutAction` family: `action_send_msg#0ec3c86d`,
+  `action_set_code#ad4de08e`, `action_reserve_currency#36e6b809`, and
+  `action_change_library#26fa1dd4`.
+- `OutList`, using upstream linked-list constructors
+  `out_list_empty$_ = OutList 0` and
+  `out_list$_ {n:#} prev:^(OutList n) action:OutAction = OutList (n + 1)`.
+  The Rust model exposes `Vec<OutAction>` in execution/schema order: the first
+  vector item is deepest next to `out_list_empty$_`, and the last item is stored
+  in the root node. Encoding and decoding enforce the 255-action TON limit.
+- `AccStatusChange` constructors `acst_unchanged$0`, `acst_frozen$10`, and
+  `acst_deleted$11`.
+- `StorageUsed` as `cells:(VarUInteger 7)` and `bits:(VarUInteger 7)`, with
+  canonical variable-width integer payloads and a maximum payload length of six
+  bytes per field.
+- `TrActionPhase` as the upstream implicit constructor `tr_phase_action$_`.
+  It stores `success`, `valid`, `no_funds`, `status_change`, optional
+  `total_fwd_fees` and `total_action_fees`, signed `result_code`, optional
+  signed `result_arg`, four `uint16` action counters, `action_list_hash:bits256`,
+  and `tot_msg_size:StorageUsed`.
+- `src/tlb/transaction.rs` implements transaction-description phase models:
+  `TrStoragePhase`, `TrCreditPhase`, `ComputeSkipReason`, `TrComputePhase`,
+  `TrBouncePhase`, `SplitMergeInfo`, and the full `TransactionDescr`
+  constructor family (`trans_ord$0000`, `trans_storage$0001`,
+  `trans_tick_tock$001`, `trans_split_prepare$0100`,
+  `trans_split_install$0101`, `trans_merge_prepare$0110`, and
+  `trans_merge_install$0111`).
+- `TransactionDescr.action:(Maybe ^TrActionPhase)` maps to
+  `Option<TrActionPhase>` but preserves the referenced child-cell placement and
+  exact child decode semantics.
+- Account state models from upstream `block.tlb`: `StorageExtraInfo` with
+  three-bit tags `storage_extra_none$000` and `storage_extra_info$001`,
+  `StorageInfo` with upstream field order
+  `used`, `storage_extra`, `last_paid`, `due_payment`, `AccountState`,
+  `AccountStorage`, `AccountStatus`, `Account`, and `ShardAccount`.
+- `DepthBalanceInfo` as
+  `depth_balance$_ split_depth:(#<= 30) balance:CurrencyCollection`, enforcing
+  the five-bit `0..=30` split-depth bound.
+- `ShardAccounts` as
+  `HashmapAugE 256 ShardAccount DepthBalanceInfo`.
+- Concrete `HashUpdateAccount` for
+  `update_hashes#72 old_hash:bits256 new_hash:bits256 = HASH_UPDATE Account`.
+- Top-level `transaction$0111`, including the child reference that stores
+  `in_msg:(Maybe ^(Message Any))` and
+  `out_msgs:(HashmapE 15 ^(Message Any))`. Outbound message dictionary keys are
+  validated as 15-bit keys, and inbound/outbound messages are exact referenced
+  `Message Any` payloads.
+- Split/merge install `prepare_transaction:^Transaction` fields map to
+  `Box<Transaction>` to keep Rust layout finite while preserving exact
+  referenced decoding.
+- `AccountBlock` as
+  `acc_trans#5 account_addr:bits256 transactions:(HashmapAug 64 ^Transaction CurrencyCollection) state_update:^(HASH_UPDATE Account)`.
+  The transaction dictionary is non-empty by construction and referenced
+  transactions are exact `Transaction` payloads.
+- `ShardAccountBlocks` as
+  `HashmapAugE 256 AccountBlock CurrencyCollection`.
+
+The slice intentionally does not implement full block headers, value flow,
+`BlockExtra`, shard-state models, config params, or schema-derived model
+generation. `TrActionPhase` does not embed an `OutList`; it stores only the
+256-bit `action_list_hash` produced from the action list. Golden fixture
+coverage remains deferred.
 
 ## Needed TON Models
 
-Core models to implement first:
+Core models to implement next:
 
-- `CommonMsgInfo`, including internal, external-in, and external-out message
-  info.
-- `Message` and typed body/state-init reference handling.
-- `StateInit`.
-- `Account` and `AccountState`.
-- `ShardAccount`.
-- `Transaction` and transaction phases.
 - Block header, value flow, extra data, and shard hashes.
 - Config parameters needed by LiteClient and contract workflows.
 
@@ -322,6 +431,6 @@ TL-B tests should be layered:
 
 - Decide whether derive support lives in a separate proc-macro crate and which
   feature gate exposes it.
-- Implement the first hand-written core TL-B models and fixture tests.
+- Add golden fixture tests for the hand-written message models.
 - Add schema drift checks against upstream `ton-blockchain/ton` TL-B sources.
 - Add public rustdoc examples once the first models exist.

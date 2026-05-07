@@ -2,7 +2,7 @@
 
 ## Project Direction
 
-`tonutils` is a pure Rust TON SDK inspired by `tonutils-go`. The library should stay autonomous, flexible, and feature-gated. Native Rust implementations are preferred for TON-specific logic. Do not add dependencies on third-party Rust TON SDK crates.
+`tonutils-rs` is a pure Rust TON SDK inspired by `tonutils-go`. The library should stay autonomous, flexible, and feature-gated. Native Rust implementations are preferred for TON-specific logic. Do not add dependencies on third-party Rust TON SDK crates.
 
 ## Language
 

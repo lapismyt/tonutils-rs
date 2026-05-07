@@ -1,12 +1,12 @@
 # Roadmap
 
-This roadmap describes the intended development phases for `tonutils`. It is a
+This roadmap describes the intended development phases for `tonutils-rs`. It is a
 high-level planning document: `TODO.md` remains the detailed task tracker, and
 `dev-docs/README.md` is the entry point for protocol and implementation notes.
 
 ## Direction
 
-`tonutils` is a pure Rust TON SDK inspired by `tonutils-go`. The crate should
+`tonutils-rs` is a pure Rust TON SDK inspired by `tonutils-go`. The crate should
 stay autonomous, flexible, and feature-gated.
 
 Core constraints:
@@ -87,10 +87,42 @@ Current Phase 1 fixture status:
   including exact top-level decode, fixed tag helpers, `Maybe`, `Either`,
   referenced value helpers, canonical `VarUInteger` checks, and focused unit
   coverage.
+- The first hand-written TL-B blockchain model slice is implemented in
+  `src/tlb/message.rs`, covering `Anycast`, internal and external message
+  addresses, `Grams`, `CurrencyCollection`, `TickTock`, current upstream
+  `StateInit`, `CommonMsgInfo`, and `Message Any`.
+- The next hand-written message slice is implemented in `src/tlb/message.rs`,
+  covering `MsgAddress`, `CommonMsgInfoRelaxed`, `MessageRelaxed Any`,
+  `SimpleLib`, and `StateInitWithLibs`.
+- The closed `OutAction` family and `LibRef` are implemented in
+  `src/tlb/message.rs`, including send-message, set-code, reserve-currency,
+  and change-library actions.
+- `OutList` is implemented in `src/tlb/message.rs` for transaction action
+  linked lists, with the upstream 255-action limit enforced.
+- Schema-exact `TrActionPhase` metadata is implemented in `src/tlb/message.rs`,
+  including `AccStatusChange`, `StorageUsed`, optional fees/result argument,
+  `uint16` counters, and `action_list_hash:bits256` without embedding `OutList`.
+- Transaction-description models are implemented in `src/tlb/transaction.rs`,
+  including storage, credit, skipped/VM compute, bounce, split/merge info, and
+  all `TransactionDescr` constructors. `Maybe ^TrActionPhase` is represented as
+  `Option<TrActionPhase>` with exact referenced child-cell encoding.
+- Account and top-level transaction models are implemented in
+  `src/tlb/transaction.rs`, including `StorageExtraInfo`, `StorageInfo`,
+  `AccountState`, `AccountStorage`, `AccountStatus`, `Account`, `ShardAccount`,
+  concrete `HASH_UPDATE Account`, and `transaction$0111` with exact referenced
+  inbound/outbound message payloads. Split/merge install
+  `prepare_transaction:^Transaction` fields now decode as boxed `Transaction`
+  values.
+- Augmented dictionary support is implemented in `src/tvm/dict.rs` with
+  `HashmapAug` and `HashmapAugE`, preserving leaf, fork, and top-level
+  augmentation values. The account-block slice in `src/tlb/transaction.rs`
+  covers `DepthBalanceInfo`, `ShardAccounts`, `AccountBlock`, and
+  `ShardAccountBlocks`.
 - Captured upstream TON or pytoniq-core BoCs for account state, message, and
   proof workflows remain follow-up work in `TODO.md`.
-- TL-B macro/proc-macro crate decisions and first core blockchain models remain
-  pending Phase 1 work tracked in `TODO.md`.
+- TL-B macro/proc-macro crate decisions, full block/header/value-flow models,
+  shard-state models, config params, and golden fixture coverage remain pending
+  Phase 1 work tracked in `TODO.md`.
 
 ## Phase 2: LiteClient, Contract Clients, Wrappers, And ABI
 

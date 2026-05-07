@@ -1,4 +1,4 @@
-//! TON HashmapE dictionary support.
+//! TON HashmapE and HashmapAugE dictionary support.
 //!
 //! TON dictionaries are canonical Patricia trees over fixed-width bitstring
 //! keys. `HashmapE n X` stores either `hme_empty$0` or `hme_root$1` followed by a
@@ -135,7 +135,7 @@ impl BitKey {
 }
 
 /// Generic TON `HashmapE n X` dictionary.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashmapE<V> {
     key_bits: usize,
     map: BTreeMap<BitKey, V>,
@@ -192,6 +192,208 @@ impl<V> HashmapE<V> {
     /// Iterates entries in canonical key order.
     pub fn iter(&self) -> impl Iterator<Item = (&BitKey, &V)> {
         self.map.iter()
+    }
+}
+
+/// A decoded `HashmapAug` leaf entry with its per-leaf augmentation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HashmapAugLeaf<V, E> {
+    /// Fixed-width dictionary key.
+    pub key: BitKey,
+    /// Value stored at the leaf.
+    pub value: V,
+    /// Augmentation stored by `ahmn_leaf`.
+    pub extra: E,
+}
+
+/// A decoded `HashmapAug` fork augmentation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HashmapAugFork<E> {
+    /// Prefix bits before the fork branch bit.
+    pub prefix: BitKey,
+    /// Augmentation stored by `ahmn_fork`.
+    pub extra: E,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HashmapAugNode<V, E> {
+    Leaf {
+        label: Vec<bool>,
+        extra: E,
+        value: V,
+    },
+    Fork {
+        label: Vec<bool>,
+        left: Box<HashmapAugNode<V, E>>,
+        right: Box<HashmapAugNode<V, E>>,
+        extra: E,
+    },
+}
+
+/// Generic non-empty TON `HashmapAug n X Y` dictionary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HashmapAug<V, E> {
+    key_bits: usize,
+    root: HashmapAugNode<V, E>,
+    leaves: BTreeMap<BitKey, (V, E)>,
+    forks: Vec<HashmapAugFork<E>>,
+}
+
+impl<V, E> HashmapAug<V, E> {
+    /// Creates a canonical augmented dictionary from key-ordered leaves.
+    ///
+    /// The supplied `fork_extra` is written to every generated fork node. TON
+    /// aggregation semantics are schema-specific, so callers that need
+    /// meaningful fork augmentations should compute the value before calling.
+    pub fn from_entries(
+        key_bits: usize,
+        entries: Vec<HashmapAugLeaf<V, E>>,
+        fork_extra: E,
+    ) -> Result<Self>
+    where
+        V: Clone,
+        E: Clone,
+    {
+        if entries.is_empty() {
+            bail!("HashmapAug cannot be empty");
+        }
+
+        let mut leaves = BTreeMap::new();
+        for entry in entries {
+            if entry.key.bit_len() != key_bits {
+                bail!(
+                    "Dictionary key length {} does not match {}",
+                    entry.key.bit_len(),
+                    key_bits
+                );
+            }
+            if leaves
+                .insert(entry.key, (entry.value, entry.extra))
+                .is_some()
+            {
+                bail!("Duplicate dictionary key");
+            }
+        }
+
+        let ordered: Vec<_> = leaves
+            .iter()
+            .map(|(key, (value, extra))| (key, value, extra))
+            .collect();
+        let mut forks = Vec::new();
+        let root = build_aug_node(&ordered, 0, key_bits, &fork_extra, &mut forks)?;
+        Ok(Self {
+            key_bits,
+            root,
+            leaves,
+            forks,
+        })
+    }
+
+    /// Returns the fixed key width in bits.
+    pub fn key_bits(&self) -> usize {
+        self.key_bits
+    }
+
+    /// Number of leaves.
+    pub fn len(&self) -> usize {
+        self.leaves.len()
+    }
+
+    /// Returns false because `HashmapAug` has no empty constructor.
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    /// Iterates leaves in canonical key order.
+    pub fn iter(&self) -> impl Iterator<Item = (&BitKey, &V, &E)> {
+        self.leaves
+            .iter()
+            .map(|(key, (value, extra))| (key, value, extra))
+    }
+
+    /// Gets a leaf value and augmentation by fixed-width bit key.
+    pub fn get_bit_key(&self, key: &BitKey) -> Result<Option<(&V, &E)>> {
+        if key.bit_len() != self.key_bits {
+            bail!(
+                "Dictionary key length {} does not match {}",
+                key.bit_len(),
+                self.key_bits
+            );
+        }
+        Ok(self.leaves.get(key).map(|(value, extra)| (value, extra)))
+    }
+
+    /// Returns decoded fork augmentations in depth-first order.
+    pub fn fork_extras(&self) -> &[HashmapAugFork<E>] {
+        &self.forks
+    }
+}
+
+/// Generic TON `HashmapAugE n X Y` dictionary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HashmapAugE<V, E> {
+    key_bits: usize,
+    root: Option<HashmapAug<V, E>>,
+    extra: E,
+}
+
+impl<V, E> HashmapAugE<V, E> {
+    /// Creates an empty augmented dictionary with the top-level extra value.
+    pub fn empty(key_bits: usize, extra: E) -> Self {
+        Self {
+            key_bits,
+            root: None,
+            extra,
+        }
+    }
+
+    /// Creates a non-empty augmented dictionary with the top-level extra value.
+    pub fn with_root(key_bits: usize, root: HashmapAug<V, E>, extra: E) -> Result<Self> {
+        if root.key_bits() != key_bits {
+            bail!(
+                "Dictionary key length {} does not match {}",
+                root.key_bits(),
+                key_bits
+            );
+        }
+        Ok(Self {
+            key_bits,
+            root: Some(root),
+            extra,
+        })
+    }
+
+    /// Returns the fixed key width in bits.
+    pub fn key_bits(&self) -> usize {
+        self.key_bits
+    }
+
+    /// Returns the top-level `HashmapAugE` extra.
+    pub fn extra(&self) -> &E {
+        &self.extra
+    }
+
+    /// Returns the non-empty root, when present.
+    pub fn root(&self) -> Option<&HashmapAug<V, E>> {
+        self.root.as_ref()
+    }
+
+    /// Number of leaves.
+    pub fn len(&self) -> usize {
+        self.root.as_ref().map(HashmapAug::len).unwrap_or(0)
+    }
+
+    /// Returns true when the dictionary has no root.
+    pub fn is_empty(&self) -> bool {
+        self.root.is_none()
+    }
+
+    /// Iterates leaves in canonical key order.
+    pub fn iter(&self) -> Box<dyn Iterator<Item = (&BitKey, &V, &E)> + '_> {
+        match &self.root {
+            Some(root) => Box::new(root.iter()),
+            None => Box::new(std::iter::empty()),
+        }
     }
 }
 
@@ -357,6 +559,47 @@ impl Builder {
         Ok(self)
     }
 
+    /// Stores a non-empty `HashmapAug n X Y` using supplied value and extra encoders.
+    pub fn store_hashmap_aug_with<V, E, FV, FE>(
+        &mut self,
+        dict: &HashmapAug<V, E>,
+        store_value: FV,
+        store_extra: FE,
+    ) -> Result<&mut Self>
+    where
+        FV: Fn(&mut Builder, &V) -> Result<()>,
+        FE: Fn(&mut Builder, &E) -> Result<()>,
+    {
+        store_aug_node(self, &dict.root, &store_value, &store_extra)?;
+        Ok(self)
+    }
+
+    /// Stores a `HashmapAugE n X Y` using supplied value and extra encoders.
+    pub fn store_hashmap_aug_e_with<V, E, FV, FE>(
+        &mut self,
+        dict: &HashmapAugE<V, E>,
+        store_value: FV,
+        store_extra: FE,
+    ) -> Result<&mut Self>
+    where
+        FV: Fn(&mut Builder, &V) -> Result<()>,
+        FE: Fn(&mut Builder, &E) -> Result<()>,
+    {
+        match dict.root() {
+            Some(root) => {
+                self.store_bit(true)?;
+                let mut root_builder = Builder::new();
+                root_builder.store_hashmap_aug_with(root, &store_value, &store_extra)?;
+                self.store_ref(root_builder.build()?)?;
+            }
+            None => {
+                self.store_bit(false)?;
+            }
+        }
+        store_extra(self, dict.extra())?;
+        Ok(self)
+    }
+
     /// Stores a compatibility dictionary as `HashmapE`.
     pub fn store_dictionary(&mut self, dict: Option<&Dict>) -> Result<&mut Self> {
         match dict {
@@ -384,6 +627,54 @@ impl Slice {
         }
         let root = self.load_reference()?;
         deserialize_hashmap_root(&root, key_bits, load_value)
+    }
+
+    /// Loads a non-empty `HashmapAug n X Y`.
+    pub fn load_hashmap_aug_with<V, E, FV, FE>(
+        &mut self,
+        key_bits: usize,
+        load_value: FV,
+        load_extra: FE,
+    ) -> Result<HashmapAug<V, E>>
+    where
+        V: Clone,
+        E: Clone,
+        FV: Fn(&mut Slice) -> Result<V>,
+        FE: Fn(&mut Slice) -> Result<E>,
+    {
+        deserialize_hashmap_aug_from_slice(self, key_bits, load_value, load_extra)
+    }
+
+    /// Loads a `HashmapAugE n X Y`.
+    pub fn load_hashmap_aug_e_with<V, E, FV, FE>(
+        &mut self,
+        key_bits: usize,
+        load_value: FV,
+        load_extra: FE,
+    ) -> Result<HashmapAugE<V, E>>
+    where
+        V: Clone,
+        E: Clone,
+        FV: Fn(&mut Slice) -> Result<V>,
+        FE: Fn(&mut Slice) -> Result<E>,
+    {
+        let has_root = self.load_bit()?;
+        if has_root {
+            let root_cell = self.load_reference()?;
+            let mut root_slice = Slice::new(root_cell);
+            let root = deserialize_hashmap_aug_from_slice(
+                &mut root_slice,
+                key_bits,
+                &load_value,
+                &load_extra,
+            )?;
+            ensure_aug_ref_consumed(&root_slice)?;
+            let extra = load_extra(self)?;
+            HashmapAugE::with_root(key_bits, root, extra)
+        } else {
+            let extra = load_extra(self)?;
+            Ok(HashmapAugE::empty(key_bits, extra))
+        }
     }
 
     /// Loads a compatibility dictionary from `HashmapE`.
@@ -559,6 +850,286 @@ where
 
     prefix.truncate(prefix.len() - label_len);
     Ok(())
+}
+
+fn build_aug_node<V, E>(
+    entries: &[(&BitKey, &V, &E)],
+    depth: usize,
+    remaining: usize,
+    fork_extra: &E,
+    forks: &mut Vec<HashmapAugFork<E>>,
+) -> Result<HashmapAugNode<V, E>>
+where
+    V: Clone,
+    E: Clone,
+{
+    if entries.is_empty() {
+        bail!("Cannot build empty HashmapAug edge");
+    }
+
+    let label_len = common_aug_prefix_len(entries, depth, remaining)?;
+    let label = collect_key_bits(entries[0].0, depth, label_len)?;
+    let node_remaining = remaining - label_len;
+
+    if node_remaining == 0 {
+        if entries.len() != 1 {
+            bail!("Duplicate dictionary key");
+        }
+        return Ok(HashmapAugNode::Leaf {
+            label,
+            extra: entries[0].2.clone(),
+            value: entries[0].1.clone(),
+        });
+    }
+
+    let split_depth = depth + label_len;
+    let split = entries
+        .iter()
+        .position(|(key, _, _)| key.bit(split_depth).unwrap_or(false))
+        .unwrap_or(entries.len());
+    if split == 0 || split == entries.len() {
+        bail!("Invalid augmented dictionary fork without both branches");
+    }
+
+    let mut prefix = Vec::with_capacity(split_depth);
+    for index in 0..split_depth {
+        prefix.push(entries[0].0.bit(index)?);
+    }
+    forks.push(HashmapAugFork {
+        prefix: bit_vec_to_key(&prefix, split_depth)?,
+        extra: fork_extra.clone(),
+    });
+
+    Ok(HashmapAugNode::Fork {
+        label,
+        left: Box::new(build_aug_node(
+            &entries[..split],
+            split_depth + 1,
+            node_remaining - 1,
+            fork_extra,
+            forks,
+        )?),
+        right: Box::new(build_aug_node(
+            &entries[split..],
+            split_depth + 1,
+            node_remaining - 1,
+            fork_extra,
+            forks,
+        )?),
+        extra: fork_extra.clone(),
+    })
+}
+
+fn deserialize_hashmap_aug_from_slice<V, E, FV, FE>(
+    slice: &mut Slice,
+    key_bits: usize,
+    load_value: FV,
+    load_extra: FE,
+) -> Result<HashmapAug<V, E>>
+where
+    V: Clone,
+    E: Clone,
+    FV: Fn(&mut Slice) -> Result<V>,
+    FE: Fn(&mut Slice) -> Result<E>,
+{
+    let mut leaves = BTreeMap::new();
+    let mut forks = Vec::new();
+    let root = parse_aug_node(
+        slice,
+        key_bits,
+        &mut Vec::new(),
+        key_bits,
+        &mut leaves,
+        &mut forks,
+        &load_value,
+        &load_extra,
+    )?;
+    Ok(HashmapAug {
+        key_bits,
+        root,
+        leaves,
+        forks,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn parse_aug_node<V, E, FV, FE>(
+    slice: &mut Slice,
+    remaining: usize,
+    prefix: &mut Vec<bool>,
+    key_bits: usize,
+    leaves: &mut BTreeMap<BitKey, (V, E)>,
+    forks: &mut Vec<HashmapAugFork<E>>,
+    load_value: &FV,
+    load_extra: &FE,
+) -> Result<HashmapAugNode<V, E>>
+where
+    V: Clone,
+    E: Clone,
+    FV: Fn(&mut Slice) -> Result<V>,
+    FE: Fn(&mut Slice) -> Result<E>,
+{
+    let label = load_label(slice, remaining)?;
+    let label_len = label.len();
+    prefix.extend(label.iter().copied());
+    let node_remaining = remaining - label_len;
+
+    let node = if node_remaining == 0 {
+        let key = bit_vec_to_key(prefix, key_bits)?;
+        let extra = load_extra(slice)?;
+        let value = load_value(slice)?;
+        if leaves
+            .insert(key.clone(), (value.clone(), extra.clone()))
+            .is_some()
+        {
+            bail!("Duplicate dictionary key");
+        }
+        HashmapAugNode::Leaf {
+            label,
+            extra,
+            value,
+        }
+    } else {
+        let fork_prefix = bit_vec_to_key(prefix, prefix.len())?;
+        let left = slice.load_reference()?;
+        let right = slice.load_reference()?;
+
+        prefix.push(false);
+        let mut left_slice = Slice::new(left);
+        let left_node = parse_aug_node(
+            &mut left_slice,
+            node_remaining - 1,
+            prefix,
+            key_bits,
+            leaves,
+            forks,
+            load_value,
+            load_extra,
+        )?;
+        ensure_aug_ref_consumed(&left_slice)?;
+        prefix.pop();
+
+        prefix.push(true);
+        let mut right_slice = Slice::new(right);
+        let right_node = parse_aug_node(
+            &mut right_slice,
+            node_remaining - 1,
+            prefix,
+            key_bits,
+            leaves,
+            forks,
+            load_value,
+            load_extra,
+        )?;
+        ensure_aug_ref_consumed(&right_slice)?;
+        prefix.pop();
+
+        let extra = load_extra(slice)?;
+        forks.push(HashmapAugFork {
+            prefix: fork_prefix,
+            extra: extra.clone(),
+        });
+        HashmapAugNode::Fork {
+            label,
+            left: Box::new(left_node),
+            right: Box::new(right_node),
+            extra,
+        }
+    };
+
+    prefix.truncate(prefix.len() - label_len);
+    Ok(node)
+}
+
+fn ensure_aug_ref_consumed(slice: &Slice) -> Result<()> {
+    if slice.is_empty() {
+        Ok(())
+    } else {
+        bail!(
+            "Trailing data in HashmapAug reference: {} bits and {} refs remaining",
+            slice.remaining_bits(),
+            slice.remaining_refs()
+        );
+    }
+}
+
+fn store_aug_node<V, E, FV, FE>(
+    builder: &mut Builder,
+    node: &HashmapAugNode<V, E>,
+    store_value: &FV,
+    store_extra: &FE,
+) -> Result<()>
+where
+    FV: Fn(&mut Builder, &V) -> Result<()>,
+    FE: Fn(&mut Builder, &E) -> Result<()>,
+{
+    match node {
+        HashmapAugNode::Leaf {
+            label,
+            extra,
+            value,
+        } => {
+            store_label(builder, label, label.len())?;
+            store_extra(builder, extra)?;
+            store_value(builder, value)?;
+        }
+        HashmapAugNode::Fork {
+            label,
+            left,
+            right,
+            extra,
+        } => {
+            let node_remaining = node_remaining_after_label(node)?;
+            store_label(builder, label, node_remaining + label.len())?;
+
+            let mut left_builder = Builder::new();
+            store_aug_node(&mut left_builder, left, store_value, store_extra)?;
+            builder.store_ref(left_builder.build()?)?;
+
+            let mut right_builder = Builder::new();
+            store_aug_node(&mut right_builder, right, store_value, store_extra)?;
+            builder.store_ref(right_builder.build()?)?;
+            store_extra(builder, extra)?;
+        }
+    }
+    Ok(())
+}
+
+fn node_remaining_after_label<V, E>(node: &HashmapAugNode<V, E>) -> Result<usize> {
+    match node {
+        HashmapAugNode::Leaf { .. } => Ok(0),
+        HashmapAugNode::Fork { left, right, .. } => {
+            Ok(1 + total_aug_edge_bits(left)?.max(total_aug_edge_bits(right)?))
+        }
+    }
+}
+
+fn total_aug_edge_bits<V, E>(node: &HashmapAugNode<V, E>) -> Result<usize> {
+    match node {
+        HashmapAugNode::Leaf { label, .. } => Ok(label.len()),
+        HashmapAugNode::Fork { label, left, .. } => {
+            Ok(label.len() + 1 + total_aug_edge_bits(left)?)
+        }
+    }
+}
+
+fn common_aug_prefix_len<V, E>(
+    entries: &[(&BitKey, &V, &E)],
+    depth: usize,
+    max_len: usize,
+) -> Result<usize> {
+    let first = entries[0].0;
+    let mut len = 0usize;
+    'outer: while len < max_len {
+        let bit = first.bit(depth + len)?;
+        for (key, _, _) in &entries[1..] {
+            if key.bit(depth + len)? != bit {
+                break 'outer;
+            }
+        }
+        len += 1;
+    }
+    Ok(len)
 }
 
 fn store_label(builder: &mut Builder, bits: &[bool], max_len: usize) -> Result<()> {
@@ -962,5 +1533,210 @@ mod tests {
         broken.store_bits(root.data(), root.bit_len()).unwrap();
         let broken = broken.build().unwrap();
         assert!(deserialize_hashmap_root(&broken, 2, |slice| slice.load_uint(2)).is_err());
+    }
+
+    #[test]
+    fn hashmap_aug_e_roundtrips_empty_with_top_extra() {
+        let dict: HashmapAugE<u64, u64> = HashmapAugE::empty(8, 99);
+        let mut builder = Builder::new();
+        builder
+            .store_hashmap_aug_e_with(
+                &dict,
+                |builder, value| {
+                    builder.store_uint(*value, 8)?;
+                    Ok(())
+                },
+                |builder, extra| {
+                    builder.store_uint(*extra, 8)?;
+                    Ok(())
+                },
+            )
+            .unwrap();
+
+        let mut slice = builder.to_slice().unwrap();
+        let decoded = slice
+            .load_hashmap_aug_e_with(8, |slice| slice.load_uint(8), |slice| slice.load_uint(8))
+            .unwrap();
+
+        assert!(decoded.is_empty());
+        assert_eq!(*decoded.extra(), 99);
+    }
+
+    #[test]
+    fn hashmap_aug_e_rejects_trailing_root_ref_data() {
+        let dict = HashmapAug::from_entries(
+            8,
+            vec![HashmapAugLeaf {
+                key: BitKey::from_u64(0xAB, 8).unwrap(),
+                value: 7u64,
+                extra: 11u64,
+            }],
+            0,
+        )
+        .unwrap();
+
+        let mut root_builder = Builder::new();
+        root_builder
+            .store_hashmap_aug_with(
+                &dict,
+                |builder, value| {
+                    builder.store_uint(*value, 8)?;
+                    Ok(())
+                },
+                |builder, extra| {
+                    builder.store_uint(*extra, 8)?;
+                    Ok(())
+                },
+            )
+            .unwrap();
+        root_builder.store_bit(true).unwrap();
+
+        let mut builder = Builder::new();
+        builder.store_bit(true).unwrap();
+        builder.store_ref(root_builder.build().unwrap()).unwrap();
+        builder.store_uint(99, 8).unwrap();
+
+        let mut slice = builder.to_slice().unwrap();
+        assert!(
+            slice
+                .load_hashmap_aug_e_with(
+                    8,
+                    |slice| slice.load_uint(8),
+                    |slice| { slice.load_uint(8) }
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn hashmap_aug_roundtrips_single_leaf() {
+        let dict = HashmapAug::from_entries(
+            8,
+            vec![HashmapAugLeaf {
+                key: BitKey::from_u64(0xAB, 8).unwrap(),
+                value: 7u64,
+                extra: 11u64,
+            }],
+            0,
+        )
+        .unwrap();
+
+        let mut builder = Builder::new();
+        builder
+            .store_hashmap_aug_with(
+                &dict,
+                |builder, value| {
+                    builder.store_uint(*value, 8)?;
+                    Ok(())
+                },
+                |builder, extra| {
+                    builder.store_uint(*extra, 8)?;
+                    Ok(())
+                },
+            )
+            .unwrap();
+
+        let mut slice = builder.to_slice().unwrap();
+        let decoded = slice
+            .load_hashmap_aug_with(8, |slice| slice.load_uint(8), |slice| slice.load_uint(8))
+            .unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(
+            decoded
+                .get_bit_key(&BitKey::from_u64(0xAB, 8).unwrap())
+                .unwrap(),
+            Some((&7, &11))
+        );
+    }
+
+    #[test]
+    fn hashmap_aug_roundtrips_fork_and_preserves_extras() {
+        let dict = HashmapAug::from_entries(
+            4,
+            vec![
+                HashmapAugLeaf {
+                    key: BitKey::from_u64(0b0000, 4).unwrap(),
+                    value: 1u64,
+                    extra: 10u64,
+                },
+                HashmapAugLeaf {
+                    key: BitKey::from_u64(0b0100, 4).unwrap(),
+                    value: 2u64,
+                    extra: 20u64,
+                },
+                HashmapAugLeaf {
+                    key: BitKey::from_u64(0b1100, 4).unwrap(),
+                    value: 3u64,
+                    extra: 30u64,
+                },
+            ],
+            77,
+        )
+        .unwrap();
+
+        let wrapped = HashmapAugE::with_root(4, dict, 88).unwrap();
+        let mut builder = Builder::new();
+        builder
+            .store_hashmap_aug_e_with(
+                &wrapped,
+                |builder, value| {
+                    builder.store_uint(*value, 8)?;
+                    Ok(())
+                },
+                |builder, extra| {
+                    builder.store_uint(*extra, 8)?;
+                    Ok(())
+                },
+            )
+            .unwrap();
+
+        let mut slice = builder.to_slice().unwrap();
+        let decoded = slice
+            .load_hashmap_aug_e_with(4, |slice| slice.load_uint(8), |slice| slice.load_uint(8))
+            .unwrap();
+        let root = decoded.root().unwrap();
+        let leaves: Vec<_> = root
+            .iter()
+            .map(|(key, value, extra)| (key.to_u64().unwrap(), *value, *extra))
+            .collect();
+        assert_eq!(leaves, vec![(0, 1, 10), (4, 2, 20), (12, 3, 30)]);
+        assert_eq!(*decoded.extra(), 88);
+        assert!(root.fork_extras().iter().all(|fork| fork.extra == 77));
+    }
+
+    #[test]
+    fn hashmap_aug_rejects_empty_duplicate_and_wrong_width() {
+        assert!(HashmapAug::<u64, u64>::from_entries(4, vec![], 0).is_err());
+        assert!(
+            HashmapAug::from_entries(
+                4,
+                vec![HashmapAugLeaf {
+                    key: BitKey::from_u64(0, 5).unwrap(),
+                    value: 1u64,
+                    extra: 1u64,
+                }],
+                0,
+            )
+            .is_err()
+        );
+        assert!(
+            HashmapAug::from_entries(
+                4,
+                vec![
+                    HashmapAugLeaf {
+                        key: BitKey::from_u64(1, 4).unwrap(),
+                        value: 1u64,
+                        extra: 1u64,
+                    },
+                    HashmapAugLeaf {
+                        key: BitKey::from_u64(1, 4).unwrap(),
+                        value: 2u64,
+                        extra: 2u64,
+                    },
+                ],
+                0,
+            )
+            .is_err()
+        );
     }
 }

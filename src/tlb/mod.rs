@@ -2,12 +2,27 @@
 //!
 //! This module provides the minimal runtime surface for hand-written TL-B
 //! codecs. It intentionally does not include derive macros, schema parsing, or
-//! built-in blockchain models yet.
+//! built-in blockchain models.
 
 use crate::tvm::{Builder, Cell, Slice};
 use num_bigint::BigUint;
 use std::sync::Arc;
 use thiserror::Error;
+
+pub mod message;
+pub mod transaction;
+
+pub use message::{
+    AccStatusChange, Anycast, CommonMsgInfo, CommonMsgInfoRelaxed, CurrencyCollection, Grams,
+    LibRef, Message, MessageRelaxed, MsgAddress, MsgAddressExt, MsgAddressInt, OutAction, OutList,
+    SimpleLib, StateInit, StateInitWithLibs, StorageUsed, TickTock, TrActionPhase,
+};
+pub use transaction::{
+    Account, AccountBlock, AccountState, AccountStatus, AccountStorage, ComputeSkipReason,
+    DepthBalanceInfo, HashUpdateAccount, ShardAccount, ShardAccountBlocks, ShardAccounts,
+    SplitMergeInfo, StorageExtraInfo, StorageInfo, TrBouncePhase, TrComputePhase, TrCreditPhase,
+    TrStoragePhase, Transaction, TransactionDescr,
+};
 
 /// Result type used by TL-B codecs.
 pub type Result<T> = std::result::Result<T, TlbError>;
