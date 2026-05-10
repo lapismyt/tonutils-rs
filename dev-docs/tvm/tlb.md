@@ -10,9 +10,10 @@ network APIs, while TL-B serializes structured values into cell bits and cell
 references.
 
 This document fixes the crate direction for TL-B runtime traits, model codecs,
-and future macro support. It is a design record only: the first implementation
-step should add small hand-written codecs and tests before introducing a
-proc-macro crate or any heavy dependency.
+schema parsing, and future macro support. Phase 1 includes hand-written codecs
+for the first blockchain model surface plus a deterministic schema parser and
+checked-summary workflow. It does not introduce a proc-macro crate or any heavy
+macro dependency.
 
 ## TL Compared With TL-B
 
@@ -256,12 +257,28 @@ verification. The intended `TlbError` cases include:
 The low-level `tvm` errors should remain reusable. `TlbError` can wrap them, but
 model code should add schema context before returning an error where practical.
 
-## Macro Direction
+## Schema And Macro Direction
 
-Macro support is a later Phase 1 implementation step. This slice does not create
-a proc-macro crate and does not add dependencies.
+Phase 1 macro/schema support is the checked schema workflow in
+`src/tlb/schema.rs`:
 
-The eventual macro design should support two complementary forms:
+- users can parse TL-B text with `parse_schema`,
+- inspect constructor names, explicit tags, grouped references, field text, and
+  result types,
+- generate a deterministic checked summary with `generate_summary`,
+- compare generated output against a checked-in snapshot for drift detection.
+
+`examples/tlb_schema_codegen.rs` demonstrates this path with a small
+user-defined schema snippet and separately verifies the built-in
+`BLOCK_PHASE1_TLB` summary. The built-in Phase 1 block/config/proof schema
+slice remains in `src/tlb/schemas/block_phase1.tlb`; its checked summary remains
+in `src/tlb/generated/block_phase1.rs`.
+
+This is an explicit Phase 1 decision: no separate proc-macro crate is added.
+That keeps low-level TVM and TL-B users free from macro compile cost while the
+schema parser, runtime traits, and fixture coverage stabilize.
+
+Future macro work should support two complementary forms:
 
 - A derive macro for manually written Rust structs and enums, where attributes
   provide constructor tags, field widths, references, and helper codecs.
@@ -274,8 +291,8 @@ The schema-driven form is useful for broad upstream coverage and drift checks.
 Both forms must generate code that calls the same `TlbSerialize` and
 `TlbDeserialize` traits, so hand-written and generated models compose.
 
-Proc-macro support should be an explicit workspace and dependency decision. If a
-new crate is added, keep it feature-gated so users who only need low-level TVM
+Proc-macro support remains a later workspace and dependency decision. If a new
+crate is added, keep it feature-gated so users who only need low-level TVM
 primitives do not pay macro compile cost.
 
 ## Current Crate Mapping

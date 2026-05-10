@@ -4,6 +4,12 @@ use tokio_tower::multiplex;
 use tower::{Service as _, ServiceBuilder, ServiceExt as _};
 
 use crate::liteclient::{
+    boc::{
+        DecodedAccountState, DecodedAllShardsInfo, DecodedBlockData, DecodedBlockHeader,
+        DecodedBlockTransactionsExt, DecodedConfigInfo, DecodedLibrariesWithProof,
+        DecodedShardInfo, DecodedTransactionInfo, SimpleAccount, decode_block_boc,
+        decode_optional_boc, decode_optional_config, decode_single_transaction_list,
+    },
     layers::WrapRawMessagesLayer,
     peer::LitePeer,
     rate_limit::{RateLimiter, RequestRateLimit},
@@ -12,7 +18,8 @@ use crate::liteclient::{
 #[cfg(feature = "network-config")]
 use crate::network_config::{ConfigGlobal, ConfigLiteServer};
 use crate::tl::{common::*, request::*, response::*, utils::FromResponse};
-use crate::tvm::{TvmStack, address::Address};
+use crate::tvm::{TvmStack, TvmStackEntry, address::Address, deserialize_boc};
+use std::{collections::HashMap, sync::Arc};
 
 type Result<T> = std::result::Result<T, LiteError>;
 
@@ -162,6 +169,17 @@ impl LiteClient {
         Ok(response.data)
     }
 
+    pub async fn raw_get_block(&mut self, id: BlockIdExt) -> Result<crate::tlb::Block> {
+        Ok(self.raw_get_block_data(id).await?.data.block)
+    }
+
+    pub async fn raw_get_block_data(&mut self, id: BlockIdExt) -> Result<DecodedBlockData> {
+        let request = Request::GetBlock(GetBlock { id });
+        let raw: BlockData = self.send_request(request).await?;
+        let data = decode_block_boc(&raw.data).map_err(decode_error)?;
+        Ok(DecodedBlockData { raw, data })
+    }
+
     pub async fn get_state(&mut self, id: BlockIdExt) -> Result<BlockState> {
         let request = Request::GetState(GetState { id });
         let response: BlockState = self.send_request(request).await?;
@@ -194,6 +212,34 @@ impl LiteClient {
         Ok(response.header_proof)
     }
 
+    pub async fn raw_get_block_header(
+        &mut self,
+        id: BlockIdExt,
+        with_state_update: bool,
+        with_value_flow: bool,
+        with_extra: bool,
+        with_shard_hashes: bool,
+        with_prev_blk_signatures: bool,
+    ) -> Result<DecodedBlockHeader> {
+        let request = Request::GetBlockHeader(GetBlockHeader {
+            id,
+            mode: (),
+            with_state_update: if with_state_update { Some(()) } else { None },
+            with_value_flow: if with_value_flow { Some(()) } else { None },
+            with_extra: if with_extra { Some(()) } else { None },
+            with_shard_hashes: if with_shard_hashes { Some(()) } else { None },
+            with_prev_blk_signatures: if with_prev_blk_signatures {
+                Some(())
+            } else {
+                None
+            },
+        });
+        let raw: BlockHeader = self.send_request(request).await?;
+        let header_proof =
+            crate::liteclient::boc::DecodedBoc::decode(&raw.header_proof).map_err(decode_error)?;
+        Ok(DecodedBlockHeader { raw, header_proof })
+    }
+
     pub async fn send_message(&mut self, body: Vec<u8>) -> Result<u32> {
         let request = Request::SendMessage(SendMessage { body });
         let response: SendMsgStatus = self.send_request(request).await?;
@@ -208,6 +254,35 @@ impl LiteClient {
         let request = Request::GetAccountState(GetAccountState { id, account });
         let response: AccountState = self.send_request(request).await?;
         Ok(response)
+    }
+
+    pub async fn raw_get_account_state(
+        &mut self,
+        account: Address,
+        block: Option<BlockIdExt>,
+    ) -> Result<(
+        Option<crate::tlb::Account>,
+        Option<crate::tlb::ShardAccount>,
+    )> {
+        let decoded = self.get_account_state_typed(account, block).await?;
+        Ok((decoded.account, decoded.shard_account))
+    }
+
+    pub async fn get_account_state_typed(
+        &mut self,
+        account: Address,
+        block: Option<BlockIdExt>,
+    ) -> Result<DecodedAccountState> {
+        let id = match block {
+            Some(block) => block,
+            None => self.get_masterchain_info().await?.last,
+        };
+        let raw = self.get_account_state(id, account.to_account_id()).await?;
+        DecodedAccountState::from_raw(raw).map_err(decode_error)
+    }
+
+    pub async fn get_account_state_simple(&mut self, account: Address) -> Result<SimpleAccount> {
+        Ok(self.get_account_state_typed(account, None).await?.simple())
     }
 
     pub async fn run_smc_method(
@@ -242,6 +317,33 @@ impl LiteClient {
             .map_err(|e| LiteError::TlError(crate::tl::TlError::ParseError(e.to_string())))?;
         self.run_smc_method(mode, block, account, method_id, params)
             .await
+    }
+
+    pub async fn run_get_method_typed(
+        &mut self,
+        mode: u32,
+        block: BlockIdExt,
+        account: Address,
+        method_id: u64,
+        stack: TvmStack,
+    ) -> Result<Vec<TvmStackEntry>> {
+        let result = self
+            .run_get_method(mode, block, account, method_id, stack)
+            .await?;
+        if result.exit_code != 0 {
+            return Err(LiteError::TlError(crate::tl::TlError::ParseError(format!(
+                "run get method exited with code {}",
+                result.exit_code
+            ))));
+        }
+        let stack = result
+            .result
+            .as_deref()
+            .map(TvmStack::from_boc)
+            .transpose()
+            .map_err(decode_error)?
+            .unwrap_or_else(TvmStack::empty);
+        Ok(stack.entries().to_vec())
     }
 
     pub async fn run_get_method_by_name(
@@ -279,10 +381,51 @@ impl LiteClient {
         Ok(response)
     }
 
+    pub async fn raw_get_shard_info(
+        &mut self,
+        block: BlockIdExt,
+        workchain: i32,
+        shard: u64,
+        exact: bool,
+    ) -> Result<DecodedShardInfo> {
+        let raw = self.get_shard_info(block, workchain, shard, exact).await?;
+        let shard_proof = decode_optional_boc(&raw.shard_proof).map_err(decode_error)?;
+        let shard_descr = crate::liteclient::boc::ShardDescr {
+            boc: crate::liteclient::boc::DecodedBoc::decode(&raw.shard_descr)
+                .map_err(decode_error)?,
+        };
+        Ok(DecodedShardInfo {
+            raw,
+            shard_proof,
+            shard_descr,
+        })
+    }
+
     pub async fn get_all_shards_info(&mut self, block: BlockIdExt) -> Result<AllShardsInfo> {
         let request = Request::GetAllShardsInfo(GetAllShardsInfo { id: block });
         let response: AllShardsInfo = self.send_request(request).await?;
         Ok(response)
+    }
+
+    pub async fn raw_get_all_shards_info(
+        &mut self,
+        block: BlockIdExt,
+    ) -> Result<DecodedAllShardsInfo> {
+        let raw = self.get_all_shards_info(block).await?;
+        let proof = decode_optional_boc(&raw.proof).map_err(decode_error)?;
+        let data = crate::liteclient::boc::DecodedBoc::decode(&raw.data).map_err(decode_error)?;
+        Ok(DecodedAllShardsInfo { raw, proof, data })
+    }
+
+    pub async fn get_all_shards_info_typed(
+        &mut self,
+        block: BlockIdExt,
+    ) -> Result<Vec<BlockIdExt>> {
+        let _ = self.raw_get_all_shards_info(block).await?;
+        Err(LiteError::TlError(crate::tl::TlError::ParseError(
+            "typed all-shards dictionary decode requires full ShardDescr/BinTree TL-B models"
+                .to_string(),
+        )))
     }
 
     pub async fn get_one_transaction(
@@ -300,6 +443,41 @@ impl LiteClient {
         Ok(response)
     }
 
+    pub async fn get_one_transaction_typed(
+        &mut self,
+        block: BlockIdExt,
+        account: AccountId,
+        lt: u64,
+    ) -> Result<Option<crate::tlb::Transaction>> {
+        Ok(self
+            .get_one_transaction_decoded(block, account, lt)
+            .await?
+            .transaction)
+    }
+
+    pub async fn get_one_transaction_decoded(
+        &mut self,
+        block: BlockIdExt,
+        account: AccountId,
+        lt: u64,
+    ) -> Result<DecodedTransactionInfo> {
+        let raw = self.get_one_transaction(block, account, lt).await?;
+        let proof = decode_optional_boc(&raw.proof).map_err(decode_error)?;
+        let transaction = if raw.transaction.is_empty() {
+            None
+        } else {
+            Some(
+                crate::liteclient::boc::decode_transaction_boc(&raw.transaction)
+                    .map_err(decode_error)?,
+            )
+        };
+        Ok(DecodedTransactionInfo {
+            raw,
+            proof,
+            transaction,
+        })
+    }
+
     pub async fn get_transactions(
         &mut self,
         count: u32,
@@ -315,6 +493,19 @@ impl LiteClient {
         });
         let response: TransactionList = self.send_request(request).await?;
         Ok(response)
+    }
+
+    pub async fn raw_get_transactions(
+        &mut self,
+        count: u32,
+        account: AccountId,
+        lt: u64,
+        hash: Int256,
+    ) -> Result<(Vec<crate::tlb::Transaction>, Vec<BlockIdExt>)> {
+        let raw = self.get_transactions(count, account, lt, hash).await?;
+        let transactions =
+            decode_single_transaction_list(&raw.transactions).map_err(decode_error)?;
+        Ok((transactions, raw.ids))
     }
 
     pub async fn lookup_block(
@@ -409,6 +600,41 @@ impl LiteClient {
         Ok(response)
     }
 
+    pub async fn raw_get_block_transactions_ext(
+        &mut self,
+        id: BlockIdExt,
+        count: u32,
+        after: Option<TransactionId3>,
+        reverse_order: bool,
+        want_proof: bool,
+    ) -> Result<Vec<crate::tlb::Transaction>> {
+        Ok(self
+            .list_block_transactions_ext_decoded(id, count, after, reverse_order, want_proof)
+            .await?
+            .transactions)
+    }
+
+    pub async fn list_block_transactions_ext_decoded(
+        &mut self,
+        id: BlockIdExt,
+        count: u32,
+        after: Option<TransactionId3>,
+        reverse_order: bool,
+        want_proof: bool,
+    ) -> Result<DecodedBlockTransactionsExt> {
+        let raw = self
+            .list_block_transactions_ext(id, count, after, reverse_order, want_proof)
+            .await?;
+        let transactions =
+            decode_single_transaction_list(&raw.transactions).map_err(decode_error)?;
+        let proof = decode_optional_boc(&raw.proof).map_err(decode_error)?;
+        Ok(DecodedBlockTransactionsExt {
+            raw,
+            transactions,
+            proof,
+        })
+    }
+
     pub async fn get_block_proof(
         &mut self,
         known_block: BlockIdExt,
@@ -473,6 +699,40 @@ impl LiteClient {
         Ok(response)
     }
 
+    pub async fn get_config_all_typed(
+        &mut self,
+        id: BlockIdExt,
+        with_state_root: bool,
+        with_libraries: bool,
+        with_state_extra_root: bool,
+        with_shard_hashes: bool,
+        with_validator_set: bool,
+        with_special_smc: bool,
+        with_accounts_root: bool,
+        with_prev_blocks: bool,
+        with_workchain_info: bool,
+        with_capabilities: bool,
+        extract_from_key_block: bool,
+    ) -> Result<DecodedConfigInfo> {
+        let raw = self
+            .get_config_all(
+                id,
+                with_state_root,
+                with_libraries,
+                with_state_extra_root,
+                with_shard_hashes,
+                with_validator_set,
+                with_special_smc,
+                with_accounts_root,
+                with_prev_blocks,
+                with_workchain_info,
+                with_capabilities,
+                extract_from_key_block,
+            )
+            .await?;
+        decode_config_info(raw)
+    }
+
     pub async fn get_config_params(
         &mut self,
         id: BlockIdExt,
@@ -517,6 +777,42 @@ impl LiteClient {
         Ok(response)
     }
 
+    pub async fn get_config_params_typed(
+        &mut self,
+        id: BlockIdExt,
+        param_list: Vec<i32>,
+        with_state_root: bool,
+        with_libraries: bool,
+        with_state_extra_root: bool,
+        with_shard_hashes: bool,
+        with_validator_set: bool,
+        with_special_smc: bool,
+        with_accounts_root: bool,
+        with_prev_blocks: bool,
+        with_workchain_info: bool,
+        with_capabilities: bool,
+        extract_from_key_block: bool,
+    ) -> Result<DecodedConfigInfo> {
+        let raw = self
+            .get_config_params(
+                id,
+                param_list,
+                with_state_root,
+                with_libraries,
+                with_state_extra_root,
+                with_shard_hashes,
+                with_validator_set,
+                with_special_smc,
+                with_accounts_root,
+                with_prev_blocks,
+                with_workchain_info,
+                with_capabilities,
+                extract_from_key_block,
+            )
+            .await?;
+        decode_config_info(raw)
+    }
+
     pub async fn get_validator_stats(
         &mut self,
         id: BlockIdExt,
@@ -541,6 +837,23 @@ impl LiteClient {
         Ok(response.result)
     }
 
+    pub async fn get_libraries_typed(
+        &mut self,
+        library_list: Vec<Int256>,
+    ) -> Result<HashMap<Int256, Option<Arc<crate::tvm::Cell>>>> {
+        let entries = self.get_libraries(library_list).await?;
+        let mut libraries = HashMap::with_capacity(entries.len());
+        for entry in entries {
+            let cell = if entry.data.is_empty() {
+                None
+            } else {
+                Some(deserialize_boc(&entry.data).map_err(decode_error)?)
+            };
+            libraries.insert(entry.hash, cell);
+        }
+        Ok(libraries)
+    }
+
     pub async fn get_libraries_with_proof(
         &mut self,
         id: BlockIdExt,
@@ -554,6 +867,34 @@ impl LiteClient {
         });
         let _ = mode;
         self.send_request(request).await
+    }
+
+    pub async fn get_libraries_with_proof_typed(
+        &mut self,
+        id: BlockIdExt,
+        mode: u32,
+        library_list: Vec<Int256>,
+    ) -> Result<DecodedLibrariesWithProof> {
+        let raw = self
+            .get_libraries_with_proof(id, mode, library_list)
+            .await?;
+        let mut libraries = HashMap::with_capacity(raw.result.len());
+        for entry in &raw.result {
+            let cell = if entry.data.is_empty() {
+                None
+            } else {
+                Some(deserialize_boc(&entry.data).map_err(decode_error)?)
+            };
+            libraries.insert(entry.hash.clone(), cell);
+        }
+        let state_proof = decode_optional_boc(&raw.state_proof).map_err(decode_error)?;
+        let data_proof = decode_optional_boc(&raw.data_proof).map_err(decode_error)?;
+        Ok(DecodedLibrariesWithProof {
+            raw,
+            libraries,
+            state_proof,
+            data_proof,
+        })
     }
 
     pub async fn get_shard_block_proof(&mut self, id: BlockIdExt) -> Result<ShardBlockProof> {
@@ -675,4 +1016,18 @@ impl LiteClient {
         ))
         .await
     }
+}
+
+fn decode_config_info(raw: ConfigInfo) -> Result<DecodedConfigInfo> {
+    let state_proof = decode_optional_boc(&raw.state_proof).map_err(decode_error)?;
+    let config_proof = decode_optional_config(&raw.config_proof).map_err(decode_error)?;
+    Ok(DecodedConfigInfo {
+        raw,
+        state_proof,
+        config_proof,
+    })
+}
+
+fn decode_error(error: anyhow::Error) -> LiteError {
+    LiteError::TlError(crate::tl::TlError::ParseError(error.to_string()))
 }

@@ -5,7 +5,7 @@
 //! - Connection failures and failover
 //! - Load balancing based on response times and current load
 //! - Peer health checking and automatic reconnection
-//! - Consensus-based synchronization checking
+//! - Best-effort synchronization filtering based on observed masterchain seqnos
 //! - Archival node detection
 
 use std::collections::{HashMap, HashSet};
@@ -15,13 +15,18 @@ use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
 use crate::liteclient::{
+    boc::{
+        DecodedAccountState, DecodedAllShardsInfo, DecodedBlockData, DecodedBlockHeader,
+        DecodedBlockTransactionsExt, DecodedConfigInfo, DecodedLibrariesWithProof,
+        DecodedShardInfo, SimpleAccount,
+    },
     client::LiteClient,
     rate_limit::{RateLimiter, RequestRateLimit},
     types::LiteError,
 };
 use crate::tl::common::*;
 use crate::tl::response::*;
-use crate::tvm::{Address, TvmStack};
+use crate::tvm::{Address, TvmStack, TvmStackEntry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BalancerError {
@@ -40,6 +45,33 @@ pub enum BalancerError {
 }
 
 type Result<T> = std::result::Result<T, BalancerError>;
+
+macro_rules! balanced_call {
+    ($self:ident, $response:ty, $only_archive:expr, |$client:ident| $call:expr) => {{
+        for _attempt in 0..$self.max_retries {
+            let (peer_idx, start) = $self.execute_request::<$response>($only_archive).await?;
+            let result = {
+                let $client = &mut $self.peers[peer_idx];
+                $call.await
+            };
+
+            match result {
+                Ok(response) => {
+                    $self.complete_request(peer_idx, start, true).await;
+                    return Ok(response);
+                }
+                Err(e) => {
+                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
+                    $self.complete_request(peer_idx, start, false).await;
+                    if !is_connection_error {
+                        return Err(BalancerError::LiteError(e));
+                    }
+                }
+            }
+        }
+        Err(BalancerError::Timeout)
+    }};
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerState {
@@ -147,7 +179,7 @@ impl LiteBalancer {
         let block_id = BlockId {
             workchain: -1,
             shard: -9223372036854775808i64,
-            seqno: rand::random::<i32>() % 1024 + 1,
+            seqno: Self::archive_probe_seqno(),
         };
 
         match client
@@ -168,6 +200,10 @@ impl LiteBalancer {
             Ok(_) => true,
             Err(_) => false,
         }
+    }
+
+    fn archive_probe_seqno() -> i32 {
+        (rand::random::<u32>() % 1024 + 1) as i32
     }
 
     async fn find_archives(&mut self) {
@@ -256,7 +292,7 @@ impl LiteBalancer {
                 .map(|s| s.current_requests as usize)
                 .unwrap_or(0);
 
-            if current_req <= self.max_req_per_peer {
+            if current_req < self.max_req_per_peer {
                 return Ok(peer_idx);
             }
 
@@ -531,6 +567,17 @@ impl LiteBalancer {
         Err(BalancerError::Timeout)
     }
 
+    pub async fn raw_get_block(&mut self, id: BlockIdExt) -> Result<crate::tlb::Block> {
+        balanced_call!(self, crate::tlb::Block, false, |client| client
+            .raw_get_block(id.clone()))
+    }
+
+    pub async fn raw_get_block_data(&mut self, id: BlockIdExt) -> Result<DecodedBlockData> {
+        balanced_call!(self, DecodedBlockData, false, |client| {
+            client.raw_get_block_data(id.clone())
+        })
+    }
+
     pub async fn get_state(&mut self, id: BlockIdExt) -> Result<BlockState> {
         for _attempt in 0..self.max_retries {
             let (peer_idx, start) = self.execute_request::<BlockState>(false).await?;
@@ -590,6 +637,27 @@ impl LiteBalancer {
             }
         }
         Err(BalancerError::Timeout)
+    }
+
+    pub async fn raw_get_block_header(
+        &mut self,
+        id: BlockIdExt,
+        with_state_update: bool,
+        with_value_flow: bool,
+        with_extra: bool,
+        with_shard_hashes: bool,
+        with_prev_blk_signatures: bool,
+    ) -> Result<DecodedBlockHeader> {
+        balanced_call!(self, DecodedBlockHeader, false, |client| {
+            client.raw_get_block_header(
+                id.clone(),
+                with_state_update,
+                with_value_flow,
+                with_extra,
+                with_shard_hashes,
+                with_prev_blk_signatures,
+            )
+        })
     }
 
     pub async fn send_message(&mut self, body: Vec<u8>) -> Result<u32> {
@@ -661,6 +729,41 @@ impl LiteBalancer {
         Err(BalancerError::Timeout)
     }
 
+    pub async fn raw_get_account_state(
+        &mut self,
+        account: Address,
+        block: Option<BlockIdExt>,
+    ) -> Result<(
+        Option<crate::tlb::Account>,
+        Option<crate::tlb::ShardAccount>,
+    )> {
+        balanced_call!(
+            self,
+            (
+                Option<crate::tlb::Account>,
+                Option<crate::tlb::ShardAccount>
+            ),
+            false,
+            |client| client.raw_get_account_state(account.clone(), block.clone())
+        )
+    }
+
+    pub async fn get_account_state_typed(
+        &mut self,
+        account: Address,
+        block: Option<BlockIdExt>,
+    ) -> Result<DecodedAccountState> {
+        balanced_call!(self, DecodedAccountState, false, |client| {
+            client.get_account_state_typed(account.clone(), block.clone())
+        })
+    }
+
+    pub async fn get_account_state_simple(&mut self, account: Address) -> Result<SimpleAccount> {
+        balanced_call!(self, SimpleAccount, false, |client| {
+            client.get_account_state_simple(account.clone())
+        })
+    }
+
     pub async fn run_smc_method(
         &mut self,
         mode: u32,
@@ -709,6 +812,19 @@ impl LiteBalancer {
             .await
     }
 
+    pub async fn run_get_method_typed(
+        &mut self,
+        mode: u32,
+        id: BlockIdExt,
+        account: Address,
+        method_id: u64,
+        stack: TvmStack,
+    ) -> Result<Vec<TvmStackEntry>> {
+        balanced_call!(self, Vec<TvmStackEntry>, false, |client| {
+            client.run_get_method_typed(mode, id.clone(), account.clone(), method_id, stack.clone())
+        })
+    }
+
     pub async fn run_get_method_by_name(
         &mut self,
         mode: u32,
@@ -755,6 +871,191 @@ impl LiteBalancer {
             }
         }
         Err(BalancerError::Timeout)
+    }
+
+    pub async fn raw_get_transactions(
+        &mut self,
+        count: u32,
+        account: AccountId,
+        lt: u64,
+        hash: Int256,
+    ) -> Result<(Vec<crate::tlb::Transaction>, Vec<BlockIdExt>)> {
+        balanced_call!(
+            self,
+            (Vec<crate::tlb::Transaction>, Vec<BlockIdExt>),
+            false,
+            |client| client.raw_get_transactions(count, account.clone(), lt, hash.clone())
+        )
+    }
+
+    pub async fn raw_get_shard_info(
+        &mut self,
+        block: BlockIdExt,
+        workchain: i32,
+        shard: u64,
+        exact: bool,
+    ) -> Result<DecodedShardInfo> {
+        balanced_call!(self, DecodedShardInfo, false, |client| {
+            client.raw_get_shard_info(block.clone(), workchain, shard, exact)
+        })
+    }
+
+    pub async fn raw_get_all_shards_info(
+        &mut self,
+        block: BlockIdExt,
+    ) -> Result<DecodedAllShardsInfo> {
+        balanced_call!(self, DecodedAllShardsInfo, false, |client| {
+            client.raw_get_all_shards_info(block.clone())
+        })
+    }
+
+    pub async fn get_all_shards_info_typed(
+        &mut self,
+        block: BlockIdExt,
+    ) -> Result<Vec<BlockIdExt>> {
+        balanced_call!(self, Vec<BlockIdExt>, false, |client| {
+            client.get_all_shards_info_typed(block.clone())
+        })
+    }
+
+    pub async fn get_one_transaction_typed(
+        &mut self,
+        block: BlockIdExt,
+        account: AccountId,
+        lt: u64,
+    ) -> Result<Option<crate::tlb::Transaction>> {
+        balanced_call!(self, Option<crate::tlb::Transaction>, false, |client| {
+            client.get_one_transaction_typed(block.clone(), account.clone(), lt)
+        })
+    }
+
+    pub async fn raw_get_block_transactions_ext(
+        &mut self,
+        id: BlockIdExt,
+        count: u32,
+        after: Option<TransactionId3>,
+        reverse_order: bool,
+        want_proof: bool,
+    ) -> Result<Vec<crate::tlb::Transaction>> {
+        balanced_call!(self, Vec<crate::tlb::Transaction>, false, |client| {
+            client.raw_get_block_transactions_ext(
+                id.clone(),
+                count,
+                after.clone(),
+                reverse_order,
+                want_proof,
+            )
+        })
+    }
+
+    pub async fn list_block_transactions_ext_decoded(
+        &mut self,
+        id: BlockIdExt,
+        count: u32,
+        after: Option<TransactionId3>,
+        reverse_order: bool,
+        want_proof: bool,
+    ) -> Result<DecodedBlockTransactionsExt> {
+        balanced_call!(self, DecodedBlockTransactionsExt, false, |client| {
+            client.list_block_transactions_ext_decoded(
+                id.clone(),
+                count,
+                after.clone(),
+                reverse_order,
+                want_proof,
+            )
+        })
+    }
+
+    pub async fn get_config_all_typed(
+        &mut self,
+        id: BlockIdExt,
+        with_state_root: bool,
+        with_libraries: bool,
+        with_state_extra_root: bool,
+        with_shard_hashes: bool,
+        with_validator_set: bool,
+        with_special_smc: bool,
+        with_accounts_root: bool,
+        with_prev_blocks: bool,
+        with_workchain_info: bool,
+        with_capabilities: bool,
+        extract_from_key_block: bool,
+    ) -> Result<DecodedConfigInfo> {
+        balanced_call!(self, DecodedConfigInfo, false, |client| {
+            client.get_config_all_typed(
+                id.clone(),
+                with_state_root,
+                with_libraries,
+                with_state_extra_root,
+                with_shard_hashes,
+                with_validator_set,
+                with_special_smc,
+                with_accounts_root,
+                with_prev_blocks,
+                with_workchain_info,
+                with_capabilities,
+                extract_from_key_block,
+            )
+        })
+    }
+
+    pub async fn get_config_params_typed(
+        &mut self,
+        id: BlockIdExt,
+        param_list: Vec<i32>,
+        with_state_root: bool,
+        with_libraries: bool,
+        with_state_extra_root: bool,
+        with_shard_hashes: bool,
+        with_validator_set: bool,
+        with_special_smc: bool,
+        with_accounts_root: bool,
+        with_prev_blocks: bool,
+        with_workchain_info: bool,
+        with_capabilities: bool,
+        extract_from_key_block: bool,
+    ) -> Result<DecodedConfigInfo> {
+        balanced_call!(self, DecodedConfigInfo, false, |client| {
+            client.get_config_params_typed(
+                id.clone(),
+                param_list.clone(),
+                with_state_root,
+                with_libraries,
+                with_state_extra_root,
+                with_shard_hashes,
+                with_validator_set,
+                with_special_smc,
+                with_accounts_root,
+                with_prev_blocks,
+                with_workchain_info,
+                with_capabilities,
+                extract_from_key_block,
+            )
+        })
+    }
+
+    pub async fn get_libraries_typed(
+        &mut self,
+        library_list: Vec<Int256>,
+    ) -> Result<HashMap<Int256, Option<Arc<crate::tvm::Cell>>>> {
+        balanced_call!(
+            self,
+            HashMap<Int256, Option<Arc<crate::tvm::Cell>>>,
+            false,
+            |client| client.get_libraries_typed(library_list.clone())
+        )
+    }
+
+    pub async fn get_libraries_with_proof_typed(
+        &mut self,
+        id: BlockIdExt,
+        mode: u32,
+        library_list: Vec<Int256>,
+    ) -> Result<DecodedLibrariesWithProof> {
+        balanced_call!(self, DecodedLibrariesWithProof, false, |client| {
+            client.get_libraries_with_proof_typed(id.clone(), mode, library_list.clone())
+        })
     }
 }
 
@@ -828,6 +1129,14 @@ mod tests {
         // Multiple requests
         let avg = LiteBalancer::calc_new_average(200, 10, 100);
         assert_eq!(avg, (200 * 10 + 100) / 11);
+    }
+
+    #[test]
+    fn archive_probe_seqno_is_positive_old_block_range() {
+        for _ in 0..256 {
+            let seqno = LiteBalancer::archive_probe_seqno();
+            assert!((1..=1024).contains(&seqno));
+        }
     }
 
     #[tokio::test]
@@ -1206,6 +1515,44 @@ mod tests {
 
         let chosen = balancer.choose_peer(false).await.unwrap();
         // Should choose peer 1 (under limit and faster than peer 2)
+        assert_eq!(chosen, 1);
+    }
+
+    #[tokio::test]
+    async fn choose_peer_treats_limit_as_exclusive() {
+        let peers = Vec::new();
+        let mut balancer = LiteBalancer::new(peers, Duration::from_secs(10));
+        balancer.max_req_per_peer = 5;
+
+        {
+            let mut alive = balancer.alive_peers.write().await;
+            alive.insert(0);
+            alive.insert(1);
+        }
+
+        {
+            let mut stats = balancer.peer_stats.write().await;
+            stats.insert(
+                0,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    avg_response_time_ms: 10,
+                    total_requests: 1,
+                    current_requests: 5,
+                },
+            );
+            stats.insert(
+                1,
+                PeerStats {
+                    mc_block_seqno: 100,
+                    avg_response_time_ms: 20,
+                    total_requests: 1,
+                    current_requests: 4,
+                },
+            );
+        }
+
+        let chosen = balancer.choose_peer(false).await.unwrap();
         assert_eq!(chosen, 1);
     }
 

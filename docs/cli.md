@@ -3,6 +3,11 @@
 The CLI is designed for shell scripts. Structured command results are written to
 stdout. Diagnostics and connection warnings are written to stderr.
 
+Audience: operators, examples, and tests that need reproducible command-line
+access to LiteClient, LiteBalancer, contract, TVM, BoC, and schema workflows.
+Prerequisites: build with the `cli` feature. Network commands need live network
+access; `tvm` commands are offline.
+
 ## Global Options
 
 - `--network mainnet|testnet`: public config to download when no config is supplied.
@@ -12,12 +17,48 @@ stdout. Diagnostics and connection warnings are written to stderr.
 - `--rps <N>`: throttle each selected liteserver to `N` requests per second.
 - `--global-rps <N>`: throttle total LiteBalancer request attempts to `N`
   requests per second.
+- `--num-servers <N>`: number of liteservers for high-level balancer commands.
+- `--single --ls-index <N>`: use one reproducible liteserver instead of the
+  default high-level balancer.
 
 `--config` and `--config-json` are mutually exclusive. If neither is provided,
 the CLI downloads the selected public config when the command needs a network
 connection.
 
-## LiteClient Commands
+## High-Level Network Commands
+
+High-level commands use `LiteBalancer` by default, download the selected public
+config when no config is supplied, and print compact human output. Use
+`--output json` or `--output pretty-json` for complete structured output.
+
+```bash
+tonutils status
+tonutils account UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP
+tonutils --output json account UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP
+tonutils call '<addr>' seqno
+tonutils call '<addr>' 85143 --arg int:1 --arg null
+tonutils transactions '<addr>' --count 20
+tonutils block latest
+tonutils block get '<wc:shard:seqno:root_hash:file_hash>'
+tonutils config get
+tonutils config get --params 0,17,34
+```
+
+`call` accepts stack arguments as `int:<decimal>`, `null`, `cell:<boc-hex>`,
+and `slice:<boc-hex>`. Without `--arg`, it sends an empty stack.
+
+`account` is best-effort after the strict LiteAPI response parse. If account
+state TL-B decoding is incomplete, the command still prints byte lengths, root
+hashes for successfully decoded BoCs, and `decode_errors`.
+
+`transactions` needs the account's last transaction hash. Until verified
+`ShardAccounts` proof-path extraction lands, the high-level command can report
+the current account LT but may return no history with a `decode_error` explaining
+that the hash is unavailable. Use `liteclient raw-get-transactions` or
+`balancer raw-get-transactions` with an explicit `--lt` and `--hash` when those
+values are known.
+
+## Advanced LiteClient Commands
 
 ```bash
 tonutils --output json liteclient masterchain-info --ls-index 0
@@ -30,7 +71,7 @@ tonutils --output json liteclient run-get-method --ls-index 0 --address '<addr>'
 
 Raw query input can be supplied with `--hex`, `--base64`, `--file`, or `--stdin`.
 
-## Contract Commands
+## Advanced Contract Commands
 
 Contract commands use the high-level contract API and the latest masterchain
 block reported by the selected liteserver.
@@ -46,7 +87,7 @@ lengths, and raw state bytes as hex and base64. JSON get-method output includes
 the execution block ids, exit code, proof byte lengths, raw result BoC, and a
 decoded stack when the current stack decoder supports the returned shape.
 
-## Balancer Commands
+## Advanced Balancer Commands
 
 ```bash
 tonutils --output json balancer status --num-servers 3
@@ -59,6 +100,27 @@ They inherit the prototype balancer limits described in
 
 `--rps` applies to every peer. `--global-rps` applies only to balancer commands
 and counts retries and multi-peer message-send attempts as separate requests.
+
+## Offline TVM Commands
+
+BoC decode and TL-B inspection commands do not connect to liteservers and do
+not require a global config:
+
+```bash
+tonutils --output json tvm boc decode --hex '<boc-hex>'
+tonutils --output pretty-json tvm boc decode --base64 '<boc-base64>' --tlb account
+tonutils --output json tvm boc decode --file state.boc --tlb block
+tonutils --output json tvm boc decode --stdin --tlb proof --verify-proof
+tonutils --output json tvm schema check
+```
+
+BoC input can be supplied with `--hex`, `--base64`, `--file`, or `--stdin`.
+Known TL-B decode values are `message`, `message-relaxed`, `transaction`,
+`account`, `block`, `config`, `shard-state`, `proof`, and `merkle-update`.
+Proof verification flags only check the synthetic primitive invariant that an
+exotic Merkle proof/update child hash equals the hash stored in the exotic
+cell. They do not establish liteserver trust or validate a block against a
+trusted masterchain root.
 
 ## Exit Behavior
 

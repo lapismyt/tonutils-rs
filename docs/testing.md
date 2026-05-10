@@ -4,6 +4,10 @@ The repository keeps deterministic checks separate from live-network workflows.
 Local checks should not require secrets, public liteserver availability, or
 external network access.
 
+Audience: contributors adding code, fixtures, examples, or documentation that
+could affect compile targets. Use this guide together with `AGENTS.md` for
+change workflow and `dev-docs/testing/fixtures.md` for fixture metadata rules.
+
 ## Local Checks
 
 Run the minimum verification before merging SDK changes:
@@ -17,7 +21,7 @@ When examples or feature documentation change, also compile the examples with
 the narrowest feature set they require:
 
 ```bash
-cargo check --examples --features network-config
+cargo check --examples --all-features
 ```
 
 Feature-gated work should add the matching checks, such as
@@ -27,15 +31,32 @@ feature combinations.
 ## Examples
 
 Examples are written so they compile without live inputs. Runtime examples read
-environment variables and exit successfully with a short stderr message when
-the input is missing.
+environment variables, but live-network examples now default to public mainnet
+config download when `TON_GLOBAL_CONFIG_JSON` is absent. Offline examples use
+deterministic fixtures when possible.
 
 Current live example variables:
 
-- `TON_GLOBAL_CONFIG_JSON`: full TON global config JSON.
-- `TON_CONTRACT_ADDRESS`: account address for contract examples.
+- `TON_NETWORK`: `mainnet` or `testnet`, defaulting to `mainnet`.
+- `TON_GLOBAL_CONFIG_JSON`: full TON global config JSON, overriding public
+  config download.
+- `TON_LS_INDEX`: liteserver index for single-peer examples, defaulting to `0`.
+- `TON_CONTRACT_ADDRESS`: account address for contract examples. Mainnet
+  get-method examples default to
+  `UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP`; testnet get-method
+  examples require an explicit address and exit successfully when it is absent.
 - `TON_GET_METHOD`: optional get-method name, defaulting to `seqno`.
-- `TON_LITEAPI_REQUEST_HEX`: serialized LiteAPI request bytes for raw queries.
+- `TON_LITEAPI_REQUEST_HEX`: serialized LiteAPI request bytes for raw queries,
+  defaulting to serialized `liteServer.getTime`.
+
+Useful live smoke checks:
+
+```bash
+cargo run -F full --example network_config
+cargo run -F full --example liteclient_masterchain_info
+TON_NETWORK=testnet cargo run -F full --example liteclient_masterchain_info
+cargo run -F full --example contract_get_method
+```
 
 ## Live-Network Tests
 

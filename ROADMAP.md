@@ -23,15 +23,16 @@ The project has a strong foundation (feature gates, ADNL TCP transport,
 LiteClient/LiteBalancer surfaces, TVM primitives, contract wrappers, CLI, and
 dev-docs). These are enablers, not the top priority.
 
-Immediate priority is now the SDK foundation needed for pytoniq-core-like TVM
-and contract ergonomics:
+Phase 1 has closed as the SDK foundation needed for pytoniq-core-like TVM and
+contract ergonomics. The immediate priority moves to parity-facing LiteClient,
+contract, wallet, and ABI work:
 
 1. Complete TVM types.
 2. Complete BoC handling, including an `Address` type with pytoniq-core-like
    capabilities.
-3. Add macros for TL-B work.
-4. Add TL-B schema support, including user-defined TL and TL-B schemas.
-5. Add built-in TL and TL-B schemas.
+3. Use the supported TL-B schema parser/check-summary workflow for schema work.
+4. Expand user-defined TL and TL-B schemas where higher-level APIs need them.
+5. Add broader built-in TL and TL-B schemas beyond the Phase 1 surface.
 6. Close important LiteClient and LiteBalancer methods for contract data,
    balance, transactions, code, and data.
 7. Add custom smart-contract client support similar to pytoniq.
@@ -43,6 +44,8 @@ are intentionally deferred until these foundation, contract, and ABI milestones
 are complete.
 
 ## Phase 1: TVM, BoC, TL, And TL-B Foundation
+
+Status: closed on 2026-05-09 as a compatibility foundation milestone.
 
 Build the low-level primitives needed to decode, encode, and model TON data
 without depending on third-party Rust TON SDK crates:
@@ -118,11 +121,38 @@ Current Phase 1 fixture status:
   augmentation values. The account-block slice in `src/tlb/transaction.rs`
   covers `DepthBalanceInfo`, `ShardAccounts`, `AccountBlock`, and
   `ShardAccountBlocks`.
-- Captured upstream TON or pytoniq-core BoCs for account state, message, and
-  proof workflows remain follow-up work in `TODO.md`.
-- TL-B macro/proc-macro crate decisions, full block/header/value-flow models,
-  shard-state models, config params, and golden fixture coverage remain pending
-  Phase 1 work tracked in `TODO.md`.
+- The currently implemented TL-B message, account, transaction, shard-account,
+  and augmented dictionary model surface is locked by small embedded synthetic
+  offline BoC fixtures with expected root hashes, exact decode checks, and
+  canonical reserialization checks.
+- Phase 1 now has a deterministic upstream-derived TL-B schema slice for
+  block/config/proof families in `src/tlb/schemas/block_phase1.tlb`, a checked
+  generated summary in `src/tlb/generated/block_phase1.rs`, and schema drift
+  tests in `src/tlb/schema.rs`.
+- Generated-backed Phase 1 wrappers cover `ShardIdent`, `ExtBlkRef`,
+  `BlockIdExt`, `Block`, `ValueFlow`, `BlockExtra`, `ShardState`,
+  `ConfigParams`, and exotic Merkle proof/update primitives while preserving
+  raw child cells for deeper generated families that remain follow-up work.
+- LiteClient BoC helpers preserve raw bytes and decoded root cells for semantic
+  payloads, and structurally inspect multi-root account proof BoCs for root
+  counts and representation hashes. They expose typed views for account `state`
+  cells, block, config, shard-state, and single-root proof payloads. The CLI can
+  decode BoCs, inspect known TL-B roots, and verify the schema snapshot offline.
+- The CLI now has default-balancer high-level commands for status, account
+  state, get-method calls, transactions, blocks, and config retrieval while
+  retaining advanced `liteclient`, `balancer`, and raw compatibility commands.
+- `fixtures/phase1/` now contains checked-in BoC metadata and bytes for
+  message, relaxed-message, account, transaction, and all Phase 1
+  transaction-description constructor families. Normal library tests decode
+  these offline, compare root representation hashes, decode TL-B shape, and
+  require canonical reserialization.
+- Phase 1 TL-B macro support is deliberately defined as the
+  `src/tlb/schema.rs` parser and deterministic checked-summary workflow. A
+  separate proc-macro crate is not part of Phase 1 and remains a later optional
+  workspace decision.
+- Full deep block/header/value-flow models, typed config-param families, and
+  broader captured live/upstream proof fixture evidence remain follow-up work
+  tracked in `TODO.md`.
 
 ## Phase 2: LiteClient, Contract Clients, Wrappers, And ABI
 
@@ -166,10 +196,12 @@ After the foundation, contract, and ABI milestones:
   structured diagnostics.
 - Replace prototype balancer behavior with explicit peer states, reconnects,
   backoff, scoring, and clean shutdown.
-- Stabilize CLI behavior and machine-readable outputs across supported commands.
+- Stabilize CLI behavior, JSON error objects, and remaining machine-readable
+  output contracts across supported commands.
 - Make TVM cell, BoC, slice, builder, dictionary, and stack behavior fully
   spec-accurate with expanded golden fixtures.
-- Add proof verification models and trust documentation for light client usage.
+- Add full proof verification models, including `ShardAccounts` path extraction
+  for account proofs, and trust documentation for light client usage.
 
 ## Phase 4: Performance, Extended Protocols, And Ecosystem Coverage
 

@@ -17,6 +17,7 @@ const TAG_SLICE: u8 = 3;
 const TAG_TUPLE: u8 = 4;
 const TAG_LIST: u8 = 5;
 const TAG_UNSUPPORTED: u8 = 255;
+const MAX_STACK_DEPTH: usize = 0xFF_FFFF;
 
 /// A minimal owned TVM stack entry representation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,12 +80,12 @@ impl TvmStack {
 }
 
 fn encode_entries(entries: &[TvmStackEntry]) -> Result<Arc<Cell>> {
-    if entries.len() > u16::MAX as usize {
+    if entries.len() > MAX_STACK_DEPTH {
         bail!("TVM stack is too large");
     }
 
     let mut builder = Builder::new();
-    builder.store_uint(entries.len() as u64, 16)?;
+    builder.store_uint(entries.len() as u64, 24)?;
     if !entries.is_empty() {
         builder.store_ref(encode_entry_chain(entries)?)?;
     }
@@ -150,7 +151,7 @@ fn encode_entry(entry: &TvmStackEntry) -> Result<Arc<Cell>> {
 
 fn decode_entries(cell: Arc<Cell>) -> Result<Vec<TvmStackEntry>> {
     let mut slice = Slice::new(cell);
-    let len = slice.load_uint(16)? as usize;
+    let len = slice.load_uint(24)? as usize;
     let mut entries = if len == 0 {
         Vec::new()
     } else {
@@ -231,6 +232,16 @@ mod tests {
         let decoded = TvmStack::from_boc(&boc).unwrap();
 
         assert_eq!(decoded, stack);
+    }
+
+    #[test]
+    fn test_empty_stack_uses_ton_vm_stack_depth_width() {
+        let cell = TvmStack::empty().to_cell().unwrap();
+        assert_eq!(cell.bit_len(), 24);
+
+        let mut slice = Slice::new(cell);
+        assert_eq!(slice.load_uint(24).unwrap(), 0);
+        assert!(slice.is_empty());
     }
 
     #[test]

@@ -63,3 +63,68 @@ BoC fixtures are embedded in `src/tvm/boc.rs` as small hex constants:
 The BoC byte vectors are synthetic but schema-derived from the TON Blockchain
 paper serialized BoC constructor `serialized_boc#b5ee9c72`; no third-party Rust
 TON SDK code or fixture dependency is used.
+
+TL-B offline fixtures are embedded in `src/tlb/mod.rs` under
+`offline_fixture_tests`. They use a small metadata harness with:
+
+- fixture name,
+- source note,
+- hex or base64 BoC payload,
+- expected root representation hash,
+- expected decoded TL-B type.
+
+The current TL-B fixture set is synthetic and schema-derived from the
+hand-written models already implemented in this crate. It covers:
+
+- `Message Any` and `MessageRelaxed Any` with referenced children and exact
+  trailing-data rejection,
+- `StateInit`,
+- `CurrencyCollection` with an extra-currency `HashmapE 32`,
+- `Transaction` and `TransactionDescr`,
+- `Account`,
+- `ShardAccounts`, `AccountBlock`, and `ShardAccountBlocks`,
+- standalone `HashmapE` canonical root-reference and label behavior,
+- standalone `HashmapAugE` empty top-level extras, non-empty top-level extras,
+  leaf extras, and fork extras.
+
+These fixtures are intentionally offline-only. They lock canonical
+decode/encode/hash behavior for the current model surface without claiming that
+the values were captured from a live liteserver or copied from upstream test
+data.
+
+Phase 1 milestone fixtures are also checked in under `fixtures/phase1/` as JSON
+metadata plus small BoC hex payloads. Normal `cargo test --lib` runs remain
+fully offline: tests read these files with `include_str!`, decode the BoCs,
+check source metadata, compare root representation hashes, decode the expected
+TL-B type, and require canonical reserialization back to the exact fixture
+bytes.
+
+Current checked-in Phase 1 files:
+
+- `fixtures/phase1/account_message_transaction.json`: `Message Any`,
+  `MessageRelaxed Any`, `Transaction`, and `Account` fixtures.
+- `fixtures/phase1/transaction_descriptions.json`: transaction-description
+  fixtures for ordinary, tick-tock, split prepare, split install, merge prepare,
+  and merge install constructors.
+
+These fixtures are synthetic but upstream-schema-derived. They are generated
+from the local hand-written codecs that map directly to the documented upstream
+TL-B layouts. Live/public liteserver captures and upstream repository capture
+vectors remain useful as stronger evidence for later compatibility expansion,
+but they are not required by normal test runs and must never make CI depend on
+network access.
+
+## Pending Captured Fixtures
+
+Live or upstream-captured BoCs remain required before claiming broader
+wire-level compatibility for deep account-proof, block-proof, and config
+workflows. When added, captured fixtures should record:
+
+- liteserver endpoint or upstream repository/commit,
+- capture date,
+- relevant schema revision,
+- source command or script,
+- expected decoded type,
+- expected root hash and, when available, file hash,
+- whether the fixture is required in normal test runs or kept as ignored
+  captured evidence.

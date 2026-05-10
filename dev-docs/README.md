@@ -2,6 +2,10 @@
 
 This directory is the internal technical reference for implementing `tonutils`. It is intentionally more implementation-oriented than general TON documentation: each page connects protocol facts to concrete Rust modules, invariants, tests, and missing work.
 
+Human contributors and AI agents should read this directory before changing
+protocol behavior. Public user guides belong in `docs/`; protocol evidence,
+wire formats, invariants, source priorities, and crate mapping belong here.
+
 ## Reading Order
 
 1. [Architecture overview](architecture/overview.md)
@@ -15,9 +19,10 @@ This directory is the internal technical reference for implementing `tonutils`. 
 9. [BoC format](tvm/boc.md)
 10. [TL-B data models](tvm/tlb.md)
 11. [Blockchain data model](blockchain/data-model.md)
-12. [LiteClient request flow](liteclient/request-flow.md)
-13. [LiteClient rate limiting](liteclient/rate-limiting.md)
-14. [Smart-contract get-methods](contracts/get-methods.md)
+12. [Block, config, and proof TL-B slice](blockchain/block-config-proof.md)
+13. [LiteClient request flow](liteclient/request-flow.md)
+14. [LiteClient rate limiting](liteclient/rate-limiting.md)
+15. [Smart-contract get-methods](contracts/get-methods.md)
 
 ## Directory Map
 
@@ -56,3 +61,7 @@ When sources disagree, prefer this order:
 3. Behavior observed from public liteservers with recorded fixtures.
 4. Mature SDK behavior such as `tonutils-go` and `tongo`.
 5. Existing crate behavior.
+
+For pytoniq parity work, pytoniq and pytoniq-core are compatibility references
+after upstream TON facts are established. Record any deliberate compatibility
+deviation in `TODO.md` and in the relevant subsystem document.

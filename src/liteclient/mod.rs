@@ -1,6 +1,7 @@
 //! Thanks to https://github.com/tonstack/lite-client
 
 pub mod balancer;
+pub mod boc;
 pub mod client;
 pub mod layers;
 pub mod peer;

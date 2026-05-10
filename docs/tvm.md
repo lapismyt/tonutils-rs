@@ -4,6 +4,10 @@ The `tvm` feature enables TON cells, builders, slices, BoC helpers, addresses,
 dictionaries, and TVM stack values. It also enables `tl` because several public
 types map cells and addresses into LiteAPI structures.
 
+Audience: users working with offline cells, BoC payloads, TL-B models, addresses,
+or get-method stack values. Prerequisites: `tvm` feature only; no live network
+access is required unless the BoC or stack payload came from LiteClient calls.
+
 ## Cells, Builders, And Slices
 
 A cell stores up to 1023 bits and up to 4 references. `Builder` and

@@ -4,6 +4,11 @@ The contract API is available with the `liteclient` feature. It is a thin
 wrapper over LiteAPI account-state and get-method requests, so it works with
 both `LiteClient` and `LiteBalancer`.
 
+Audience: callers that need account state or get-method execution before full
+wallet, ABI, and custom contract wrappers land. Prerequisites: `liteclient`,
+TVM stack familiarity for non-empty get-method arguments, and live network
+access. Current helpers preserve proof bytes but do not verify them.
+
 ## Account State
 
 ```rust

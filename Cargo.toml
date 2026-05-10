@@ -68,27 +68,27 @@ required-features = ["cli"]
 
 [[example]]
 name = "liteclient_masterchain_info"
-required-features = ["liteclient", "network-config"]
+required-features = ["liteclient", "network-config", "cli"]
 
 [[example]]
 name = "liteclient_raw_query"
-required-features = ["liteclient", "network-config"]
+required-features = ["liteclient", "network-config", "cli"]
 
 [[example]]
 name = "network_config"
-required-features = ["network-config"]
+required-features = ["network-config", "cli"]
 
 [[example]]
 name = "contract_get_state"
-required-features = ["liteclient", "network-config"]
+required-features = ["liteclient", "network-config", "cli"]
 
 [[example]]
 name = "contract_get_method"
-required-features = ["liteclient", "network-config"]
+required-features = ["liteclient", "network-config", "cli"]
 
 [[example]]
 name = "litebalancer_failover"
-required-features = ["liteclient", "network-config"]
+required-features = ["liteclient", "network-config", "cli"]
 
 [[example]]
 name = "adnl_ping"
@@ -104,4 +104,44 @@ required-features = ["tvm"]
 
 [[example]]
 name = "tvm_stack_run_method"
-required-features = ["liteclient", "network-config"]
+required-features = ["liteclient", "network-config", "cli"]
+
+[[example]]
+name = "tlb_schema_codegen"
+required-features = ["tvm"]
+
+[[example]]
+name = "tvm_boc_decode"
+required-features = ["tvm"]
+
+[[example]]
+name = "liteclient_account_state_decode"
+required-features = ["liteclient"]
+
+[[example]]
+name = "proof_verify"
+required-features = ["tvm"]
+
+[[example]]
+name = "tvm_dictionary_roundtrip"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_message_roundtrip"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_transaction_roundtrip"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_account_state_roundtrip"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_block_wrapper_decode"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_config_params_wrapper"
+required-features = ["tvm"]

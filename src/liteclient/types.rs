@@ -7,15 +7,15 @@ use crate::tl::{request::WrappedRequest, response::Response};
 
 #[derive(Debug, Error)]
 pub enum LiteError {
-    #[error("Liteserver error")]
+    #[error("Liteserver error {0}")]
     ServerError(crate::tl::response::Error),
-    #[error("TL parsing error")]
+    #[error("TL parsing error: {0}")]
     TlError(TlError),
     #[error("Unexpected TL message")]
     UnexpectedMessage,
-    #[error("ADNL error")]
+    #[error("ADNL error: {0}")]
     AdnlError(#[from] AdnlError),
-    #[error("Unknown error")]
+    #[error("Unknown error: {0}")]
     UnknownError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 

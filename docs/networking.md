@@ -5,6 +5,11 @@ connections plus optional public network config parsing. ADNL UDP, DHT,
 overlays, and mempool networking are documented as future boundaries but are
 not public runtime APIs yet.
 
+Audience: callers configuring transport features and contributors separating
+current LiteAPI networking from future DHT, overlay, and mempool work.
+Prerequisites: `adnl-tcp` for direct liteserver sockets, `network-config` for
+global config parsing, and live network access for real liteserver calls.
+
 ## Feature Boundaries
 
 - `adnl`: shared ADNL helper types and primitives.

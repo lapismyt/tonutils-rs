@@ -5,6 +5,7 @@
 
 use crate::tvm::cell::Cell;
 use anyhow::{Result, bail};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -16,6 +17,25 @@ const BOC_INDEXED_MAGIC: u32 = 0x68ff65f3;
 
 /// BoC magic number for indexed format (with CRC32C)
 const BOC_INDEXED_CRC32C_MAGIC: u32 = 0xacc3a728;
+
+/// Structural BoC inspection result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BocInspection {
+    /// Representation hashes for root cells in BoC root-index order.
+    pub root_hashes: Vec<[u8; 32]>,
+}
+
+impl BocInspection {
+    /// Number of root cells declared by the BoC.
+    pub fn root_count(&self) -> usize {
+        self.root_hashes.len()
+    }
+
+    /// Root representation hashes as lowercase hex strings.
+    pub fn root_hashes_hex(&self) -> Vec<String> {
+        self.root_hashes.iter().map(hex::encode).collect()
+    }
+}
 
 /// Serializes a cell and its references into a Bag of Cells (BoC) format
 pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
@@ -90,8 +110,8 @@ pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
     Ok(result)
 }
 
-/// Deserializes a Bag of Cells (BoC) into a root cell
-pub fn deserialize_boc(data: &[u8]) -> Result<Arc<Cell>> {
+/// Deserializes a Bag of Cells (BoC) into all root cells.
+pub fn deserialize_boc_roots(data: &[u8]) -> Result<Vec<Arc<Cell>>> {
     if data.len() < 4 {
         bail!("BoC data too short");
     }
@@ -99,7 +119,7 @@ pub fn deserialize_boc(data: &[u8]) -> Result<Arc<Cell>> {
     let magic = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
 
     match magic {
-        BOC_GENERIC_MAGIC => deserialize_boc_generic(data),
+        BOC_GENERIC_MAGIC => deserialize_boc_generic_roots(data),
         BOC_INDEXED_MAGIC | BOC_INDEXED_CRC32C_MAGIC => {
             bail!("Indexed BoC format not yet supported");
         }
@@ -107,7 +127,68 @@ pub fn deserialize_boc(data: &[u8]) -> Result<Arc<Cell>> {
     }
 }
 
-fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
+/// Deserializes a single-root Bag of Cells (BoC) into its root cell.
+pub fn deserialize_boc(data: &[u8]) -> Result<Arc<Cell>> {
+    let roots = deserialize_boc_roots(data)?;
+    if roots.len() != 1 {
+        bail!("Expected single-root BoC, got {} roots", roots.len());
+    }
+    roots
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("Expected single-root BoC, got 0 roots"))
+}
+
+/// Inspects a generic BoC structurally and returns root hashes without
+/// constructing semantic [`Cell`] values.
+pub fn inspect_boc(data: &[u8]) -> Result<BocInspection> {
+    if data.len() < 4 {
+        bail!("BoC data too short");
+    }
+
+    let magic = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+    match magic {
+        BOC_GENERIC_MAGIC => inspect_boc_generic(data),
+        BOC_INDEXED_MAGIC | BOC_INDEXED_CRC32C_MAGIC => {
+            bail!("Indexed BoC format not yet supported");
+        }
+        _ => bail!("Invalid BoC magic number: 0x{:08x}", magic),
+    }
+}
+
+fn deserialize_boc_generic_roots(data: &[u8]) -> Result<Vec<Arc<Cell>>> {
+    let layout = parse_boc_generic_layout(data, true)?;
+    let cells = parse_cells(layout.cells_data, layout.cells_count, layout.size_bytes)?;
+
+    Ok(layout
+        .root_indices
+        .into_iter()
+        .map(|root_idx| cells[root_idx].clone())
+        .collect())
+}
+
+fn inspect_boc_generic(data: &[u8]) -> Result<BocInspection> {
+    let layout = parse_boc_generic_layout(data, false)?;
+    let cells = parse_raw_cells(layout.cells_data, layout.cells_count, layout.size_bytes)?;
+    let hashes = compute_raw_cell_hashes(&cells)?;
+
+    Ok(BocInspection {
+        root_hashes: layout
+            .root_indices
+            .into_iter()
+            .map(|root_idx| hashes[root_idx])
+            .collect(),
+    })
+}
+
+struct BocGenericLayout<'a> {
+    cells_count: usize,
+    size_bytes: usize,
+    root_indices: Vec<usize>,
+    cells_data: &'a [u8],
+}
+
+fn parse_boc_generic_layout(data: &[u8], reject_cache_bits: bool) -> Result<BocGenericLayout<'_>> {
     let mut pos = 4; // Skip magic
 
     if pos >= data.len() {
@@ -123,8 +204,11 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
     let has_cache_bits = (flags_and_size & 0x20) != 0;
     let size_bytes = (flags_and_size & 0x07) as usize;
 
-    if has_cache_bits {
+    if has_cache_bits && reject_cache_bits {
         bail!("BoC cache bits flag is unsupported for ordinary-cell decoding");
+    }
+    if has_cache_bits {
+        bail!("BoC cache bits flag is unsupported for structural inspection");
     }
 
     if size_bytes == 0 || size_bytes > 8 {
@@ -147,8 +231,8 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
 
     // Number of roots
     let roots_count = read_uint(data, &mut pos, size_bytes)?;
-    if roots_count != 1 {
-        bail!("Multiple roots not supported yet");
+    if roots_count == 0 {
+        bail!("BoC has no roots");
     }
 
     // Number of absent cells
@@ -157,10 +241,14 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
     // Total cells size
     let cells_size = read_uint(data, &mut pos, offset_bytes)?;
 
-    // Root cell index
-    let root_idx = read_uint(data, &mut pos, size_bytes)?;
-    if root_idx >= cells_count {
-        bail!("Invalid root index: {}", root_idx);
+    // Root cell indices
+    let mut root_indices = Vec::with_capacity(roots_count);
+    for _ in 0..roots_count {
+        let root_idx = read_uint(data, &mut pos, size_bytes)?;
+        if root_idx >= cells_count {
+            bail!("Invalid root index: {}", root_idx);
+        }
+        root_indices.push(root_idx);
     }
 
     if has_idx {
@@ -199,9 +287,6 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
         bail!("Trailing bytes after BoC cell payload");
     }
 
-    let cells_data = &data[cells_start..cells_end];
-    let cells = parse_cells(cells_data, cells_count, size_bytes)?;
-
     // Verify CRC32 if present
     if has_crc32 {
         if data.len() < cells_end + 4 {
@@ -223,8 +308,144 @@ fn deserialize_boc_generic(data: &[u8]) -> Result<Arc<Cell>> {
         }
     }
 
-    // Return root cell
-    Ok(cells[root_idx].clone())
+    Ok(BocGenericLayout {
+        cells_count,
+        size_bytes,
+        root_indices,
+        cells_data: &data[cells_start..cells_end],
+    })
+}
+
+#[derive(Debug)]
+struct RawCellRecord {
+    descriptors: [u8; 2],
+    serialized_data: Vec<u8>,
+    refs: Vec<usize>,
+}
+
+fn parse_raw_cells(data: &[u8], count: usize, ref_index_size: usize) -> Result<Vec<RawCellRecord>> {
+    let mut cells = Vec::with_capacity(count);
+    let mut pos = 0;
+
+    for _ in 0..count {
+        if pos >= data.len() {
+            bail!("Unexpected end of cells data");
+        }
+
+        let d1 = data[pos];
+        pos += 1;
+
+        if pos >= data.len() {
+            bail!("Unexpected end of cells data");
+        }
+
+        let d2 = data[pos];
+        pos += 1;
+
+        let ref_count = (d1 & 0x07) as usize;
+        if d1 & 0x10 != 0 || d1 & 0x80 != 0 {
+            bail!("Invalid cell descriptor: reserved bits are set");
+        }
+        if ref_count > 4 {
+            bail!("Invalid cell descriptor: reference count exceeds 4");
+        }
+
+        let data_size = (d2 as usize + 1) / 2;
+        if pos + data_size > data.len() {
+            bail!("Cell data exceeds buffer");
+        }
+
+        let serialized_data = data[pos..pos + data_size].to_vec();
+        pos += data_size;
+
+        let mut refs = Vec::with_capacity(ref_count);
+        for _ in 0..ref_count {
+            refs.push(read_uint(data, &mut pos, ref_index_size).map_err(|_| {
+                anyhow::anyhow!("Unexpected end of cells data while reading references")
+            })?);
+        }
+
+        cells.push(RawCellRecord {
+            descriptors: [d1, d2],
+            serialized_data,
+            refs,
+        });
+    }
+
+    if pos != data.len() {
+        bail!("Trailing bytes after parsed cells");
+    }
+
+    for cell in &cells {
+        for &ref_idx in &cell.refs {
+            if ref_idx >= cells.len() {
+                bail!("Invalid reference index: {}", ref_idx);
+            }
+        }
+    }
+
+    Ok(cells)
+}
+
+fn compute_raw_cell_hashes(cells: &[RawCellRecord]) -> Result<Vec<[u8; 32]>> {
+    let mut hashes = vec![[0u8; 32]; cells.len()];
+    let mut depths = vec![0u16; cells.len()];
+    let mut states = vec![RawHashState::Unvisited; cells.len()];
+
+    for index in 0..cells.len() {
+        compute_raw_cell_hash(index, cells, &mut states, &mut hashes, &mut depths)?;
+    }
+
+    Ok(hashes)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RawHashState {
+    Unvisited,
+    Visiting,
+    Done,
+}
+
+fn compute_raw_cell_hash(
+    index: usize,
+    cells: &[RawCellRecord],
+    states: &mut [RawHashState],
+    hashes: &mut [[u8; 32]],
+    depths: &mut [u16],
+) -> Result<()> {
+    match states[index] {
+        RawHashState::Done => return Ok(()),
+        RawHashState::Visiting => bail!("BoC cell graph contains a reference cycle"),
+        RawHashState::Unvisited => {}
+    }
+
+    states[index] = RawHashState::Visiting;
+
+    for &ref_idx in &cells[index].refs {
+        compute_raw_cell_hash(ref_idx, cells, states, hashes, depths)?;
+    }
+
+    depths[index] = cells[index]
+        .refs
+        .iter()
+        .map(|&ref_idx| depths[ref_idx])
+        .max()
+        .map_or(0, |depth| depth.saturating_add(1));
+
+    let mut hasher = Sha256::new();
+    hasher.update(cells[index].descriptors);
+    hasher.update(&cells[index].serialized_data);
+    for &ref_idx in &cells[index].refs {
+        hasher.update(depths[ref_idx].to_be_bytes());
+    }
+    for &ref_idx in &cells[index].refs {
+        hasher.update(hashes[ref_idx]);
+    }
+
+    let result = hasher.finalize();
+    hashes[index].copy_from_slice(&result);
+    states[index] = RawHashState::Done;
+    Ok(())
 }
 
 fn parse_cells(data: &[u8], count: usize, ref_index_size: usize) -> Result<Vec<Arc<Cell>>> {
@@ -513,6 +734,7 @@ mod tests {
     const REF_CELL_BOC_HEX: &str = "b5ee9c72010102010007010002aa0102bb00";
     const INDEXED_REF_CELL_BOC_HEX: &str = "b5ee9c728101020100070103070002aa0102bb00";
     const LIBRARY_REFERENCE_BOC_HEX: &str = "b5ee9c72010101010023000842023333333333333333333333333333333333333333333333333333333333333333";
+    const TWO_ROOT_BOC_HEX: &str = "b5ee9c72010102020005000100000002aa";
 
     fn single_cell_boc(cell_bytes: &[u8]) -> Vec<u8> {
         let mut boc = vec![
@@ -587,6 +809,90 @@ mod tests {
             serialize_boc(&decoded, false).unwrap(),
             decode_hex_fixture(LIBRARY_REFERENCE_BOC_HEX)
         );
+    }
+
+    #[test]
+    fn test_deserialize_multi_root_boc() {
+        let roots = deserialize_boc_roots(&decode_hex_fixture(TWO_ROOT_BOC_HEX)).unwrap();
+
+        assert_eq!(roots.len(), 2);
+        assert_eq!(roots[0].bit_len(), 0);
+        assert_eq!(roots[1].bit_len(), 8);
+        assert_eq!(roots[1].data(), &[0xAA]);
+    }
+
+    #[test]
+    fn test_deserialize_single_root_wrapper_rejects_multi_root_boc() {
+        let err = deserialize_boc(&decode_hex_fixture(TWO_ROOT_BOC_HEX))
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("Expected single-root BoC"));
+        assert!(err.contains("2 roots"));
+    }
+
+    #[test]
+    fn test_inspect_two_root_boc_returns_root_hashes() {
+        let boc = decode_hex_fixture(TWO_ROOT_BOC_HEX);
+        let inspection = inspect_boc(&boc).unwrap();
+        let roots = deserialize_boc_roots(&boc).unwrap();
+
+        assert_eq!(inspection.root_count(), 2);
+        assert_eq!(
+            inspection.root_hashes,
+            roots.iter().map(|root| root.hash()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_inspect_single_root_hash_matches_deserialize_boc() {
+        let boc = decode_hex_fixture(ONE_BYTE_CELL_BOC_HEX);
+        let inspection = inspect_boc(&boc).unwrap();
+        let root = deserialize_boc(&boc).unwrap();
+
+        assert_eq!(inspection.root_count(), 1);
+        assert_eq!(inspection.root_hashes, vec![root.hash()]);
+    }
+
+    #[test]
+    fn test_inspect_rejects_crc_mismatch() {
+        let cell = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let mut boc = serialize_boc(&cell, true).unwrap();
+        let last = boc.len() - 1;
+        boc[last] ^= 1;
+
+        let err = inspect_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("CRC32 mismatch"));
+    }
+
+    #[test]
+    fn test_inspect_rejects_invalid_reference_index() {
+        let child = Arc::new(Cell::with_data(vec![0xAA], 8).unwrap());
+        let mut root = Cell::with_data(vec![0xBB], 8).unwrap();
+        root.add_reference(child).unwrap();
+        let root = Arc::new(root);
+
+        let mut boc = serialize_boc(&root, false).unwrap();
+        let last = boc.len() - 1;
+        boc[last] = 2;
+
+        let err = inspect_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("Invalid reference index"));
+    }
+
+    #[test]
+    fn test_inspect_exotic_payload_without_semantic_validation() {
+        let boc = single_cell_boc(&[
+            0x08, // exotic descriptor, level 0, no refs
+            0x02, // one full payload byte
+            0xFF, // unsupported semantic exotic tag
+        ]);
+
+        let inspection = inspect_boc(&boc).unwrap();
+        assert_eq!(inspection.root_count(), 1);
+
+        let err = deserialize_boc(&boc).unwrap_err().to_string();
+        assert!(err.contains("Unsupported exotic cell type"));
     }
 
     #[test]

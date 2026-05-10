@@ -1,0 +1,65 @@
+{
+  "schema_revision": "ton-blockchain/ton crypto/block/block.tlb Phase 1 transaction-description constructors, local snapshot 2026-05-09",
+  "fixtures": [
+    {
+      "name": "ordinary-transaction-description",
+      "source": "synthetic upstream-schema-derived fixture for trans_ord$0000",
+      "capture_date": "2026-05-09",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb schema family, commit not captured",
+      "decoded_type": "TransactionDescr::Ordinary",
+      "root_hash": "085be8ea7272944b20cb1ad5d488b1dce8dc26a1605b5cc4b2d04b3e16ff840c",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c7201010101000b0000110c41e2116202214444"
+    },
+    {
+      "name": "tick-tock-transaction-description",
+      "source": "synthetic upstream-schema-derived fixture for trans_tick_tock$001",
+      "capture_date": "2026-05-09",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb schema family, commit not captured",
+      "decoded_type": "TransactionDescr::TickTock",
+      "root_hash": "b343567912a10ce3ec836f91deba55c7adbc792bf944815da8d03b60e530d02d",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c720101030100930200a3218436817ffffffff9400000080000013484444444444444444444444444444444444444444444444444444444444444444888888888888888888888888888888888888888888888888888888888888888a00063c88180000000000020000000000026666666666666666666666666666666666666666666666666666666666666666404a040020d31078845a217600001"
+    },
+    {
+      "name": "split-prepare-transaction-description",
+      "source": "synthetic upstream-schema-derived fixture for trans_split_prepare$0100",
+      "capture_date": "2026-05-09",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb schema family, commit not captured",
+      "decoded_type": "TransactionDescr::SplitPrepare",
+      "root_hash": "ec24249c2ddd5e750b4a7c2d934d3a2731fc8709f4b4d47ad412e80c0ccb0256",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c7201010101004900008d430644444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555883c4224a0"
+    },
+    {
+      "name": "split-install-transaction-description",
+      "source": "synthetic upstream-schema-derived fixture for trans_split_install$0101",
+      "capture_date": "2026-05-09",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb schema family, commit not captured",
+      "decoded_type": "TransactionDescr::SplitInstall",
+      "root_hash": "fd21eb27e965731e4813d82448c9d26e78e32503a321438fdf470d93d32a2367",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c720101050100f004000120008272aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00071107884503b1710101010101010101010101010101010101010101010101010101010101010100000000000000007202020202020202020202020202020202020202020202020202020202020202000000000000000066553f1000001420680001020185530644444444444444444444444444444444444444444444444444444444444444445555555555555555555555555555555555555555555555555555555555555555c003"
+    },
+    {
+      "name": "merge-prepare-transaction-description",
+      "source": "synthetic upstream-schema-derived fixture for trans_merge_prepare$0110",
+      "capture_date": "2026-05-09",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb schema family, commit not captured",
+      "decoded_type": "TransactionDescr::MergePrepare",
+      "root_hash": "165e088ff783bc76183484401638be145391d450ea7c91d2c4811953d0dee108",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c7201010101004800008b63064444444444444444444444444444444444444444444444444444444444444444555555555555555555555555555555555555555555555555555555555555555510788458"
+    },
+    {
+      "name": "merge-install-transaction-description",
+      "source": "synthetic upstream-schema-derived fixture for trans_merge_install$0111",
+      "capture_date": "2026-05-09",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb schema family, commit not captured",
+      "decoded_type": "TransactionDescr::MergeInstall",
+      "root_hash": "e6e2ab600bc84625eeca5212207b333e13b4a48fc9f0a97741bdb6b1643e000d",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c720102070100017f06000120008272aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00071107884503b1710101010101010101010101010101010101010101010101010101010101010100000000000000007202020202020202020202020202020202020202020202020202020202020202000000000000000066553f10000014206800010200a3218436817ffffffff9400000080000013484444444444444444444444444444444444444444444444444444444444444444888888888888888888888888888888888888888888888888888888888888888a00063c88180000000000020000000000026666666666666666666666666666666666666666666666666666666666666666404a040038f7306444444444444444444444444444444444444444444444444444444444444444455555555555555555555555555555555555555555555555555555555555555556202214d10bb030405"
+    }
+  ]
+}

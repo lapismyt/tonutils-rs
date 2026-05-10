@@ -2,7 +2,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum TlError {
-    #[error("TL parsing error: {0}")]
+    #[error("{0}")]
     ParseError(String),
     #[error("Invalid data")]
     InvalidData,

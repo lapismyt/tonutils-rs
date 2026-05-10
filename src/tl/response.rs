@@ -435,6 +435,12 @@ pub struct Error {
     pub message: String,
 }
 
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "code={}, message={}", self.code, self.message)
+    }
+}
+
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq)]
 #[tl(boxed)]

@@ -84,9 +84,10 @@ payloads fail decoding with an `Invalid exotic cell` error context.
 
 ## Invariants And Edge Cases
 
-The decoder currently accepts:
+The strict semantic decoders currently accept:
 
-- one root only,
+- one or more roots through `deserialize_boc_roots()`, with `deserialize_boc()`
+  reserved for exactly one root and rejecting multi-root payloads,
 - zero absent cells,
 - generic BoC magic `b5ee9c72`,
 - ordinary cells with up to four references,
@@ -96,13 +97,12 @@ The decoder currently accepts:
 - hex and standard base64 string wrappers through `hex_to_boc()` and
   `base64_to_boc()`.
 
-The decoder rejects:
+Both strict semantic decoders reject:
 
 - unknown magic values,
 - legacy indexed magic values that are not the generic BoC layout,
 - truncated header or cell data,
 - `size_bytes` or `offset_bytes` outside `1..=8`,
-- multiple roots,
 - cache-bit BoCs with the explicit error that cache bits are unsupported for
   ordinary-cell decoding,
 - cell descriptors with reserved bits set,
@@ -120,11 +120,29 @@ The decoder rejects:
 - trailing bytes after the cell payload when CRC32 is absent, or after the CRC32
   trailer when it is present.
 
+`deserialize_boc()` additionally rejects otherwise valid BoCs that contain zero
+roots or more than one root. Use `deserialize_boc_roots()` when a semantic
+caller expects a strict multi-root cell set.
+
+`inspect_boc()` is a proof-oriented structural path. It parses the same generic
+header, root indexes, optional index table, CRC32 trailer, cell descriptors,
+raw serialized cell payloads, and reference indexes, then computes root
+representation hashes from the descriptor bytes, raw serialized data, child
+depths, and child hashes. It does not construct `Cell` values and therefore
+does not validate exotic-cell tags, exotic payload lengths, TL-B types, proof
+paths, or trust roots. Structural failures such as invalid root indexes,
+invalid reference indexes, CRC32 mismatches, truncated payloads, cache-bit
+payloads, and reserved descriptor bits still fail.
+
 ## Crate Mapping
 
 - `serialize_boc(root, has_crc32)` writes generic BoCs without an index table.
-- `deserialize_boc(data)` reads generic BoCs with or without index tables and
-  preserves supported exotic-cell kinds.
+- `deserialize_boc(data)` reads strict single-root generic BoCs with or without
+  index tables and preserves supported exotic-cell kinds.
+- `deserialize_boc_roots(data)` returns all strict semantic root cells for
+  multi-root payloads.
+- `inspect_boc(data)` returns proof diagnostic root counts and hashes without
+  requiring semantic proof verification.
 - `hex_to_boc()` and `boc_to_hex()` wrap byte-level BoC conversion.
 - `base64_to_boc()` and `boc_to_base64()` use standard base64 for BoC strings.
 
@@ -136,11 +154,19 @@ Current embedded fixture tests cover:
 - one-byte ordinary generic BoC,
 - ordinary generic BoC with one reference, with and without an index table,
 - exotic library-reference BoC,
+- multi-root proof diagnostic inspection,
 - malformed cache-bit BoC rejection.
 
 These fixtures are intentionally small hex constants in `src/tvm/boc.rs`. They
 are derived from the TON `serialized_boc#b5ee9c72` layout and cross-check the
 crate's canonical serializer output for supported cases.
+
+Phase 1 TL-B compatibility fixtures in `fixtures/phase1/` add checked-in BoC
+hex payloads with metadata for message, account, transaction, and
+transaction-description roots. Their tests decode the BoC, compare the root
+representation hash from the cell, decode the declared TL-B type, and require
+canonical serializer output to match the fixture bytes exactly. They are
+offline-only and do not use live network access.
 
 ## Cache-Bit Policy
 
@@ -159,7 +185,7 @@ decoding`. Serialization always writes the cache-bit flag as zero.
 
 - Multi-level exotic hash/depth helper APIs for proof verification.
 - Legacy indexed magic variants `68ff65f3` and `acc3a728`.
-- Additional captured golden BoCs from upstream TON or pytoniq-core for account
-  states, messages, and proof cells.
+- Additional captured golden BoCs from upstream TON, pytoniq-core, or public
+  liteservers for deep account-proof, block-proof, and config proof cells.
 - Encoding with an index table when callers need that output mode.
-- Full multi-root BoC support if future APIs require it.
+- Full proof verification for account and block proof BoCs.

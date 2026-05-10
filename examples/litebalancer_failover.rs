@@ -1,20 +1,15 @@
-use std::str::FromStr;
 use std::time::Duration;
+
+mod common;
 
 use tonutils::liteclient::balancer::LiteBalancer;
 use tonutils::liteclient::client::LiteClient;
-use tonutils::network_config::ConfigGlobal;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let Some(config_json) = std::env::var("TON_GLOBAL_CONFIG_JSON").ok() else {
-        eprintln!("set TON_GLOBAL_CONFIG_JSON to run this example");
-        return Ok(());
-    };
-
-    let config = ConfigGlobal::from_str(&config_json)?;
+    let config = common::load_config()?;
     if config.liteservers.is_empty() {
-        eprintln!("TON_GLOBAL_CONFIG_JSON contains no liteservers");
+        eprintln!("TON global config contains no liteservers");
         return Ok(());
     }
 
@@ -27,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if peers.is_empty() {
-        eprintln!("unable to connect to any liteserver from TON_GLOBAL_CONFIG_JSON");
+        eprintln!("unable to connect to any liteserver from TON global config");
         return Ok(());
     }
 

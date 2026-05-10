@@ -4,6 +4,11 @@
 LiteAPI access over native ADNL TCP, TL serialization, TON cells/BoC primitives,
 network config parsing, and a scriptable CLI.
 
+Audience: first-time crate users and embedders choosing features. Prerequisite:
+basic Rust async familiarity for LiteClient examples. Live network access is
+only needed for LiteClient, LiteBalancer, contract, and config-download flows;
+TVM, BoC, TL-B schema, and many examples work offline.
+
 ## Feature Selection
 
 Default features enable the native LiteClient path over ADNL TCP:

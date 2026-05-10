@@ -55,6 +55,19 @@ Fields:
 - `proof`: account proof.
 - `state`: account state data.
 
+`state` is a BoC whose root is the TL-B `Account` value returned by the
+liteserver. It is not a standalone `ShardAccount`; the `ShardAccount` appears
+inside the account-proof path and must be extracted from the verified
+`ShardAccounts` dictionary before its `last_trans_hash` can be trusted.
+For full accounts, `Account.storage.last_trans_lt` is available directly from
+the `state` cell.
+
+The `shard_proof` and `proof` byte fields are BoCs used for proof material.
+Account-state proof payloads can contain more than one BoC root; official proof
+flow substitutes the returned `state` cell into the pruned proof tree before
+checking hashes. Current typed helpers decode these roots for diagnostics but do
+not claim proof validity.
+
 ## Run Method
 
 ```tl

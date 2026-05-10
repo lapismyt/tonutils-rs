@@ -5,6 +5,11 @@
 intended for callers that want the same LiteAPI helper surface with basic peer
 selection and retry behavior.
 
+Audience: applications that can connect to several liteservers and want basic
+failover. Prerequisites: `liteclient` feature, live network access, and explicit
+peer construction from config or socket/public-key pairs. This is not a
+consensus or proof-verification layer.
+
 ## Peer Setup
 
 The balancer owns already constructed clients. When using public global config,
@@ -49,9 +54,13 @@ clients.
 
 The balancer exposes typed helpers for common LiteAPI calls, including
 masterchain info, version, time, block and state loading, block headers,
-account state, get-methods, transactions, and message sending. Request routing
-builds a priority list from alive peers, observed masterchain seqno, average
-response time, and current in-flight request count.
+account state, get-methods, transactions, shard info, config, libraries, and
+message sending. Pytoniq-like typed methods such as `raw_get_block`,
+`get_account_state_simple`, `run_get_method_typed`, and
+`get_config_params_typed` delegate to the underlying `LiteClient` through the
+same peer selection and retry path. Request routing builds a priority list from
+alive peers, observed masterchain seqno, average response time, and current
+in-flight request count.
 
 For non-archival calls, no peer quorum is established. The first successful
 peer response is returned, and failed peers are marked dead for later requests.

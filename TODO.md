@@ -1,48 +1,12 @@
 # TODO
 
-This file follows the `todo-md/todo-md` format. Active work is currently prioritized around the Phase 1 TVM, BoC, Address, TL, and TL-B foundation needed before higher-level contract clients and ABI work. Completed work moves to `# DONE`; postponed work moves to `# BACKLOG`.
-
-## Phase 1 TVM, BoC, Address, TL, And TL-B Foundation
-
-- [-] Establish pytoniq-core-compatible Address and ordinary BoC baseline #tvm #boc #address #tests #docs
-  - [x] Document supported raw and user-friendly address formats in `dev-docs/tvm/addresses.md` #tvm #address #docs
-  - [x] Add strict raw `workchain:hash` parsing and formatting helpers #tvm #address
-  - [x] Support user-friendly base64 and base64url input with and without padding #tvm #address
-  - [x] Preserve bounceable, non-bounceable, and test-only flags through parsing and explicit formatting helpers #tvm #address
-  - [x] Add address validation tests for invalid tag, checksum, length, workchain, and hash input #tvm #address #tests
-  - [x] Document ordinary-cell BoC support, index table handling, cache-bit rejection, and missing exotic-cell work in `dev-docs/tvm/boc.md` #tvm #boc #docs
-  - [x] Decode ordinary generic BoC index tables when present #tvm #boc
-  - [x] Reject cache-bit BoCs with a precise unsupported-feature error #tvm #boc
-  - [x] Add BoC regression tests for indexed decode, malformed index table, CRC mismatch, invalid root/reference indexes, trailing bytes, and string roundtrips #tvm #boc #tests
-  - [x] Add embedded TON Docs address fixtures and schema-derived BoC compatibility fixtures #tvm #boc #address #tests
-  - [ ] Add captured upstream TON or pytoniq-core BoC fixtures for account/message/proof compatibility #tvm #boc #tests
-- [x] Complete remaining TVM primitive compatibility before TL-B macros #tvm #tlb
-  - [x] Audit ordinary cell representation hash against TON golden fixtures #tvm #tests
-  - [x] Add exotic cell support for pruned branch, library reference, Merkle proof, and Merkle update #tvm #boc
-  - [x] Decide whether cache-bit BoCs can be decoded without semantic ambiguity and document the chosen behavior #tvm #boc #docs
-  - [x] Add full TL-B schema macro design after Address and ordinary BoC behavior are stable #tvm #tlb #docs
-- [x] Implement TL-B runtime trait foundation #tvm #tlb
-  - [x] Add `TlbSerialize`, `TlbDeserialize`, `TlbScheme`, and `TlbError` with exact decode semantics #tvm #tlb
-  - [x] Map TL-B codec errors to builder, slice, tag, reference, and non-canonical encoding failures #tvm #tlb #tests
-  - [x] Add focused tests for tags, `Maybe`, `Either`, refs, `VarUInteger`, and trailing data #tvm #tlb #tests
-- [ ] Decide TL-B derive/proc-macro crate shape #tvm #tlb #features
-  - [ ] Decide whether derive support lives in a separate workspace proc-macro crate #tvm #tlb #features
-  - [ ] Keep macro support optional and avoid adding compile cost to low-level TVM users #tvm #tlb #features
-  - [ ] Define schema-driven drift checks against upstream TON TL-B sources #tvm #tlb #tests
-- [-] Implement first core TL-B models from the documented design #tvm #tlb
-  - [x] Start with hand-written `CommonMsgInfo`, `Message`, and `StateInit` codecs before deriving them #tvm #tlb
-  - [x] Add focused unit tests for message address tags, values, state init references, common info variants, and `Message Any` placement #tvm #tlb #tests
-  - [x] Record upstream schema source links for the message model family #tvm #tlb #docs
-  - [x] Add `MsgAddress`, `CommonMsgInfoRelaxed`, `MessageRelaxed`, `SimpleLib`, and `StateInitWithLibs` in a follow-up message-model slice #tvm #tlb
-  - [x] Add focused unit tests for relaxed addresses, relaxed message info variants, `MessageRelaxed Any`, and `StateInitWithLibs` libraries #tvm #tlb #tests
-  - [x] Add hand-written `OutAction` and `LibRef` codecs for send-message, set-code, reserve-currency, and change-library actions #tvm #tlb
-  - [x] Add focused unit tests for `OutAction` variants, referenced relaxed messages, library refs, and invalid action encodings #tvm #tlb #tests
-  - [x] Add `OutList` linked-list models for transaction action phases #tvm #tlb
-  - [x] Add schema-exact `TrActionPhase` metadata with `action_list_hash` and `StorageUsed` #tvm #tlb
-  - [x] Add full transaction descriptions that reference `Maybe ^TrActionPhase` #tvm #tlb
-  - [x] Add full top-level `Transaction`, `Account`, `HASH_UPDATE Account`, and transaction message dictionary models #tvm #tlb
-  - [ ] Add fixture-backed roundtrip tests that compare real upstream or liteserver message cell hashes #tvm #tlb #tests
-  - [ ] Add fixture-backed transaction-description BoCs for real ordinary, tick-tock, split, and merge transactions #tvm #tlb #tests
+This file follows the `todo-md/todo-md` format and is the detailed tracker for
+work that should not be hidden in prose. Active work is currently prioritized
+around pytoniq behavioral parity, LiteClient and contract workflows, ABI
+support, and post-Phase-1 protocol hardening. `ROADMAP.md` explains the phase
+intent at a higher level; `dev-docs/` records protocol facts and source
+evidence. Completed work moves to `# DONE`; postponed work moves to
+`# BACKLOG`.
 
 ## Pytoniq Behavioral Parity
 
@@ -100,6 +64,14 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
   - [ ] Document known unsupported ABI patterns and planned follow-up tasks #abi #docs
 
 ## Subsequent Phases (Post-Parity And Post-ABI)
+
+- [ ] Expand captured upstream/live fixture evidence beyond Phase 1 synthetic vectors #tvm #boc #tlb #tests
+  - [ ] Add public liteserver account-state captures with endpoint, date, schema revision, and root hashes #tvm #liteclient #tests
+  - [ ] Add upstream TON or pytoniq-derived proof BoCs for account, block, shard-state, config, Merkle proof, and Merkle update workflows #tvm #proofs #tests
+  - [ ] Cross-check checked-in message and transaction fixtures against independent upstream or pytoniq serialization #tvm #tlb #tests
+- [ ] Revisit TL-B proc-macro derive after schema/codegen workflow stabilizes #tvm #tlb #features
+  - [ ] Decide whether derive support belongs in a separate workspace proc-macro crate #tvm #tlb #features
+  - [ ] Keep any derive crate feature-gated and absent from low-level TVM compile paths #tvm #tlb #features
 
 ## Documentation
 
@@ -161,6 +133,7 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
     - [ ] Print machine-readable JSON for network examples when possible #examples #cli
     - [x] Avoid hidden environment assumptions in examples #examples #tests
     - [x] Document required public config or liteserver input for live examples #examples #docs
+    - [ ] Add a stable documented default testnet contract for get-method examples #examples #contracts #tests
 - [ ] Keep `TODO.md` detailed and todo-md compliant #docs
   - [ ] Move completed tasks to `# DONE` instead of deleting them #docs
   - [ ] Tag all tasks with subsystem tags #docs
@@ -229,9 +202,13 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
   - [x] Make `query_raw` truly raw instead of requiring conversion back into known `Request` #liteclient #tl
     - [x] Add raw ADNL LiteAPI query path that accepts already serialized request bytes #liteclient #tl
     - [x] Return raw response bytes before typed decoding #liteclient #tl
-  - [ ] Add typed response helpers for raw BoC payloads #liteclient #tvm
-    - [ ] Decode account state BoC root cell #liteclient #tvm
-    - [ ] Decode block and shard proofs into cells where possible #liteclient #tvm
+  - [x] Add typed response helpers for raw BoC payloads #liteclient #tvm
+    - [x] Decode `getAccountState.state` as a TL-B `Account` BoC root cell #liteclient #tvm #tlb
+    - [x] Structurally inspect multi-root proof BoCs for root counts and hashes #liteclient #tvm #proofs
+    - [x] Decode block and shard proofs into cells where possible #liteclient #tvm
+    - [x] Add Pytoniq-like typed `LiteClient` helpers for block, account, transaction, shard, config, library, and get-method response payloads #liteclient #tvm #tlb
+    - [x] Add matching typed `LiteBalancer` delegation helpers through peer selection, retry, and rate-limit logic #balancer #liteclient
+    - [ ] Expand typed shard/config payloads beyond opaque cells after full `block.tlb` model generation lands #liteclient #tvm #tlb
   - [ ] Add ignored live-network tests #liteclient #tests
     - [ ] Fetch masterchain info from public config #liteclient #tests
     - [ ] Fetch version and time #liteclient #tests
@@ -287,6 +264,7 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
     - [x] Implement canonical label encoding #tvm #tlb
     - [x] Implement fork nodes #tvm #tlb
     - [x] Implement augmentation-preserving `HashmapAug` and `HashmapAugE` APIs #tvm #tlb
+    - [x] Add embedded synthetic offline fixtures for HashmapE and HashmapAugE canonical encodings #tvm #tests
     - [ ] Add official golden fixtures for HashmapE encodings #tvm #tests
     - [ ] Add official golden fixtures for HashmapAug encodings #tvm #tests
     - [ ] Add higher-level typed dictionary value codecs after core TL-B models exist #tvm #tlb
@@ -294,8 +272,9 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
 
 ## TVM Stack And Smart Contracts
 
-- [ ] Make TVM stack encoding compatible with LiteAPI `runSmcMethod` #contracts #tvm
-  - [ ] Verify current stack BoC shape against TON node expectations #contracts #tests
+- [-] Make TVM stack encoding compatible with LiteAPI `runSmcMethod` #contracts #tvm
+  - [x] Encode root `VmStack.depth` as 24 bits for empty-stack live get-method calls #contracts #tvm #tests
+  - [ ] Verify non-empty stack BoC shape against TON node expectations #contracts #tests
     - [ ] Compare with tonutils-go and tonlib behavior #contracts
     - [ ] Add golden fixtures from successful live calls #contracts #tests
   - [ ] Support arbitrary precision integers #contracts #tvm
@@ -316,10 +295,16 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
   - [x] Account and AccountState #tlb
   - [x] Full Transaction, transaction descriptions, and remaining phases #tlb
   - [x] Augmented shard/account-block transaction collection models #tlb #tvm
-  - [ ] Block header, value flow, extra, and shard hashes #tlb
-  - [ ] Config parameters #tlb
-- [ ] Add proof verification primitives #proofs
+  - [-] Block header, value flow, extra, and shard hashes #tlb
+    - [x] Add generated-backed `Block`, `ValueFlow`, `BlockExtra`, and `ShardState` wrappers that preserve raw child cells #tlb #tvm
+    - [ ] Expand generated models for full `BlockInfo`, `ValueFlow`, `BlockExtra`, and shard-hash families #tlb #tvm
+  - [-] Config parameters #tlb
+    - [x] Add `ConfigParams` wrapper with `config_addr:bits256` and raw config dictionary reference #tlb #tvm
+    - [ ] Generate typed config-param family models #tlb #tvm
+- [-] Add proof verification primitives #proofs
+  - [x] Add Merkle proof/update exotic wrappers and child virtual-hash checks #proofs #tvm
   - [ ] Verify account state proof from `getAccountState` #proofs #liteclient
+  - [ ] Extract `ShardAccount` and `last_trans_hash` from verified `ShardAccounts` proof paths #proofs #liteclient #tlb
   - [ ] Verify shard inclusion proof #proofs #liteclient
   - [ ] Verify block proof links and signatures #proofs
   - [ ] Document trust assumptions for light client usage #proofs #docs
@@ -353,10 +338,10 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
     - [ ] Keep every stable CLI command covered by help text and `docs/cli.md` #cli #docs
     - [ ] Add deprecation rules for renamed commands and fields #cli #docs
   - [ ] Add machine-readable output controls #cli
-    - [ ] Support `--output json` for every command that returns structured data #cli
-    - [ ] Support `--output pretty-json` for interactive debugging #cli
+    - [-] Support `--output json` for every command that returns structured data #cli
+    - [-] Support `--output pretty-json` for interactive debugging #cli
     - [ ] Support `--output raw` or hex/base64 where commands return bytes #cli #tl
-    - [ ] Keep human output separate from stderr diagnostics #cli
+    - [-] Keep human output separate from stderr diagnostics #cli
     - [ ] Add stable error objects for JSON output #cli
   - [ ] Add configuration inputs suitable for shell scripts #cli
     - [ ] Accept liteserver config path, inline JSON, and environment variables #cli #network
@@ -375,8 +360,15 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
     - [ ] `tvm cell inspect` for bits, refs, level, depth, and hash data #cli #tvm
     - [ ] `address parse` and `address format` #cli #tvm
     - [ ] `contract state` for account state loading #cli #contracts
-    - [ ] `contract run-get-method` with typed stack argument input #cli #contracts
+    - [-] `contract run-get-method` with typed stack argument input #cli #contracts
     - [ ] `contract run-get-method` with JSON stack argument input for shell scripts #cli #contracts
+  - [-] Add high-level default-balancer commands for common workflows #cli #balancer #liteclient
+    - [x] Add `status`, `account`, `call`, `transactions`, `block`, and `config` commands #cli
+    - [x] Add `--num-servers`, `--single`, and `--ls-index` backend selection #cli #network
+    - [x] Add best-effort account-state CLI decode reporting #cli #tlb
+    - [ ] Make high-level `transactions` fetch history after verified `ShardAccounts` last-transaction hash extraction lands #cli #proofs #liteclient
+    - [ ] Add JSON stack argument input for `call` #cli #contracts
+    - [ ] Expand stack argument kinds beyond int/null/cell/slice #cli #contracts #tvm
   - [ ] Add future protocol commands as APIs land #cli
     - [ ] Add proof verification commands when proof APIs land #cli #proofs
     - [ ] Add DHT lookup commands when DHT APIs land #cli #dht
@@ -429,6 +421,52 @@ This file follows the `todo-md/todo-md` format. Active work is currently priorit
 
 # DONE
 
+- [x] Establish pytoniq-core-compatible Address and ordinary BoC baseline #tvm #boc #address #tests #docs
+  - [x] Document supported raw and user-friendly address formats in `dev-docs/tvm/addresses.md` #tvm #address #docs
+  - [x] Add strict raw `workchain:hash` parsing and formatting helpers #tvm #address
+  - [x] Support user-friendly base64 and base64url input with and without padding #tvm #address
+  - [x] Preserve bounceable, non-bounceable, and test-only flags through parsing and explicit formatting helpers #tvm #address
+  - [x] Add address validation tests for invalid tag, checksum, length, workchain, and hash input #tvm #address #tests
+  - [x] Document ordinary-cell BoC support, index table handling, cache-bit rejection, and missing exotic-cell work in `dev-docs/tvm/boc.md` #tvm #boc #docs
+  - [x] Decode ordinary generic BoC index tables when present #tvm #boc
+  - [x] Reject cache-bit BoCs with a precise unsupported-feature error #tvm #boc
+  - [x] Add BoC regression tests for indexed decode, malformed index table, CRC mismatch, invalid root/reference indexes, trailing bytes, and string roundtrips #tvm #boc #tests
+  - [x] Add embedded TON Docs address fixtures and schema-derived BoC compatibility fixtures #tvm #boc #address #tests
+  - [x] Add checked-in Phase 1 BoC fixture metadata for account/message/transaction compatibility #tvm #boc #tests
+- [x] Complete remaining TVM primitive compatibility before TL-B macros #tvm #tlb
+  - [x] Audit ordinary cell representation hash against TON golden fixtures #tvm #tests
+  - [x] Add exotic cell support for pruned branch, library reference, Merkle proof, and Merkle update #tvm #boc
+  - [x] Decide whether cache-bit BoCs can be decoded without semantic ambiguity and document the chosen behavior #tvm #boc #docs
+  - [x] Add full TL-B schema macro design after Address and ordinary BoC behavior are stable #tvm #tlb #docs
+- [x] Implement TL-B runtime trait foundation #tvm #tlb
+  - [x] Add `TlbSerialize`, `TlbDeserialize`, `TlbScheme`, and `TlbError` with exact decode semantics #tvm #tlb
+  - [x] Map TL-B codec errors to builder, slice, tag, reference, and non-canonical encoding failures #tvm #tlb #tests
+  - [x] Add focused tests for tags, `Maybe`, `Either`, refs, `VarUInteger`, and trailing data #tvm #tlb #tests
+- [x] Decide TL-B derive/proc-macro crate shape for Phase 1 #tvm #tlb #features
+  - [x] Decide that Phase 1 uses `src/tlb/schema.rs` parse/check-summary workflow instead of a separate proc-macro crate #tvm #tlb #features
+  - [x] Keep macro support optional and avoid adding compile cost to low-level TVM users #tvm #tlb #features
+  - [x] Define schema-driven drift checks against upstream TON TL-B sources #tvm #tlb #tests
+- [x] Implement first core TL-B models from the documented design #tvm #tlb
+  - [x] Start with hand-written `CommonMsgInfo`, `Message`, and `StateInit` codecs before deriving them #tvm #tlb
+  - [x] Add focused unit tests for message address tags, values, state init references, common info variants, and `Message Any` placement #tvm #tlb #tests
+  - [x] Record upstream schema source links for the message model family #tvm #tlb #docs
+  - [x] Add `MsgAddress`, `CommonMsgInfoRelaxed`, `MessageRelaxed`, `SimpleLib`, and `StateInitWithLibs` in a follow-up message-model slice #tvm #tlb
+  - [x] Add focused unit tests for relaxed addresses, relaxed message info variants, `MessageRelaxed Any`, and `StateInitWithLibs` libraries #tvm #tlb #tests
+  - [x] Add hand-written `OutAction` and `LibRef` codecs for send-message, set-code, reserve-currency, and change-library actions #tvm #tlb
+  - [x] Add focused unit tests for `OutAction` variants, referenced relaxed messages, library refs, and invalid action encodings #tvm #tlb #tests
+  - [x] Add `OutList` linked-list models for transaction action phases #tvm #tlb
+  - [x] Add schema-exact `TrActionPhase` metadata with `action_list_hash` and `StorageUsed` #tvm #tlb
+  - [x] Add full transaction descriptions that reference `Maybe ^TrActionPhase` #tvm #tlb
+  - [x] Add full top-level `Transaction`, `Account`, `HASH_UPDATE Account`, and transaction message dictionary models #tvm #tlb
+  - [x] Add embedded synthetic offline BoC fixtures for implemented message, account, transaction, shard-account, and augmented dictionary models #tvm #tlb #boc #tests
+  - [x] Add deterministic upstream-derived TL-B schema slice and checked generated summary for Phase 1 block/config/proof wrappers #tvm #tlb #tests
+  - [x] Add generated-backed `Block`, `ShardState`, `ConfigParams`, Merkle proof, and Merkle update wrapper models for offline BoC inspection #tvm #tlb #proofs
+  - [x] Add LiteClient BoC decode helpers that preserve raw bytes and expose typed Phase 1 views #liteclient #tvm #tlb #boc
+  - [x] Add offline CLI BoC/TL-B decode and schema-check commands #cli #tvm #tlb #boc
+  - [x] Add offline TL-B schema/codegen, BoC decode, LiteClient account-state decode, and guarded proof verification examples #docs #examples #tvm #liteclient #proofs
+  - [x] Add fixture-backed roundtrip tests that compare checked-in Phase 1 message/account/transaction cell hashes #tvm #tlb #tests
+  - [x] Add fixture-backed transaction-description BoCs for ordinary, tick-tock, split, and merge constructors #tvm #tlb #tests
+- [x] Smoke-test live account proof BoC structural diagnostics for multi-root proof payloads #cli #liteclient #proofs #tests
 - [x] Create `AGENTS.md` #docs
 - [x] Create initial `dev-docs` directory #docs
 - [x] Restructure `dev-docs` into subsystem directories #docs

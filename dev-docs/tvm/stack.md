@@ -32,6 +32,9 @@ Tuples and lists can nest. Implementation must avoid the four-reference direct-c
 ## LiteAPI Relation
 
 `liteServer.runSmcMethod` sends `params:bytes` and receives `result:mode.2?bytes`. These bytes must match TON stack serialization, not an arbitrary SDK-local format.
+The root `VmStack` cell starts with `depth:(## 24)`, followed by the stack list
+payload when depth is non-zero. Empty get-method calls therefore serialize to a
+BoC whose root cell contains exactly 24 zero bits and no references.
 
 ## Current Crate Mapping
 
@@ -40,7 +43,7 @@ Tuples and lists can nest. Implementation must avoid the four-reference direct-c
 
 ## Missing Work
 
-- Verify encoding against live liteserver.
+- Verify non-empty stack encoding against live liteserver.
 - Decode real result stacks.
 - Support arbitrary precision integers.
 - Support deep tuples and lists.
