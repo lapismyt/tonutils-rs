@@ -41,7 +41,9 @@ TLB `intN` values use fixed-width two's-complement encoding. A signed value must
 
 For `N = 0`, only zero is valid. Readers decode `intN` by reading the unsigned bit string, checking bit `N - 1`, and subtracting `2^N` when the sign bit is set.
 
-`CellBuilder::store_big_uint`, `CellBuilder::store_big_int`, `Builder::store_big_uint`, `Builder::store_big_int`, `Slice::load_big_uint`, and `Slice::load_big_int` support widths up to the ordinary cell data limit of `1023` bits. The existing `u64` and `i64` helpers keep their signatures and delegate to the same canonical encoding rules.
+`CellBuilder::store_uint::<T>`, `Builder::store_uint::<T>`, and `Slice::load_uint::<T>` use the natural width of unsigned Rust primitives (`u8`, `u16`, `u32`, `u64`, and `u128`). Non-natural widths that fit in the chosen output type use `store_uint_custom::<T>(value, bits)` and `load_uint_custom::<T>(bits)`, for example a TL-B `uint5` field read as `u8`.
+
+`CellBuilder::store_big_uint`, `CellBuilder::store_big_int`, `Builder::store_big_uint`, `Builder::store_big_int`, `Slice::load_big_uint`, and `Slice::load_big_int` support widths up to the ordinary cell data limit of `1023` bits. Signed primitive helpers keep their width argument and delegate to the same canonical encoding rules.
 
 ## VarUInteger
 

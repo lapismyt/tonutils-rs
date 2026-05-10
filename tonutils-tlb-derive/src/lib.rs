@@ -3,7 +3,8 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Attribute, Data, DeriveInput, Fields, Ident, Lit, Result, Token, Type, parse_macro_input,
+    Attribute, Data, DeriveInput, Expr, Fields, Ident, Lit, Result, Token, Type, parse_macro_input,
+    spanned::Spanned,
 };
 
 #[proc_macro_derive(Tlb, attributes(tlb))]
@@ -12,6 +13,73 @@ pub fn derive_tlb(input: TokenStream) -> TokenStream {
     expand_tlb(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+#[proc_macro_derive(Contract, attributes(contract))]
+pub fn derive_contract(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    expand_contract(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+fn expand_contract(input: DeriveInput) -> Result<proc_macro2::TokenStream> {
+    let Data::Struct(data) = &input.data else {
+        return Err(syn::Error::new_spanned(
+            input.ident,
+            "Contract derive supports named structs with exactly one data field",
+        ));
+    };
+    let Fields::Named(fields) = &data.fields else {
+        return Err(syn::Error::new_spanned(
+            &data.fields,
+            "Contract derive supports named structs with exactly one data field",
+        ));
+    };
+    if fields.named.len() != 1 {
+        return Err(syn::Error::new_spanned(
+            &data.fields,
+            "Contract derive requires exactly one named field: data",
+        ));
+    }
+    let field = fields.named.first().expect("field count checked");
+    let Some(field_name) = &field.ident else {
+        return Err(syn::Error::new_spanned(
+            field,
+            "Contract derive requires a named data field",
+        ));
+    };
+    if field_name != "data" {
+        return Err(syn::Error::new_spanned(
+            field_name,
+            "Contract derive requires the field to be named data",
+        ));
+    }
+
+    let config = contract_config(&input.attrs)?;
+    let code_tokens = config.code_tokens()?;
+    let workchain = config.workchain;
+    let name = &input.ident;
+    let data_ty = &field.ty;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+
+    Ok(quote! {
+        impl #impl_generics ::tonutils::contracts::ContractBlueprint for #name #ty_generics #where_clause {
+            type Data = #data_ty;
+
+            fn data(&self) -> &Self::Data {
+                &self.data
+            }
+
+            fn code_boc(&self) -> ::std::borrow::Cow<'static, [u8]> {
+                #code_tokens
+            }
+
+            fn workchain(&self) -> i8 {
+                #workchain
+            }
+        }
+    })
 }
 
 fn expand_tlb(input: DeriveInput) -> Result<proc_macro2::TokenStream> {
@@ -354,6 +422,137 @@ fn tlb_flag(attrs: &[Attribute], name: &str) -> Result<bool> {
     Ok(found)
 }
 
+#[derive(Default)]
+struct ContractConfig {
+    code: Option<ContractCodeSource>,
+    workchain: i8,
+}
+
+enum ContractCodeSource {
+    Expr(Expr),
+    Hex(Vec<u8>),
+    File(syn::LitStr),
+}
+
+impl ContractConfig {
+    fn code_tokens(&self) -> Result<proc_macro2::TokenStream> {
+        let source = self.code.as_ref().ok_or_else(|| {
+            syn::Error::new(
+                proc_macro2::Span::call_site(),
+                "Contract derive requires one code source: code, code_hex, or code_file",
+            )
+        })?;
+        Ok(match source {
+            ContractCodeSource::Expr(expr) => {
+                quote!(::std::borrow::Cow::Borrowed(#expr))
+            }
+            ContractCodeSource::Hex(bytes) => {
+                let bytes = bytes.iter().copied();
+                quote!(::std::borrow::Cow::Borrowed(&[#(#bytes),*]))
+            }
+            ContractCodeSource::File(path) => {
+                quote!(::std::borrow::Cow::Borrowed(include_bytes!(#path)))
+            }
+        })
+    }
+}
+
+fn contract_config(attrs: &[Attribute]) -> Result<ContractConfig> {
+    let mut config = ContractConfig {
+        code: None,
+        workchain: 0,
+    };
+    let mut workchain_seen = false;
+
+    for attr in attrs.iter().filter(|attr| attr.path().is_ident("contract")) {
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("code") {
+                let value = meta.value()?;
+                let expr: Expr = value.parse()?;
+                set_contract_code(
+                    &mut config,
+                    ContractCodeSource::Expr(expr),
+                    meta.path.span(),
+                )?;
+            } else if meta.path.is_ident("code_hex") {
+                let value = meta.value()?;
+                let lit: Lit = value.parse()?;
+                let Lit::Str(lit) = lit else {
+                    return Err(meta.error("code_hex must be a string literal"));
+                };
+                let bytes = parse_hex_bytes(&lit.value())
+                    .map_err(|message| syn::Error::new(lit.span(), message))?;
+                set_contract_code(
+                    &mut config,
+                    ContractCodeSource::Hex(bytes),
+                    meta.path.span(),
+                )?;
+            } else if meta.path.is_ident("code_file") {
+                let value = meta.value()?;
+                let lit: Lit = value.parse()?;
+                let Lit::Str(lit) = lit else {
+                    return Err(meta.error("code_file must be a string literal"));
+                };
+                set_contract_code(&mut config, ContractCodeSource::File(lit), meta.path.span())?;
+            } else if meta.path.is_ident("workchain") {
+                if workchain_seen {
+                    return Err(meta.error("workchain specified more than once"));
+                }
+                workchain_seen = true;
+                let value = meta.value()?;
+                let lit: Lit = value.parse()?;
+                let Lit::Int(lit) = lit else {
+                    return Err(meta.error("workchain must be an integer literal"));
+                };
+                config.workchain = lit.base10_parse::<i8>()?;
+            } else {
+                return Err(meta.error("unsupported contract attribute"));
+            }
+            Ok(())
+        })?;
+    }
+    Ok(config)
+}
+
+fn set_contract_code(
+    config: &mut ContractConfig,
+    source: ContractCodeSource,
+    span: proc_macro2::Span,
+) -> Result<()> {
+    if config.code.is_some() {
+        return Err(syn::Error::new(
+            span,
+            "Contract derive accepts only one code source",
+        ));
+    }
+    config.code = Some(source);
+    Ok(())
+}
+
+fn parse_hex_bytes(raw: &str) -> std::result::Result<Vec<u8>, String> {
+    let hex = raw
+        .strip_prefix("0x")
+        .or_else(|| raw.strip_prefix("0X"))
+        .unwrap_or(raw)
+        .chars()
+        .filter(|ch| *ch != '_' && !ch.is_ascii_whitespace())
+        .collect::<String>();
+    if hex.is_empty() {
+        return Err("code_hex must not be empty".to_string());
+    }
+    if hex.len() % 2 != 0 {
+        return Err("code_hex must contain an even number of hex digits".to_string());
+    }
+
+    let mut bytes = Vec::with_capacity(hex.len() / 2);
+    for index in (0..hex.len()).step_by(2) {
+        let byte = u8::from_str_radix(&hex[index..index + 2], 16)
+            .map_err(|_| "code_hex must contain only hexadecimal digits".to_string())?;
+        bytes.push(byte);
+    }
+    Ok(bytes)
+}
+
 fn normalize_tag_literal(raw: &str) -> std::result::Result<String, String> {
     if let Some(hex) = raw.strip_prefix("0x").or_else(|| raw.strip_prefix("0X")) {
         return hex_tag_to_bits(hex);
@@ -401,9 +600,10 @@ fn hex_tag_to_bits(raw: &str) -> std::result::Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        inferred_unsigned_bits, is_float_primitive, normalize_tag_literal, requires_explicit_bits,
+        expand_contract, inferred_unsigned_bits, is_float_primitive, normalize_tag_literal,
+        parse_hex_bytes, requires_explicit_bits,
     };
-    use syn::{Type, parse_quote};
+    use syn::{DeriveInput, Type, parse_quote};
 
     #[test]
     fn tag_literals_accept_binary_and_hex_forms() {
@@ -463,5 +663,91 @@ mod tests {
         assert!(is_float_primitive(&parse_quote!(f32)));
         assert!(is_float_primitive(&parse_quote!(f64)));
         assert!(!is_float_primitive(&parse_quote!(i64)));
+    }
+
+    #[test]
+    fn contract_code_hex_accepts_prefixes_underscores_and_whitespace() {
+        assert_eq!(
+            parse_hex_bytes("0xb5ee_9c72").unwrap(),
+            [0xb5, 0xee, 0x9c, 0x72]
+        );
+        assert_eq!(
+            parse_hex_bytes("b5 ee 9c 72").unwrap(),
+            [0xb5, 0xee, 0x9c, 0x72]
+        );
+    }
+
+    #[test]
+    fn contract_code_hex_rejects_empty_odd_and_invalid_values() {
+        assert!(parse_hex_bytes("").is_err());
+        assert!(parse_hex_bytes("abc").is_err());
+        assert!(parse_hex_bytes("zz").is_err());
+    }
+
+    #[test]
+    fn contract_derive_accepts_supported_code_sources() {
+        let const_input: DeriveInput = parse_quote! {
+            #[contract(code = CODE_BOC)]
+            struct Wallet {
+                data: WalletData,
+            }
+        };
+        assert!(expand_contract(const_input).is_ok());
+
+        let hex_input: DeriveInput = parse_quote! {
+            #[contract(code_hex = "b5ee9c72010101010002000000", workchain = -1)]
+            struct Wallet {
+                data: WalletData,
+            }
+        };
+        assert!(expand_contract(hex_input).is_ok());
+
+        let file_input: DeriveInput = parse_quote! {
+            #[contract(code_file = "wallet.code.boc")]
+            struct Wallet {
+                data: WalletData,
+            }
+        };
+        assert!(expand_contract(file_input).is_ok());
+    }
+
+    #[test]
+    fn contract_derive_rejects_ambiguous_or_unsupported_shapes() {
+        let missing_data: DeriveInput = parse_quote! {
+            #[contract(code = CODE_BOC)]
+            struct Wallet {
+                state: WalletData,
+            }
+        };
+        assert!(expand_contract(missing_data).is_err());
+
+        let extra_field: DeriveInput = parse_quote! {
+            #[contract(code = CODE_BOC)]
+            struct Wallet {
+                data: WalletData,
+                address: u32,
+            }
+        };
+        assert!(expand_contract(extra_field).is_err());
+
+        let unnamed: DeriveInput = parse_quote! {
+            #[contract(code = CODE_BOC)]
+            struct Wallet(WalletData);
+        };
+        assert!(expand_contract(unnamed).is_err());
+
+        let unit: DeriveInput = parse_quote! {
+            #[contract(code = CODE_BOC)]
+            struct Wallet;
+        };
+        assert!(expand_contract(unit).is_err());
+
+        let multiple_code_sources: DeriveInput = parse_quote! {
+            #[contract(code = CODE_BOC, code_hex = "00")]
+            struct Wallet {
+                data: WalletData,
+            }
+        };
+        assert!(expand_contract(multiple_code_sources).is_err());
     }
 }

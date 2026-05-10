@@ -3,6 +3,7 @@
 //! A cell is a fundamental data structure in TON that can store up to 1023 bits
 //! of data and maintain up to 4 references to other cells.
 
+use crate::tvm::uint::UnsignedInteger;
 use anyhow::{Result, bail};
 use num_bigint::{BigInt, BigUint};
 use sha2::{Digest, Sha256};
@@ -610,25 +611,50 @@ impl CellBuilder {
         self.store_bits(&[byte], 8)
     }
 
+    /// Stores a u8 value.
+    pub fn store_u8(&mut self, value: u8) -> Result<&mut Self> {
+        self.store_uint::<u8>(value)
+    }
+
     /// Stores multiple bytes
     pub fn store_bytes(&mut self, bytes: &[u8]) -> Result<&mut Self> {
         self.store_bits(bytes, bytes.len() * 8)
     }
 
+    /// Stores a u16 value.
+    pub fn store_u16(&mut self, value: u16) -> Result<&mut Self> {
+        self.store_uint::<u16>(value)
+    }
+
     /// Stores a u32 value
     pub fn store_u32(&mut self, value: u32) -> Result<&mut Self> {
-        self.store_bits(&value.to_be_bytes(), 32)
+        self.store_uint::<u32>(value)
     }
 
     /// Stores a u64 value
     pub fn store_u64(&mut self, value: u64) -> Result<&mut Self> {
-        self.store_bits(&value.to_be_bytes(), 64)
+        self.store_uint::<u64>(value)
     }
 
-    /// Stores a specific number of bits from a u64
-    /// Stores the least significant `bits` of the value in big-endian bit order
-    pub fn store_uint(&mut self, value: u64, bits: usize) -> Result<&mut Self> {
-        self.store_big_uint(&BigUint::from(value), bits)
+    /// Stores an unsigned integer using the natural width of `T`.
+    pub fn store_uint<T: UnsignedInteger>(&mut self, value: T) -> Result<&mut Self> {
+        self.store_uint_custom(value, T::BITS)
+    }
+
+    /// Stores an unsigned integer encoded in `bits` bits.
+    pub fn store_uint_custom<T: UnsignedInteger>(
+        &mut self,
+        value: T,
+        bits: usize,
+    ) -> Result<&mut Self> {
+        if bits > T::BITS {
+            bail!(
+                "Cannot store {} bits from {}-bit unsigned integer",
+                bits,
+                T::BITS
+            );
+        }
+        self.store_big_uint(&value.to_big_uint(), bits)
     }
 
     /// Stores an unsigned integer with an exact fixed bit length.
@@ -853,6 +879,39 @@ mod tests {
 
         let cell = builder.build().unwrap();
         assert_eq!(cell.bit_len(), 40); // 8 + 32 bits
+    }
+
+    #[test]
+    fn test_cell_builder_store_uint_natural_widths() {
+        let mut builder = CellBuilder::new();
+        builder.store_uint::<u8>(0x12).unwrap();
+        builder.store_uint::<u16>(0x3456).unwrap();
+        builder.store_uint::<u32>(0x789a_bcde).unwrap();
+        builder.store_uint::<u64>(0x0123_4567_89ab_cdef).unwrap();
+        builder
+            .store_uint::<u128>(0x0123_4567_89ab_cdef_1122_3344_5566_7788)
+            .unwrap();
+
+        let cell = builder.build().unwrap();
+        assert_eq!(cell.bit_len(), 8 + 16 + 32 + 64 + 128);
+    }
+
+    #[test]
+    fn test_cell_builder_store_uint_custom_widths() {
+        let mut builder = CellBuilder::new();
+        builder.store_uint_custom::<u8>(0, 0).unwrap();
+        builder.store_uint_custom::<u8>(0b101, 3).unwrap();
+        builder.store_uint_custom::<u16>(0x01ff, 9).unwrap();
+        builder.store_uint_custom::<u32>(0x00ab_cdef, 24).unwrap();
+        assert!(builder.store_uint_custom::<u8>(8, 3).is_err());
+        assert!(builder.store_uint_custom::<u8>(0, 9).is_err());
+
+        let cell = builder.build().unwrap();
+        let mut slice = crate::tvm::Slice::new(cell);
+        assert_eq!(slice.load_uint_custom::<u8>(0).unwrap(), 0);
+        assert_eq!(slice.load_uint_custom::<u8>(3).unwrap(), 0b101);
+        assert_eq!(slice.load_uint_custom::<u16>(9).unwrap(), 0x01ff);
+        assert_eq!(slice.load_uint_custom::<u32>(24).unwrap(), 0x00ab_cdef);
     }
 
     #[test]

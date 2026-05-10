@@ -20,12 +20,14 @@ use tonutils::tvm::{Builder, Slice};
 fn example() -> anyhow::Result<()> {
     let value = BigUint::from(1u64) << 96;
     let mut builder = Builder::new();
-    builder.store_u32(0x12345678)?;
+    builder.store_uint::<u32>(0x12345678)?;
+    builder.store_uint_custom::<u8>(0b101, 3)?;
     builder.store_big_uint(&value, 128)?;
     let cell = builder.end_cell()?;
 
     let mut slice = Slice::new(cell);
-    assert_eq!(slice.load_u32()?, 0x12345678);
+    assert_eq!(slice.load_uint::<u32>()?, 0x12345678);
+    assert_eq!(slice.load_uint_custom::<u8>(3)?, 0b101);
     assert_eq!(slice.load_big_uint(128)?, value);
     Ok(())
 }

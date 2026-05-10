@@ -85,7 +85,7 @@ fn encode_entries(entries: &[TvmStackEntry]) -> Result<Arc<Cell>> {
     }
 
     let mut builder = Builder::new();
-    builder.store_uint(entries.len() as u64, 24)?;
+    builder.store_uint_custom::<u32>(entries.len() as u32, 24)?;
     if !entries.is_empty() {
         builder.store_ref(encode_entry_chain(entries)?)?;
     }
@@ -95,7 +95,7 @@ fn encode_entries(entries: &[TvmStackEntry]) -> Result<Arc<Cell>> {
 fn encode_entry_chain(entries: &[TvmStackEntry]) -> Result<Arc<Cell>> {
     let count = entries.len().min(3);
     let mut builder = Builder::new();
-    builder.store_uint(count as u64, 8)?;
+    builder.store_uint::<u8>(count as u8)?;
     builder.store_bit(entries.len() > count)?;
     for entry in &entries[..count] {
         builder.store_ref(encode_entry(entry)?)?;
@@ -118,7 +118,7 @@ fn encode_entry(entry: &TvmStackEntry) -> Result<Arc<Cell>> {
             if bytes.len() > u16::MAX as usize {
                 bail!("TVM stack integer is too large");
             }
-            builder.store_uint(bytes.len() as u64, 16)?;
+            builder.store_uint::<u16>(bytes.len() as u16)?;
             builder.store_bytes(&bytes)?;
         }
         TvmStackEntry::Cell(cell) => {
@@ -142,7 +142,7 @@ fn encode_entry(entry: &TvmStackEntry) -> Result<Arc<Cell>> {
                 bail!("Unsupported stack payload is too large");
             }
             builder.store_byte(TAG_UNSUPPORTED)?;
-            builder.store_uint(bytes.len() as u64, 8)?;
+            builder.store_uint::<u8>(bytes.len() as u8)?;
             builder.store_bytes(bytes)?;
         }
     }
@@ -151,7 +151,7 @@ fn encode_entry(entry: &TvmStackEntry) -> Result<Arc<Cell>> {
 
 fn decode_entries(cell: Arc<Cell>) -> Result<Vec<TvmStackEntry>> {
     let mut slice = Slice::new(cell);
-    let len = slice.load_uint(24)? as usize;
+    let len = slice.load_uint_custom::<u32>(24)? as usize;
     let mut entries = if len == 0 {
         Vec::new()
     } else {
@@ -166,7 +166,7 @@ fn decode_entries(cell: Arc<Cell>) -> Result<Vec<TvmStackEntry>> {
 
 fn decode_entry_chain(cell: Arc<Cell>, remaining: usize) -> Result<Vec<TvmStackEntry>> {
     let mut slice = Slice::new(cell);
-    let count = slice.load_uint(8)? as usize;
+    let count = slice.load_uint::<u8>()? as usize;
     let has_next = slice.load_bit()?;
     if count > 3 {
         bail!("TVM stack entry chain node is too large");
@@ -194,7 +194,7 @@ fn decode_entry(cell: Arc<Cell>) -> Result<TvmStackEntry> {
     match tag {
         TAG_NULL => Ok(TvmStackEntry::Null),
         TAG_INT => {
-            let len = slice.load_uint(16)? as usize;
+            let len = slice.load_uint::<u16>()? as usize;
             Ok(TvmStackEntry::Int(BigInt::from_signed_bytes_be(
                 &slice.load_bytes(len)?,
             )))
@@ -208,7 +208,7 @@ fn decode_entry(cell: Arc<Cell>) -> Result<TvmStackEntry> {
             slice.load_reference()?,
         )?)),
         TAG_UNSUPPORTED => {
-            let len = slice.load_uint(8)? as usize;
+            let len = slice.load_uint::<u8>()? as usize;
             Ok(TvmStackEntry::Unsupported(slice.load_bytes(len)?))
         }
         _ => bail!("Unknown TVM stack entry tag {}", tag),
@@ -240,7 +240,7 @@ mod tests {
         assert_eq!(cell.bit_len(), 24);
 
         let mut slice = Slice::new(cell);
-        assert_eq!(slice.load_uint(24).unwrap(), 0);
+        assert_eq!(slice.load_uint_custom::<u32>(24).unwrap(), 0);
         assert!(slice.is_empty());
     }
 

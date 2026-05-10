@@ -28,6 +28,8 @@ pub mod slice;
 pub mod stack;
 #[cfg(test)]
 pub mod tests;
+#[doc(hidden)]
+pub mod uint;
 
 pub use address::{Address, ExternalAddress};
 pub use boc::{

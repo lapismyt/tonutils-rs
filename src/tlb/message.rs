@@ -42,7 +42,7 @@ impl TlbSerialize for Anycast {
                 message: format!("depth {} is outside 1..=30", self.depth),
             });
         }
-        builder.store_uint(self.depth as u64, 5)?;
+        builder.store_uint_custom::<u8>(self.depth as u8, 5)?;
         builder.store_bits(&self.rewrite_pfx, self.depth as usize)?;
         Ok(())
     }
@@ -50,7 +50,7 @@ impl TlbSerialize for Anycast {
 
 impl TlbDeserialize for Anycast {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
-        let depth = slice.load_uint(5)? as u8;
+        let depth = slice.load_uint_custom::<u8>(5)? as u8;
         if !(1..=30).contains(&depth) {
             return Err(TlbError::CustomSchema {
                 schema: "Anycast",
@@ -119,7 +119,7 @@ impl TlbSerialize for MsgAddressInt {
                 }
                 store_tag(builder, "11")?;
                 store_maybe_anycast(builder, anycast)?;
-                builder.store_uint(*bit_len as u64, 9)?;
+                builder.store_uint_custom::<u16>(*bit_len as u16, 9)?;
                 builder.store_int(*workchain_id as i64, 32)?;
                 builder.store_bits(address, *bit_len)?;
             }
@@ -143,7 +143,7 @@ impl TlbDeserialize for MsgAddressInt {
             }
             "11" => {
                 let anycast = load_maybe_anycast(slice)?;
-                let bit_len = slice.load_uint(9)? as usize;
+                let bit_len = slice.load_uint_custom::<u16>(9)? as usize;
                 let workchain_id = slice.load_int(32)? as i32;
                 let address = slice.load_bits(bit_len)?;
                 Ok(Self::Var {
@@ -189,7 +189,7 @@ impl TlbSerialize for MsgAddressExt {
                     });
                 }
                 store_tag(builder, "01")?;
-                builder.store_uint(*bit_len as u64, 9)?;
+                builder.store_uint_custom::<u16>(*bit_len as u16, 9)?;
                 builder.store_bits(data, *bit_len)?;
             }
         }
@@ -202,7 +202,7 @@ impl TlbDeserialize for MsgAddressExt {
         match load_two_bit_tag(slice, "MsgAddressExt", "00|01")?.as_str() {
             "00" => Ok(Self::None),
             "01" => {
-                let bit_len = slice.load_uint(9)? as usize;
+                let bit_len = slice.load_uint_custom::<u16>(9)? as usize;
                 let data = slice.load_bits(bit_len)?;
                 Ok(Self::Extern { data, bit_len })
             }
@@ -238,7 +238,7 @@ impl TlbDeserialize for MsgAddress {
         match load_two_bit_tag(slice, "MsgAddress", "00|01|10|11")?.as_str() {
             "00" => Ok(Self::Ext(MsgAddressExt::None)),
             "01" => {
-                let bit_len = slice.load_uint(9)? as usize;
+                let bit_len = slice.load_uint_custom::<u16>(9)? as usize;
                 let data = slice.load_bits(bit_len)?;
                 Ok(Self::Ext(MsgAddressExt::Extern { data, bit_len }))
             }
@@ -254,7 +254,7 @@ impl TlbDeserialize for MsgAddress {
             }
             "11" => {
                 let anycast = load_maybe_anycast(slice)?;
-                let bit_len = slice.load_uint(9)? as usize;
+                let bit_len = slice.load_uint_custom::<u16>(9)? as usize;
                 let workchain_id = slice.load_int(32)? as i32;
                 let address = slice.load_bits(bit_len)?;
                 Ok(Self::Int(MsgAddressInt::Var {
@@ -409,7 +409,7 @@ impl TlbSerialize for StateInit {
                     });
                 }
                 builder.store_bit(true)?;
-                builder.store_uint(value as u64, 5)?;
+                builder.store_uint_custom::<u8>(value as u8, 5)?;
             }
             None => {
                 builder.store_bit(false)?;
@@ -426,7 +426,7 @@ impl TlbSerialize for StateInit {
 impl TlbDeserialize for StateInit {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
         let fixed_prefix_length = if slice.load_bit()? {
-            Some(slice.load_uint(5)? as u8)
+            Some(slice.load_uint_custom::<u8>(5)? as u8)
         } else {
             None
         };
@@ -923,17 +923,17 @@ impl TlbSerialize for OutAction {
     fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
         match self {
             Self::SendMsg { mode, out_msg } => {
-                builder.store_uint(ACTION_SEND_MSG_TAG as u64, 32)?;
-                builder.store_uint(*mode as u64, 8)?;
+                builder.store_uint::<u32>(ACTION_SEND_MSG_TAG as u32)?;
+                builder.store_uint::<u8>(*mode as u8)?;
                 store_ref_tlb(builder, out_msg)?;
             }
             Self::SetCode { new_code } => {
-                builder.store_uint(ACTION_SET_CODE_TAG as u64, 32)?;
+                builder.store_uint::<u32>(ACTION_SET_CODE_TAG as u32)?;
                 builder.store_ref(new_code.clone())?;
             }
             Self::ReserveCurrency { mode, currency } => {
-                builder.store_uint(ACTION_RESERVE_CURRENCY_TAG as u64, 32)?;
-                builder.store_uint(*mode as u64, 8)?;
+                builder.store_uint::<u32>(ACTION_RESERVE_CURRENCY_TAG as u32)?;
+                builder.store_uint::<u8>(*mode as u8)?;
                 currency.store_tlb(builder)?;
             }
             Self::ChangeLibrary { mode, libref } => {
@@ -943,8 +943,8 @@ impl TlbSerialize for OutAction {
                         message: format!("mode {mode} does not fit in seven bits"),
                     });
                 }
-                builder.store_uint(ACTION_CHANGE_LIBRARY_TAG as u64, 32)?;
-                builder.store_uint(*mode as u64, 7)?;
+                builder.store_uint::<u32>(ACTION_CHANGE_LIBRARY_TAG as u32)?;
+                builder.store_uint_custom::<u8>(*mode as u8, 7)?;
                 libref.store_tlb(builder)?;
             }
         }
@@ -956,18 +956,18 @@ impl TlbDeserialize for OutAction {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
         match load_u32_tag(slice, "OutAction", OUT_ACTION_EXPECTED_TAGS)? {
             ACTION_SEND_MSG_TAG => Ok(Self::SendMsg {
-                mode: slice.load_uint(8)? as u8,
+                mode: slice.load_uint::<u8>()? as u8,
                 out_msg: load_ref_tlb(slice, "MessageRelaxed Any")?,
             }),
             ACTION_SET_CODE_TAG => Ok(Self::SetCode {
                 new_code: slice.load_reference()?,
             }),
             ACTION_RESERVE_CURRENCY_TAG => Ok(Self::ReserveCurrency {
-                mode: slice.load_uint(8)? as u8,
+                mode: slice.load_uint::<u8>()? as u8,
                 currency: CurrencyCollection::load_tlb(slice)?,
             }),
             ACTION_CHANGE_LIBRARY_TAG => Ok(Self::ChangeLibrary {
-                mode: slice.load_uint(7)? as u8,
+                mode: slice.load_uint_custom::<u8>(7)? as u8,
                 libref: LibRef::load_tlb(slice)?,
             }),
             _ => unreachable!("load_u32_tag only returns known OutAction tags"),
@@ -1201,10 +1201,10 @@ impl TlbSerialize for TrActionPhase {
         store_maybe(builder, &self.total_action_fees)?;
         builder.store_int(self.result_code as i64, 32)?;
         store_maybe_i32(builder, self.result_arg)?;
-        builder.store_uint(self.tot_actions as u64, 16)?;
-        builder.store_uint(self.spec_actions as u64, 16)?;
-        builder.store_uint(self.skipped_actions as u64, 16)?;
-        builder.store_uint(self.msgs_created as u64, 16)?;
+        builder.store_uint::<u16>(self.tot_actions as u16)?;
+        builder.store_uint::<u16>(self.spec_actions as u16)?;
+        builder.store_uint::<u16>(self.skipped_actions as u16)?;
+        builder.store_uint::<u16>(self.msgs_created as u16)?;
         builder.store_bytes(&self.action_list_hash)?;
         self.tot_msg_size.store_tlb(builder)?;
         Ok(())
@@ -1221,10 +1221,10 @@ impl TlbDeserialize for TrActionPhase {
         let total_action_fees = load_maybe::<Grams>(slice)?;
         let result_code = slice.load_int(32)? as i32;
         let result_arg = load_maybe_i32(slice)?;
-        let tot_actions = slice.load_uint(16)? as u16;
-        let spec_actions = slice.load_uint(16)? as u16;
-        let skipped_actions = slice.load_uint(16)? as u16;
-        let msgs_created = slice.load_uint(16)? as u16;
+        let tot_actions = slice.load_uint::<u16>()? as u16;
+        let spec_actions = slice.load_uint::<u16>()? as u16;
+        let skipped_actions = slice.load_uint::<u16>()? as u16;
+        let msgs_created = slice.load_uint::<u16>()? as u16;
         let mut action_list_hash = [0u8; 32];
         action_list_hash.copy_from_slice(&slice.load_bytes(32)?);
         let tot_msg_size = StorageUsed::load_tlb(slice)?;
@@ -1264,7 +1264,7 @@ fn store_state_init_prefix(
                 });
             }
             builder.store_bit(true)?;
-            builder.store_uint(value as u64, 5)?;
+            builder.store_uint_custom::<u8>(value as u8, 5)?;
         }
         None => {
             builder.store_bit(false)?;
@@ -1285,7 +1285,7 @@ fn load_state_init_prefix(
     Option<Arc<Cell>>,
 )> {
     let fixed_prefix_length = if slice.load_bit()? {
-        Some(slice.load_uint(5)? as u8)
+        Some(slice.load_uint_custom::<u8>(5)? as u8)
     } else {
         None
     };
@@ -1666,7 +1666,7 @@ mod tests {
     fn malformed_anycast_depth_is_rejected() {
         for depth in [0u64, 31] {
             let mut builder = Builder::new();
-            builder.store_uint(depth, 5).unwrap();
+            builder.store_uint_custom::<u8>(depth as u8, 5).unwrap();
             if depth > 0 {
                 builder
                     .store_bits(&vec![0; (depth as usize).div_ceil(8)], depth as usize)
@@ -2113,7 +2113,7 @@ mod tests {
     #[test]
     fn out_action_unknown_and_truncated_tags_are_rejected() {
         let mut builder = Builder::new();
-        builder.store_uint(0xffff_ffff, 32).unwrap();
+        builder.store_uint::<u32>(0xffff_ffff as u32).unwrap();
         let err = OutAction::from_cell(builder.build().unwrap()).unwrap_err();
         assert!(matches!(
             err,
@@ -2171,8 +2171,10 @@ mod tests {
         let mut invalid_message = Builder::new();
         store_tag(&mut invalid_message, "10").unwrap();
         let mut builder = Builder::new();
-        builder.store_uint(ACTION_SEND_MSG_TAG as u64, 32).unwrap();
-        builder.store_uint(0, 8).unwrap();
+        builder
+            .store_uint::<u32>(ACTION_SEND_MSG_TAG as u32)
+            .unwrap();
+        builder.store_uint::<u8>(0).unwrap();
         builder.store_ref(invalid_message.build().unwrap()).unwrap();
 
         let err = OutAction::from_cell(builder.build().unwrap()).unwrap_err();
@@ -2247,10 +2249,10 @@ mod tests {
         builder.store_bit(false).unwrap();
         builder.store_int(0, 32).unwrap();
         builder.store_bit(false).unwrap();
-        builder.store_uint(0, 16).unwrap();
-        builder.store_uint(0, 16).unwrap();
-        builder.store_uint(0, 16).unwrap();
-        builder.store_uint(0, 16).unwrap();
+        builder.store_uint::<u16>(0).unwrap();
+        builder.store_uint::<u16>(0).unwrap();
+        builder.store_uint::<u16>(0).unwrap();
+        builder.store_uint::<u16>(0).unwrap();
         builder.store_bytes(&[0; 32]).unwrap();
     }
 
@@ -2360,7 +2362,7 @@ mod tests {
     fn out_list_malformed_current_action_reports_action_decode_failure() {
         let mut builder = Builder::new();
         builder.store_ref(Builder::new().build().unwrap()).unwrap();
-        builder.store_uint(0xffff_ffff, 32).unwrap();
+        builder.store_uint::<u32>(0xffff_ffff as u32).unwrap();
 
         let err = OutList::from_cell(builder.build().unwrap()).unwrap_err();
         assert!(matches!(
@@ -2422,9 +2424,13 @@ mod tests {
     #[test]
     fn storage_used_rejects_non_canonical_varuint() {
         let mut builder = Builder::new();
-        builder.store_uint(2, VAR_UINT_7_LEN_BITS).unwrap();
+        builder
+            .store_uint_custom::<u8>(2, VAR_UINT_7_LEN_BITS)
+            .unwrap();
         builder.store_bytes(&[0, 1]).unwrap();
-        builder.store_uint(0, VAR_UINT_7_LEN_BITS).unwrap();
+        builder
+            .store_uint_custom::<u8>(0, VAR_UINT_7_LEN_BITS)
+            .unwrap();
 
         let err = StorageUsed::from_cell(builder.build().unwrap()).unwrap_err();
         assert!(matches!(err, TlbError::NonCanonicalValue { .. }));
@@ -2444,9 +2450,13 @@ mod tests {
         ));
 
         let mut builder = Builder::new();
-        builder.store_uint(7, VAR_UINT_7_LEN_BITS).unwrap();
+        builder
+            .store_uint_custom::<u8>(7, VAR_UINT_7_LEN_BITS)
+            .unwrap();
         builder.store_bytes(&[1, 0, 0, 0, 0, 0, 0]).unwrap();
-        builder.store_uint(0, VAR_UINT_7_LEN_BITS).unwrap();
+        builder
+            .store_uint_custom::<u8>(0, VAR_UINT_7_LEN_BITS)
+            .unwrap();
 
         let err = StorageUsed::from_cell(builder.build().unwrap()).unwrap_err();
         assert!(matches!(
@@ -2532,7 +2542,9 @@ mod tests {
         builder.store_bit(false).unwrap();
         AccStatusChange::Unchanged.store_tlb(&mut builder).unwrap();
         builder.store_bit(true).unwrap();
-        builder.store_uint(2, VAR_UINT_16_LEN_BITS).unwrap();
+        builder
+            .store_uint_custom::<u8>(2, VAR_UINT_16_LEN_BITS)
+            .unwrap();
         builder.store_bytes(&[0, 1]).unwrap();
 
         let err = TrActionPhase::from_cell(builder.build().unwrap()).unwrap_err();
@@ -2543,9 +2555,13 @@ mod tests {
     fn action_phase_malformed_storage_used_propagates_error() {
         let mut builder = Builder::new();
         store_action_phase_prefix_through_hash(&mut builder);
-        builder.store_uint(2, VAR_UINT_7_LEN_BITS).unwrap();
+        builder
+            .store_uint_custom::<u8>(2, VAR_UINT_7_LEN_BITS)
+            .unwrap();
         builder.store_bytes(&[0, 1]).unwrap();
-        builder.store_uint(0, VAR_UINT_7_LEN_BITS).unwrap();
+        builder
+            .store_uint_custom::<u8>(0, VAR_UINT_7_LEN_BITS)
+            .unwrap();
 
         let err = TrActionPhase::from_cell(builder.build().unwrap()).unwrap_err();
         assert!(matches!(err, TlbError::NonCanonicalValue { .. }));

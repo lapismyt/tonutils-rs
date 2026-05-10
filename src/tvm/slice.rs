@@ -4,6 +4,7 @@
 //! tracking the current position in both bits and references.
 
 use crate::tvm::cell::{Cell, MAX_CELL_BITS};
+use crate::tvm::uint::UnsignedInteger;
 use anyhow::{Result, bail};
 use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
@@ -90,8 +91,7 @@ impl Slice {
 
     /// Loads a byte (8 bits)
     pub fn load_byte(&mut self) -> Result<u8> {
-        let bits = self.load_bits(8)?;
-        Ok(bits[0])
+        self.load_uint::<u8>()
     }
 
     /// Loads multiple bytes
@@ -101,35 +101,40 @@ impl Slice {
 
     /// Loads a u16 value (16 bits, big-endian)
     pub fn load_u16(&mut self) -> Result<u16> {
-        let bytes = self.load_bits(16)?;
-        Ok(u16::from_be_bytes([bytes[0], bytes[1]]))
+        self.load_uint::<u16>()
     }
 
     /// Loads a u32 value (32 bits, big-endian)
     pub fn load_u32(&mut self) -> Result<u32> {
-        let bytes = self.load_bits(32)?;
-        Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        self.load_uint::<u32>()
     }
 
     /// Loads a u64 value (64 bits, big-endian)
     pub fn load_u64(&mut self) -> Result<u64> {
-        let bytes = self.load_bits(64)?;
-        Ok(u64::from_be_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ]))
+        self.load_uint::<u64>()
     }
 
-    /// Loads a uint with a specific number of bits
-    pub fn load_uint(&mut self, bits: usize) -> Result<u64> {
-        if bits > 64 {
-            bail!("Cannot load more than 64 bits into u64");
+    /// Loads a u8 value (8 bits).
+    pub fn load_u8(&mut self) -> Result<u8> {
+        self.load_uint::<u8>()
+    }
+
+    /// Loads an unsigned integer using the natural width of `T`.
+    pub fn load_uint<T: UnsignedInteger>(&mut self) -> Result<T> {
+        self.load_uint_custom::<T>(T::BITS)
+    }
+
+    /// Loads an unsigned integer encoded in `bits` bits into `T`.
+    pub fn load_uint_custom<T: UnsignedInteger>(&mut self, bits: usize) -> Result<T> {
+        if bits > T::BITS {
+            bail!(
+                "Cannot load {} bits into {}-bit unsigned integer",
+                bits,
+                T::BITS
+            );
         }
-
         let value = self.load_big_uint(bits)?;
-        let digits = value.to_u64_digits();
-        let result = digits.first().copied().unwrap_or(0);
-
-        Ok(result)
+        T::from_big_uint(value)
     }
 
     /// Loads an unsigned big integer with a specific number of bits.
@@ -298,12 +303,7 @@ impl Slice {
 
     /// Loads a variable-length unsigned big integer (VarUInteger).
     pub fn load_var_big_uint(&mut self, length_bits: usize) -> Result<BigUint> {
-        let byte_len_big = self.load_big_uint(length_bits)?;
-        let byte_len_digits = byte_len_big.to_u64_digits();
-        if byte_len_digits.len() > 1 {
-            bail!("VarUInteger byte length does not fit usize");
-        }
-        let byte_len = usize::try_from(byte_len_digits.first().copied().unwrap_or(0))
+        let byte_len = usize::try_from(self.load_uint_custom::<u64>(length_bits)?)
             .map_err(|_| anyhow::anyhow!("VarUInteger byte length does not fit usize"))?;
         if BigUint::from(byte_len) >= (BigUint::from(1u8) << length_bits) {
             bail!(
@@ -335,7 +335,7 @@ impl Slice {
     /// Length is encoded in 4 bits, then that many bytes of value
     pub fn load_coins(&mut self) -> Result<u128> {
         // Length encoded in 4 bits (like store_coins in builder)
-        let len = self.load_uint(4)? as usize;
+        let len = self.load_uint_custom::<u8>(4)? as usize;
         if len > 15 {
             bail!("Coins length {} exceeds maximum 15", len);
         }
@@ -391,8 +391,59 @@ mod tests {
         let cell = builder.build().unwrap();
 
         let mut slice = Slice::new(cell);
-        let value = slice.load_u32().unwrap();
+        let value = slice.load_uint::<u32>().unwrap();
         assert_eq!(value, 0x12345678);
+    }
+
+    #[test]
+    fn test_slice_load_uint_natural_widths() {
+        let mut builder = CellBuilder::new();
+        builder.store_uint::<u8>(0x12).unwrap();
+        builder.store_uint::<u16>(0x3456).unwrap();
+        builder.store_uint::<u32>(0x789a_bcde).unwrap();
+        builder.store_uint::<u64>(0x0123_4567_89ab_cdef).unwrap();
+        builder
+            .store_uint::<u128>(0x0123_4567_89ab_cdef_1122_3344_5566_7788)
+            .unwrap();
+        let cell = builder.build().unwrap();
+
+        let mut slice = Slice::new(cell);
+        assert_eq!(slice.load_uint::<u8>().unwrap(), 0x12);
+        assert_eq!(slice.load_uint::<u16>().unwrap(), 0x3456);
+        assert_eq!(slice.load_uint::<u32>().unwrap(), 0x789a_bcde);
+        assert_eq!(slice.load_uint::<u64>().unwrap(), 0x0123_4567_89ab_cdef);
+        assert_eq!(
+            slice.load_uint::<u128>().unwrap(),
+            0x0123_4567_89ab_cdef_1122_3344_5566_7788
+        );
+    }
+
+    #[test]
+    fn test_slice_load_uint_custom_widths() {
+        let mut builder = CellBuilder::new();
+        builder.store_uint_custom::<u8>(0, 0).unwrap();
+        builder.store_uint_custom::<u8>(0b101, 3).unwrap();
+        builder.store_uint_custom::<u16>(0x01ff, 9).unwrap();
+        builder.store_uint_custom::<u32>(0x00ab_cdef, 24).unwrap();
+        let cell = builder.build().unwrap();
+
+        let mut slice = Slice::new(cell);
+        assert_eq!(slice.load_uint_custom::<u8>(0).unwrap(), 0);
+        assert_eq!(slice.load_uint_custom::<u8>(3).unwrap(), 0b101);
+        assert_eq!(slice.load_uint_custom::<u16>(9).unwrap(), 0x01ff);
+        assert_eq!(slice.load_uint_custom::<u32>(24).unwrap(), 0x00ab_cdef);
+        assert!(slice.load_uint_custom::<u8>(9).is_err());
+    }
+
+    #[test]
+    fn test_slice_load_uint_u128_above_u64() {
+        let value = (1u128 << 96) | 0xfeed_face_cafe_beefu128;
+        let mut builder = CellBuilder::new();
+        builder.store_uint::<u128>(value).unwrap();
+        let cell = builder.build().unwrap();
+
+        let mut slice = Slice::new(cell);
+        assert_eq!(slice.load_uint::<u128>().unwrap(), value);
     }
 
     #[test]

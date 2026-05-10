@@ -25,6 +25,8 @@ pub mod adnl;
 pub mod cli;
 #[cfg(feature = "liteclient")]
 pub mod contracts;
+#[cfg(feature = "contract-derive")]
+pub use tonutils_tlb_derive::Contract;
 pub mod crc;
 #[cfg(feature = "liteclient")]
 pub mod liteclient;

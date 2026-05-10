@@ -175,7 +175,7 @@ fn test_dict_builder_storage() {
 fn test_slice_operations() {
     let mut builder = CellBuilder::new();
     builder.store_u32(0x12345678).unwrap();
-    builder.store_u32(0xABCD).unwrap(); // Use u32 instead of uint for now (due to store_uint bug)
+    builder.store_u32(0xABCD).unwrap();
     builder.store_byte(0xFF).unwrap();
 
     let cell = builder.build().unwrap();

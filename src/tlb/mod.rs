@@ -397,18 +397,14 @@ macro_rules! impl_uint_tlb {
     ($ty:ty) => {
         impl<const BITS: usize> StoreBits<BITS> for $ty {
             fn store_bits_tlb(&self, builder: &mut Builder) -> Result<()> {
-                builder.store_uint(*self as u64, BITS)?;
+                builder.store_uint_custom::<$ty>(*self, BITS)?;
                 Ok(())
             }
         }
 
         impl<const BITS: usize> LoadBits<BITS> for $ty {
             fn load_bits_tlb(slice: &mut Slice) -> Result<Self> {
-                let value = slice.load_uint(BITS)?;
-                <$ty>::try_from(value).map_err(|_| TlbError::CustomSchema {
-                    schema: stringify!($ty),
-                    message: format!("decoded value {value} does not fit {}", stringify!($ty)),
-                })
+                Ok(slice.load_uint_custom::<$ty>(BITS)?)
             }
         }
     };
@@ -442,24 +438,14 @@ impl_uint_tlb!(u64);
 
 impl<const BITS: usize> StoreBits<BITS> for u128 {
     fn store_bits_tlb(&self, builder: &mut Builder) -> Result<()> {
-        builder.store_big_uint(&BigUint::from(*self), BITS)?;
+        builder.store_uint_custom::<u128>(*self, BITS)?;
         Ok(())
     }
 }
 
 impl<const BITS: usize> LoadBits<BITS> for u128 {
     fn load_bits_tlb(slice: &mut Slice) -> Result<Self> {
-        let value = slice.load_big_uint(BITS)?;
-        let digits = value.to_u64_digits();
-        if digits.len() > 2 {
-            return Err(TlbError::CustomSchema {
-                schema: "u128",
-                message: format!("decoded value {value} does not fit u128"),
-            });
-        }
-        let low = digits.first().copied().unwrap_or(0) as u128;
-        let high = digits.get(1).copied().unwrap_or(0) as u128;
-        Ok(low | (high << 64))
+        Ok(slice.load_uint_custom::<u128>(BITS)?)
     }
 }
 
@@ -561,7 +547,7 @@ pub fn store_var_uint(builder: &mut Builder, value: &BigUint, length_bits: usize
 /// The `length_bits` argument is the width of the byte-length prefix. For
 /// `VarUInteger 16`, pass `4`.
 pub fn load_var_uint(slice: &mut Slice, length_bits: usize) -> Result<BigUint> {
-    let byte_len = slice.load_uint(length_bits)? as usize;
+    let byte_len = slice.load_uint_custom::<u64>(length_bits)? as usize;
     let max_len = max_var_uint_bytes(length_bits)?;
     if byte_len > max_len {
         return Err(TlbError::NonCanonicalValue {
@@ -1008,7 +994,7 @@ mod offline_fixture_tests {
         let mut slice = Slice::new(cell.clone());
         assert!(slice.load_bit().unwrap());
         let decoded = Slice::new(cell)
-            .load_hashmap_e_with(4, |slice| slice.load_uint(8))
+            .load_hashmap_e_with(4, |slice| slice.load_uint::<u8>())
             .unwrap();
         let entries: Vec<_> = decoded
             .iter()
@@ -1025,11 +1011,11 @@ mod offline_fixture_tests {
             .store_hashmap_aug_e_with(
                 &empty,
                 |builder, value| {
-                    builder.store_uint(*value, 8)?;
+                    builder.store_uint::<u8>(*value as u8)?;
                     Ok(())
                 },
                 |builder, extra| {
-                    builder.store_uint(*extra, 8)?;
+                    builder.store_uint::<u8>(*extra as u8)?;
                     Ok(())
                 },
             )
@@ -1038,7 +1024,11 @@ mod offline_fixture_tests {
         assert_eq!(cell.reference_count(), 0);
         let mut slice = Slice::new(cell);
         let decoded_empty = slice
-            .load_hashmap_aug_e_with(4, |slice| slice.load_uint(8), |slice| slice.load_uint(8))
+            .load_hashmap_aug_e_with(
+                4,
+                |slice| slice.load_uint::<u8>(),
+                |slice| slice.load_uint::<u8>(),
+            )
             .unwrap();
         assert!(decoded_empty.is_empty());
         assert_eq!(*decoded_empty.extra(), 88);
@@ -1059,7 +1049,11 @@ mod offline_fixture_tests {
 
         let mut slice = Slice::new(cell);
         let decoded = slice
-            .load_hashmap_aug_e_with(4, |slice| slice.load_uint(8), |slice| slice.load_uint(8))
+            .load_hashmap_aug_e_with(
+                4,
+                |slice| slice.load_uint::<u8>(),
+                |slice| slice.load_uint::<u8>(),
+            )
             .unwrap();
         let root = decoded.root().unwrap();
         let leaves: Vec<_> = root
@@ -1439,7 +1433,7 @@ mod tests {
     impl TlbSerialize for Tiny {
         fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
             store_tag(builder, "101")?;
-            builder.store_uint(self.value as u64, 5)?;
+            builder.store_uint_custom::<u8>(self.value as u8, 5)?;
             Ok(())
         }
     }
@@ -1447,7 +1441,7 @@ mod tests {
     impl TlbDeserialize for Tiny {
         fn load_tlb(slice: &mut Slice) -> Result<Self> {
             expect_tag(slice, "tiny$101", "101")?;
-            let value = slice.load_uint(5)? as u8;
+            let value = slice.load_uint_custom::<u8>(5)? as u8;
             Ok(Self { value })
         }
     }
@@ -1585,7 +1579,7 @@ mod tests {
     #[test]
     fn var_uint_rejects_overlong_non_canonical_encoding() {
         let mut builder = Builder::new();
-        builder.store_uint(2, 4).unwrap();
+        builder.store_uint_custom::<u8>(2, 4).unwrap();
         builder.store_bytes(&[0, 1]).unwrap();
 
         let mut slice = Slice::new(builder.build().unwrap());

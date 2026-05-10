@@ -12,6 +12,7 @@ std = []
 tl = []
 tvm = ["tl"]
 tlb-derive = ["tvm", "dep:tonutils-tlb-derive"]
+contract-derive = ["liteclient", "dep:tonutils-tlb-derive"]
 adnl = ["tl"]
 adnl-tcp = ["adnl", "dep:futures", "dep:pin-project", "dep:tokio", "dep:tokio-util"]
 liteclient = ["adnl-tcp", "tvm", "dep:tokio-tower", "dep:tower"]
@@ -28,6 +29,7 @@ full = [
     "tl",
     "tvm",
     "tlb-derive",
+    "contract-derive",
     "adnl",
     "adnl-tcp",
     "liteclient",
@@ -172,3 +174,7 @@ required-features = ["tvm"]
 [[example]]
 name = "tlb_read_tx_data"
 required-features = ["tvm"]
+
+[[example]]
+name = "custom_contract_blueprint"
+required-features = ["contract-derive"]

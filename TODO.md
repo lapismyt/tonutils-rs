@@ -11,12 +11,16 @@ postponed work moves to `# BACKLOG`.
 ## High-Level SDK Capability Coverage
 
 - [ ] Track LiteClient workflow coverage #liteclient #network #contracts #tests #docs
-  - [ ] Define expected success and failure behavior for connect, masterchain info, block lookup, account state, run method, send message, and raw query workflows #liteclient #network #tests #docs
+  - [-] Define expected success and failure behavior for connect, masterchain info, block lookup, account state, run method, send message, and raw query workflows #liteclient #network #tests #docs
+    - [x] Document contract-facing account state, run method, send message, and transaction workflow behavior for LiteClient providers #liteclient #contracts #docs
+    - [ ] Complete connect, block lookup, and raw query acceptance coverage #liteclient #network #tests #docs
   - [ ] Map typed LiteClient helpers to current local LiteAPI schema coverage and accepted protocol evidence #liteclient #tl #docs
   - [ ] Add fixture-backed tests for typed LiteClient payload decoding and error behavior #liteclient #tvm #tlb #tests
   - [ ] Add ignored live-network smoke tests for public config workflows #liteclient #network #tests
 - [ ] Track LiteBalancer workflow coverage #balancer #liteclient #network #tests #docs
-  - [ ] Define expected success and failure behavior for peer selection, retry, archival routing, and raw query delegation #balancer #network #tests #docs
+  - [-] Define expected success and failure behavior for peer selection, retry, archival routing, and raw query delegation #balancer #network #tests #docs
+    - [x] Document contract-facing account state, get-method, external-message, and transaction delegation parity with LiteClient #balancer #contracts #docs
+    - [ ] Complete peer selection, retry, archival routing, and raw query acceptance coverage #balancer #network #tests #docs
   - [ ] Add verification coverage for peer health state transitions, failover, and request routing decisions #balancer #network #tests
   - [ ] Keep LiteBalancer typed helper coverage synchronized with LiteClient helper coverage #balancer #liteclient #docs
 - [-] Maintain RPS limiting for rented liteserver quotas as a first-class SDK capability #balancer #liteclient #network #perf #tests
@@ -27,15 +31,23 @@ postponed work moves to `# BACKLOG`.
   - [x] Add deterministic tests for RPS limiter behavior: burst handling, steady-state throttle, per-peer quotas, and backoff timing #tests #balancer #network
   - [ ] Validate limiter behavior against live tonconsole-style rented liteserver credentials #network #tests
 - [ ] Track contract workflow capabilities #contracts #liteclient #tvm #tests #docs
-  - [ ] Define get-method argument encoding, method id/name handling, TVM stack return decoding, and error semantics for contract wrappers #contracts #tvm #docs
-  - [ ] Track state-init address derivation, data/code loading, deployment message construction, and balance access #contracts #wallet #tvm #docs
-  - [ ] Add fixture-backed tests for representative contract get-method and external-message workflows #contracts #tvm #tests
+  - [x] Define get-method argument encoding, method id/name handling, TVM stack return decoding, and error semantics for contract wrappers #contracts #tvm #docs
+  - [-] Track state-init address derivation, data/code loading, deployment message construction, and balance access #contracts #wallet #tvm #docs
+    - [x] Add state-init address derivation, active account balance/code/data helpers, and raw external message BoC submission #contracts #tvm #docs
+    - [x] Add code-plus-data contract blueprint trait, derive macro, and address/bind tests #contracts #tvm #tests #features
+    - [ ] Add wallet signing and full deployment message construction #contracts #wallet #tvm #docs
+  - [-] Add fixture-backed tests for representative contract get-method and external-message workflows #contracts #tvm #tests
+    - [x] Add mock-provider unit tests for contract get-method, state, transaction, state-init address, and external BoC routing semantics #contracts #tvm #tests
+    - [ ] Add checked protocol fixtures or ignored live-network evidence for representative contract workflows #contracts #tvm #tests
 - [ ] Track wallet and mnemonic capabilities #wallet #contracts #crypto #tests #docs
   - [ ] Define mnemonic generation, import, validation, and derivation behavior #wallet #crypto #docs
   - [ ] Track wallet init/deploy, transfer/message signing, seqno, timeout, and state handling #wallet #contracts #crypto #docs
   - [ ] Add deterministic wallet and mnemonic fixtures before live send workflows are enabled #wallet #crypto #tests
 - [ ] Track ABI and typed wrapper capabilities #abi #contracts #wallet #tests #docs
-  - [ ] Map each ABI and wrapper gap to subsystem tags and acceptance tests #abi #contracts #docs #tests
+  - [-] Map each ABI and wrapper gap to subsystem tags and acceptance tests #abi #contracts #docs #tests
+    - [x] Add direct address-bound `Contract<'a, P>` typed-client delegation test #contracts #docs #tests
+    - [x] Add derive-backed contract blueprint pattern for typed data and fixed code BoCs #contracts #docs #tests #features
+    - [ ] Map ABI parser/encoder gaps to typed wrapper acceptance tests #abi #contracts #docs #tests
   - [ ] Keep capability tracker entries synchronized whenever implementation work completes or defers a gap #docs #tests
 
 ## ABI (Tongo-Level)
@@ -282,6 +294,7 @@ postponed work moves to `# BACKLOG`.
   - [ ] Support arbitrary precision integers #contracts #tvm
   - [ ] Support tuple/list nesting beyond four direct entries #contracts #tvm
 - [ ] Add high-level contract API #contracts
+  - [x] Add contract blueprint helpers for deriving `StateInit`, address, and provider binding from fixed code and typed data #contracts #tvm
   - [ ] Add wallet helpers only after generic contract API is stable #contracts
   - [ ] Add jetton and NFT helpers behind optional features #contracts #features
 

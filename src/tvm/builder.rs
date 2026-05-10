@@ -49,6 +49,7 @@
 use crate::tvm::address::{Address, ExternalAddress};
 use crate::tvm::cell::{Cell, CellBuilder, MAX_CELL_BITS, MAX_CELL_REFS};
 use crate::tvm::slice::Slice;
+use crate::tvm::uint::UnsignedInteger;
 use anyhow::{Result, bail};
 use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
@@ -109,9 +110,21 @@ impl Builder {
         Ok(self)
     }
 
+    /// Stores a u8 value.
+    pub fn store_u8(&mut self, value: u8) -> Result<&mut Self> {
+        self.inner.store_u8(value)?;
+        Ok(self)
+    }
+
     /// Stores multiple bytes
     pub fn store_bytes(&mut self, bytes: &[u8]) -> Result<&mut Self> {
         self.inner.store_bytes(bytes)?;
+        Ok(self)
+    }
+
+    /// Stores a u16 value.
+    pub fn store_u16(&mut self, value: u16) -> Result<&mut Self> {
+        self.inner.store_u16(value)?;
         Ok(self)
     }
 
@@ -127,9 +140,19 @@ impl Builder {
         Ok(self)
     }
 
-    /// Stores an unsigned integer with specific bit length
-    pub fn store_uint(&mut self, value: u64, bits: usize) -> Result<&mut Self> {
-        self.inner.store_uint(value, bits)?;
+    /// Stores an unsigned integer using the natural width of `T`.
+    pub fn store_uint<T: UnsignedInteger>(&mut self, value: T) -> Result<&mut Self> {
+        self.inner.store_uint(value)?;
+        Ok(self)
+    }
+
+    /// Stores an unsigned integer encoded in `bits` bits.
+    pub fn store_uint_custom<T: UnsignedInteger>(
+        &mut self,
+        value: T,
+        bits: usize,
+    ) -> Result<&mut Self> {
+        self.inner.store_uint_custom(value, bits)?;
         Ok(self)
     }
 
@@ -241,7 +264,7 @@ impl Builder {
             );
         }
 
-        self.store_big_uint(&BigUint::from(byte_len), length_bits)?;
+        self.store_uint_custom::<u64>(byte_len as u64, length_bits)?;
         if byte_len > 0 {
             self.store_bytes(&value.to_bytes_be())?;
         }
@@ -251,7 +274,7 @@ impl Builder {
     /// Stores a variable-length signed integer (VarInteger)
     pub fn store_var_int(&mut self, value: i64, length_bits: usize) -> Result<&mut Self> {
         if value == 0 {
-            return self.store_uint(0, length_bits);
+            return self.store_uint_custom::<u64>(0, length_bits);
         }
 
         let bit_len = if value < 0 {
@@ -261,7 +284,7 @@ impl Builder {
         };
 
         let byte_len = (bit_len + 7) / 8;
-        self.store_uint(byte_len as u64, length_bits)?;
+        self.store_uint_custom::<u64>(byte_len as u64, length_bits)?;
         self.store_int(value, byte_len * 8)?;
         Ok(self)
     }
@@ -274,10 +297,10 @@ impl Builder {
         }
 
         if amount == 0 {
-            return self.store_uint(0, 4);
+            return self.store_uint_custom::<u8>(0, 4);
         }
 
-        self.store_uint(byte_len as u64, 4)?;
+        self.store_uint_custom::<u8>(byte_len as u8, 4)?;
         let bytes = amount.to_be_bytes();
         let start = 16 - byte_len;
         self.store_bytes(&bytes[start..])?;
@@ -347,10 +370,10 @@ impl Builder {
     pub fn store_external_address(&mut self, address: &ExternalAddress) -> Result<&mut Self> {
         // addr_extern$01 len:(## 9) external_address:(bits len)
         self.store_bits(&[0b01], 2)?;
-        self.store_uint(address.bit_len as u64, 9)?;
+        self.store_uint_custom::<u16>(address.bit_len as u16, 9)?;
 
         if let Some(value) = address.value {
-            self.store_uint(value, address.bit_len)?;
+            self.store_uint_custom::<u64>(value, address.bit_len)?;
         }
 
         Ok(self)
@@ -396,6 +419,38 @@ mod tests {
 
         let cell = builder.build().unwrap();
         assert_eq!(cell.bit_len(), 40);
+    }
+
+    #[test]
+    fn test_builder_store_uint_natural_and_custom_widths() {
+        let mut builder = Builder::new();
+        builder.store_uint::<u8>(0x12).unwrap();
+        builder.store_uint::<u16>(0x3456).unwrap();
+        builder.store_uint::<u32>(0x789a_bcde).unwrap();
+        builder.store_uint::<u64>(0x0123_4567_89ab_cdef).unwrap();
+        builder
+            .store_uint::<u128>(0x0123_4567_89ab_cdef_1122_3344_5566_7788)
+            .unwrap();
+        builder.store_uint_custom::<u8>(0, 0).unwrap();
+        builder.store_uint_custom::<u8>(0b101, 3).unwrap();
+        builder.store_uint_custom::<u16>(0x01ff, 9).unwrap();
+        builder.store_uint_custom::<u32>(0x00ab_cdef, 24).unwrap();
+        assert!(builder.store_uint_custom::<u8>(8, 3).is_err());
+        assert!(builder.store_uint_custom::<u8>(0, 9).is_err());
+
+        let mut slice = builder.to_slice().unwrap();
+        assert_eq!(slice.load_uint::<u8>().unwrap(), 0x12);
+        assert_eq!(slice.load_uint::<u16>().unwrap(), 0x3456);
+        assert_eq!(slice.load_uint::<u32>().unwrap(), 0x789a_bcde);
+        assert_eq!(slice.load_uint::<u64>().unwrap(), 0x0123_4567_89ab_cdef);
+        assert_eq!(
+            slice.load_uint::<u128>().unwrap(),
+            0x0123_4567_89ab_cdef_1122_3344_5566_7788
+        );
+        assert_eq!(slice.load_uint_custom::<u8>(0).unwrap(), 0);
+        assert_eq!(slice.load_uint_custom::<u8>(3).unwrap(), 0b101);
+        assert_eq!(slice.load_uint_custom::<u16>(9).unwrap(), 0x01ff);
+        assert_eq!(slice.load_uint_custom::<u32>(24).unwrap(), 0x00ab_cdef);
     }
 
     #[test]

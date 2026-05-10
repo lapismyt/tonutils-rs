@@ -696,7 +696,7 @@ fn store_dict_value(builder: &mut Builder, value: &DictValue) -> Result<()> {
             builder.store_slice(slice)?;
         }
         DictValue::Uint(value, bits) => {
-            builder.store_uint(*value, *bits)?;
+            builder.store_big_uint(&num_bigint::BigUint::from(*value), *bits)?;
         }
         DictValue::Int(value, bits) => {
             builder.store_int(*value, *bits)?;
@@ -1366,14 +1366,14 @@ mod tests {
         let mut builder = Builder::new();
         builder
             .store_hashmap_e_with(&dict, |builder, value| {
-                builder.store_uint(*value, 16)?;
+                builder.store_uint::<u16>(*value as u16)?;
                 Ok(())
             })
             .unwrap();
 
         let mut slice = builder.to_slice().unwrap();
         let decoded = slice
-            .load_hashmap_e_with(8, |slice| slice.load_uint(16))
+            .load_hashmap_e_with(8, |slice| slice.load_uint::<u16>())
             .unwrap();
 
         assert_eq!(decoded.len(), 3);
@@ -1391,14 +1391,14 @@ mod tests {
         let mut builder = Builder::new();
         builder
             .store_hashmap_e_with(&empty, |builder, value| {
-                builder.store_uint(*value, 1)?;
+                builder.store_uint_custom::<u8>(*value as u8, 1)?;
                 Ok(())
             })
             .unwrap();
         let mut slice = builder.to_slice().unwrap();
         assert!(
             slice
-                .load_hashmap_e_with(256, |slice| slice.load_uint(1))
+                .load_hashmap_e_with(256, |slice| slice.load_uint_custom::<u8>(1))
                 .unwrap()
                 .is_empty()
         );
@@ -1409,13 +1409,13 @@ mod tests {
         let mut builder = Builder::new();
         builder
             .store_hashmap_e_with(&dict, |builder, value| {
-                builder.store_uint(*value, 4)?;
+                builder.store_uint_custom::<u8>(*value as u8, 4)?;
                 Ok(())
             })
             .unwrap();
         let mut slice = builder.to_slice().unwrap();
         let decoded = slice
-            .load_hashmap_e_with(267, |slice| slice.load_uint(4))
+            .load_hashmap_e_with(267, |slice| slice.load_uint_custom::<u8>(4))
             .unwrap();
         assert_eq!(decoded.get_bit_key(&key).unwrap(), Some(&7));
     }
@@ -1524,7 +1524,7 @@ mod tests {
         dict.insert_bit_key(BitKey::from_u64(2, 2).unwrap(), 2u64)
             .unwrap();
         let root = serialize_hashmap_root(&dict, |builder, value| {
-            builder.store_uint(*value, 2)?;
+            builder.store_uint_custom::<u8>(*value as u8, 2)?;
             Ok(())
         })
         .unwrap()
@@ -1532,7 +1532,9 @@ mod tests {
         let mut broken = Builder::new();
         broken.store_bits(root.data(), root.bit_len()).unwrap();
         let broken = broken.build().unwrap();
-        assert!(deserialize_hashmap_root(&broken, 2, |slice| slice.load_uint(2)).is_err());
+        assert!(
+            deserialize_hashmap_root(&broken, 2, |slice| slice.load_uint_custom::<u8>(2)).is_err()
+        );
     }
 
     #[test]
@@ -1543,11 +1545,11 @@ mod tests {
             .store_hashmap_aug_e_with(
                 &dict,
                 |builder, value| {
-                    builder.store_uint(*value, 8)?;
+                    builder.store_uint::<u8>(*value as u8)?;
                     Ok(())
                 },
                 |builder, extra| {
-                    builder.store_uint(*extra, 8)?;
+                    builder.store_uint::<u8>(*extra as u8)?;
                     Ok(())
                 },
             )
@@ -1555,7 +1557,11 @@ mod tests {
 
         let mut slice = builder.to_slice().unwrap();
         let decoded = slice
-            .load_hashmap_aug_e_with(8, |slice| slice.load_uint(8), |slice| slice.load_uint(8))
+            .load_hashmap_aug_e_with(
+                8,
+                |slice| slice.load_uint::<u8>(),
+                |slice| slice.load_uint::<u8>(),
+            )
             .unwrap();
 
         assert!(decoded.is_empty());
@@ -1580,11 +1586,11 @@ mod tests {
             .store_hashmap_aug_with(
                 &dict,
                 |builder, value| {
-                    builder.store_uint(*value, 8)?;
+                    builder.store_uint::<u8>(*value as u8)?;
                     Ok(())
                 },
                 |builder, extra| {
-                    builder.store_uint(*extra, 8)?;
+                    builder.store_uint::<u8>(*extra as u8)?;
                     Ok(())
                 },
             )
@@ -1594,15 +1600,15 @@ mod tests {
         let mut builder = Builder::new();
         builder.store_bit(true).unwrap();
         builder.store_ref(root_builder.build().unwrap()).unwrap();
-        builder.store_uint(99, 8).unwrap();
+        builder.store_uint::<u8>(99 as u8).unwrap();
 
         let mut slice = builder.to_slice().unwrap();
         assert!(
             slice
                 .load_hashmap_aug_e_with(
                     8,
-                    |slice| slice.load_uint(8),
-                    |slice| { slice.load_uint(8) }
+                    |slice| slice.load_uint::<u8>(),
+                    |slice| { slice.load_uint::<u8>() }
                 )
                 .is_err()
         );
@@ -1626,11 +1632,11 @@ mod tests {
             .store_hashmap_aug_with(
                 &dict,
                 |builder, value| {
-                    builder.store_uint(*value, 8)?;
+                    builder.store_uint::<u8>(*value as u8)?;
                     Ok(())
                 },
                 |builder, extra| {
-                    builder.store_uint(*extra, 8)?;
+                    builder.store_uint::<u8>(*extra as u8)?;
                     Ok(())
                 },
             )
@@ -1638,7 +1644,11 @@ mod tests {
 
         let mut slice = builder.to_slice().unwrap();
         let decoded = slice
-            .load_hashmap_aug_with(8, |slice| slice.load_uint(8), |slice| slice.load_uint(8))
+            .load_hashmap_aug_with(
+                8,
+                |slice| slice.load_uint::<u8>(),
+                |slice| slice.load_uint::<u8>(),
+            )
             .unwrap();
         assert_eq!(decoded.len(), 1);
         assert_eq!(
@@ -1680,11 +1690,11 @@ mod tests {
             .store_hashmap_aug_e_with(
                 &wrapped,
                 |builder, value| {
-                    builder.store_uint(*value, 8)?;
+                    builder.store_uint::<u8>(*value as u8)?;
                     Ok(())
                 },
                 |builder, extra| {
-                    builder.store_uint(*extra, 8)?;
+                    builder.store_uint::<u8>(*extra as u8)?;
                     Ok(())
                 },
             )
@@ -1692,7 +1702,11 @@ mod tests {
 
         let mut slice = builder.to_slice().unwrap();
         let decoded = slice
-            .load_hashmap_aug_e_with(4, |slice| slice.load_uint(8), |slice| slice.load_uint(8))
+            .load_hashmap_aug_e_with(
+                4,
+                |slice| slice.load_uint::<u8>(),
+                |slice| slice.load_uint::<u8>(),
+            )
             .unwrap();
         let root = decoded.root().unwrap();
         let leaves: Vec<_> = root

@@ -317,7 +317,7 @@ impl TlbSerialize for DepthBalanceInfo {
                 message: format!("value {} exceeds 30", self.split_depth),
             });
         }
-        builder.store_uint(self.split_depth as u64, 5)?;
+        builder.store_uint_custom::<u8>(self.split_depth as u8, 5)?;
         self.balance.store_tlb(builder)?;
         Ok(())
     }
@@ -325,7 +325,7 @@ impl TlbSerialize for DepthBalanceInfo {
 
 impl TlbDeserialize for DepthBalanceInfo {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
-        let split_depth = slice.load_uint(5)? as u8;
+        let split_depth = slice.load_uint_custom::<u8>(5)? as u8;
         if split_depth > 30 {
             return Err(TlbError::NonCanonicalValue {
                 schema: "DepthBalanceInfo.split_depth",
@@ -496,7 +496,7 @@ pub struct HashUpdateAccount {
 
 impl TlbSerialize for HashUpdateAccount {
     fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
-        builder.store_uint(0x72, 8)?;
+        builder.store_uint::<u8>(0x72)?;
         builder.store_bytes(&self.old_hash)?;
         builder.store_bytes(&self.new_hash)?;
         Ok(())
@@ -569,7 +569,7 @@ impl TlbSerialize for Transaction {
         builder.store_bytes(&self.prev_trans_hash)?;
         builder.store_u64(self.prev_trans_lt)?;
         builder.store_u32(self.now)?;
-        builder.store_uint(self.outmsg_cnt as u64, OUT_MSG_KEY_BITS)?;
+        builder.store_uint_custom::<u16>(self.outmsg_cnt, OUT_MSG_KEY_BITS)?;
         self.orig_status.store_tlb(builder)?;
         self.end_status.store_tlb(builder)?;
 
@@ -597,7 +597,7 @@ impl TlbDeserialize for Transaction {
         prev_trans_hash.copy_from_slice(&slice.load_bytes(32)?);
         let prev_trans_lt = slice.load_u64()?;
         let now = slice.load_u32()?;
-        let outmsg_cnt = slice.load_uint(OUT_MSG_KEY_BITS)? as u16;
+        let outmsg_cnt = slice.load_uint_custom::<u16>(OUT_MSG_KEY_BITS)?;
         let orig_status = AccountStatus::load_tlb(slice)?;
         let end_status = AccountStatus::load_tlb(slice)?;
 
@@ -945,8 +945,8 @@ impl TlbSerialize for SplitMergeInfo {
     fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
         validate_u6("SplitMergeInfo.cur_shard_pfx_len", self.cur_shard_pfx_len)?;
         validate_u6("SplitMergeInfo.acc_split_depth", self.acc_split_depth)?;
-        builder.store_uint(self.cur_shard_pfx_len as u64, 6)?;
-        builder.store_uint(self.acc_split_depth as u64, 6)?;
+        builder.store_uint_custom::<u8>(self.cur_shard_pfx_len as u8, 6)?;
+        builder.store_uint_custom::<u8>(self.acc_split_depth as u8, 6)?;
         builder.store_bytes(&self.this_addr)?;
         builder.store_bytes(&self.sibling_addr)?;
         Ok(())
@@ -957,8 +957,8 @@ impl TlbDeserialize for SplitMergeInfo {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
         let mut this_addr = [0; 32];
         let mut sibling_addr = [0; 32];
-        let cur_shard_pfx_len = slice.load_uint(6)? as u8;
-        let acc_split_depth = slice.load_uint(6)? as u8;
+        let cur_shard_pfx_len = slice.load_uint_custom::<u8>(6)? as u8;
+        let acc_split_depth = slice.load_uint_custom::<u8>(6)? as u8;
         this_addr.copy_from_slice(&slice.load_bytes(32)?);
         sibling_addr.copy_from_slice(&slice.load_bytes(32)?);
         Ok(Self {
@@ -1779,7 +1779,9 @@ mod tests {
         builder.store_bytes(&[0x20; 32]).unwrap();
         builder.store_u64(6).unwrap();
         builder.store_u32(1_700_000_000).unwrap();
-        builder.store_uint(0, OUT_MSG_KEY_BITS).unwrap();
+        builder
+            .store_uint_custom::<u16>(0, OUT_MSG_KEY_BITS)
+            .unwrap();
         AccountStatus::Active.store_tlb(builder).unwrap();
         AccountStatus::Active.store_tlb(builder).unwrap();
     }
@@ -1948,7 +1950,7 @@ mod tests {
         ));
 
         let mut builder = Builder::new();
-        builder.store_uint(31, 5).unwrap();
+        builder.store_uint_custom::<u8>(31, 5).unwrap();
         CurrencyCollection::grams(Grams::from(1))
             .store_tlb(&mut builder)
             .unwrap();
