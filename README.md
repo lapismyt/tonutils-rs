@@ -99,6 +99,8 @@ checks, and API comparisons. Thanks to their authors and maintainers:
 
 - [ton-blockchain/ton](https://github.com/ton-blockchain/ton) by
   [TON Blockchain](https://github.com/ton-blockchain)
+- [ton-blockchain/ton4j](https://github.com/ton-blockchain/ton4j) by
+  [TON Blockchain](https://github.com/ton-blockchain)
 - [xssnick/tonutils-go](https://github.com/xssnick/tonutils-go) by
   [@xssnick](https://github.com/xssnick)
 - [tonkeeper/tongo](https://github.com/tonkeeper/tongo) by

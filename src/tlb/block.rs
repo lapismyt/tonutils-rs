@@ -145,6 +145,52 @@ pub struct Block {
     pub extra: Arc<Cell>,
 }
 
+/// TL-B `BlockInfo` payload preserved as a raw cell until deep block-info
+/// fields are generated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockInfo {
+    /// Original `BlockInfo` cell.
+    pub cell: Arc<Cell>,
+}
+
+impl TlbSerialize for BlockInfo {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_cell(&self.cell)?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for BlockInfo {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(Self {
+            cell: consume_remaining_cell(slice)?,
+        })
+    }
+}
+
+/// TL-B `BlockPrevInfo` payload preserved as a raw cell until the predecessor
+/// union is generated.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlockPrevInfo {
+    /// Original `BlockPrevInfo` cell.
+    pub cell: Arc<Cell>,
+}
+
+impl TlbSerialize for BlockPrevInfo {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_cell(&self.cell)?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for BlockPrevInfo {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(Self {
+            cell: consume_remaining_cell(slice)?,
+        })
+    }
+}
+
 impl TlbSerialize for Block {
     fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
         builder.store_u32(BLOCK_TAG)?;
@@ -175,6 +221,28 @@ impl TlbDeserialize for Block {
 pub struct BlockExtra {
     /// Original cell.
     pub cell: Arc<Cell>,
+}
+
+/// TL-B `McBlockExtra` payload preserved as a raw cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct McBlockExtra {
+    /// Original `McBlockExtra` cell.
+    pub cell: Arc<Cell>,
+}
+
+impl TlbSerialize for McBlockExtra {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_cell(&self.cell)?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for McBlockExtra {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(Self {
+            cell: consume_remaining_cell(slice)?,
+        })
+    }
 }
 
 impl TlbSerialize for BlockExtra {
@@ -241,6 +309,34 @@ pub enum ShardState {
     },
 }
 
+/// TL-B `ShardStateUnsplit` payload preserved as a raw cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShardStateUnsplit {
+    /// Original unsplit shard-state cell.
+    pub cell: Arc<Cell>,
+}
+
+impl TlbSerialize for ShardStateUnsplit {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_cell(&self.cell)?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for ShardStateUnsplit {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        let state = ShardState::load_tlb(slice)?;
+        match state {
+            ShardState::Unsplit { payload } => Ok(Self { cell: payload }),
+            ShardState::Split { .. } => Err(TlbError::TagMismatch {
+                constructor: "ShardStateUnsplit",
+                expected_bits: "9023afe2",
+                actual_bits: "5f327da5".to_string(),
+            }),
+        }
+    }
+}
+
 impl TlbSerialize for ShardState {
     fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
         match self {
@@ -289,6 +385,34 @@ pub struct ConfigParams {
     pub config_addr: [u8; 32],
     /// Referenced raw `Hashmap 32 ^Cell` config dictionary.
     pub config: Arc<Cell>,
+}
+
+/// TL-B `update_hashes#72 old_hash:bits256 new_hash:bits256 = HASH_UPDATE X`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HashUpdate {
+    /// Old representation hash.
+    pub old_hash: [u8; 32],
+    /// New representation hash.
+    pub new_hash: [u8; 32],
+}
+
+impl TlbSerialize for HashUpdate {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        store_tag(builder, "01110010")?;
+        builder.store_bytes(&self.old_hash)?;
+        builder.store_bytes(&self.new_hash)?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for HashUpdate {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        expect_tag(slice, "HASH_UPDATE", "01110010")?;
+        Ok(Self {
+            old_hash: load_hash(slice)?,
+            new_hash: load_hash(slice)?,
+        })
+    }
 }
 
 impl TlbSerialize for ConfigParams {
@@ -482,5 +606,17 @@ mod tests {
         builder.store_u32(0xfeed_beef).unwrap();
         let err = ValueFlow::from_cell(builder.build().unwrap()).unwrap_err();
         assert!(matches!(err, TlbError::TagMismatch { .. }));
+    }
+
+    #[test]
+    fn hash_update_uses_eight_bit_constructor_tag() {
+        let update = HashUpdate {
+            old_hash: [0x11; 32],
+            new_hash: [0x22; 32],
+        };
+
+        let cell = update.to_cell().unwrap();
+        assert_eq!(cell.bit_len(), 8 + 256 + 256);
+        assert_eq!(HashUpdate::from_cell(cell).unwrap(), update);
     }
 }

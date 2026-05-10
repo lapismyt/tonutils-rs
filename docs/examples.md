@@ -116,6 +116,16 @@ TON_CONTRACT_ADDRESS=EQ... cargo run -F full --example contract_get_method
 - `tlb_config_params_wrapper` requires `tvm`. It builds `ConfigParams` around a
   deterministic raw config dictionary root, roundtrips it through TL-B, and
   prints the config address and dictionary root hash.
+- `tlb_parse_boc` requires `tvm`. It decodes `TON_TLB_BOC_HEX` as a typed
+  `Account` root, or uses an offline `Account::None` fixture, then prints
+  typed data and hash roundtrip information.
+- `tlb_read_tx_data` requires `tvm`. It accepts `TON_TRANSACTION_BOC_HEX` or
+  `TON_TRANSACTION_BOC_BASE64`, decodes a `Transaction`, and prints logical
+  time, account hash, fees, statuses, message summary, and root hash. Without
+  input it uses an offline deterministic transaction fixture.
+- `tlb_custom_derive` requires `tlb-derive`. It demonstrates a custom
+  TEP-74-style jetton transfer struct with a hex constructor tag, inferred
+  unsigned field width, wrapper TL-B fields, and generated roundtrip codecs.
 
 Remaining coverage gaps tracked in `TODO.md`: live proof capture and mempool
 examples.

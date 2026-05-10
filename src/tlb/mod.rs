@@ -6,7 +6,7 @@
 //! crate in Phase 1; schema-driven checks and hand-written codecs share the
 //! same [`TlbSerialize`] and [`TlbDeserialize`] traits.
 
-use crate::tvm::{Builder, Cell, Slice};
+use crate::tvm::{Builder, Cell, HashmapE, Slice};
 use num_bigint::BigUint;
 use std::sync::Arc;
 use thiserror::Error;
@@ -16,9 +16,13 @@ pub mod message;
 pub mod schema;
 pub mod transaction;
 
+#[cfg(feature = "tlb-derive")]
+pub use tonutils_tlb_derive::{Tlb, Tlb as TlbDerive};
+
 pub use block::{
-    Block, BlockExtra, BlockIdExtTlb, ConfigParams, ExtBlkRef, MerkleProof, MerkleUpdate,
-    ShardIdent, ShardState, ValueFlow,
+    Block, BlockExtra, BlockIdExtTlb, BlockInfo, BlockPrevInfo, ConfigParams, ExtBlkRef,
+    HashUpdate, McBlockExtra, MerkleProof, MerkleUpdate, ShardIdent, ShardState, ShardStateUnsplit,
+    ValueFlow,
 };
 pub use message::{
     AccStatusChange, Anycast, CommonMsgInfo, CommonMsgInfoRelaxed, CurrencyCollection, Grams,
@@ -139,6 +143,36 @@ pub enum Either<L, R> {
     Left(L),
     /// Right branch, encoded with branch bit `1`.
     Right(R),
+}
+
+/// Referenced TL-B value helper for `^T` fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellRef<T>(pub T);
+
+/// Raw cell payload helper for schema positions that intentionally preserve a
+/// cell instead of decoding it into a typed model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawCell(pub Arc<Cell>);
+
+/// Canonical `VarUInteger` wrapper parameterized by prefix width in bits.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct VarUInteger<const LEN_BITS: usize>(pub BigUint);
+
+/// Typed `HashmapE n X` wrapper that uses `TlbSerialize` and `TlbDeserialize`
+/// for values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TlbHashmapE<T, const KEY_BITS: usize>(pub HashmapE<T>);
+
+/// Stores a fixed-width primitive value used by `#[derive(Tlb)]`.
+pub trait StoreBits<const BITS: usize> {
+    /// Stores `self` in exactly `BITS` bits.
+    fn store_bits_tlb(&self, builder: &mut Builder) -> Result<()>;
+}
+
+/// Loads a fixed-width primitive value used by `#[derive(Tlb)]`.
+pub trait LoadBits<const BITS: usize>: Sized {
+    /// Loads `Self` from exactly `BITS` bits.
+    fn load_bits_tlb(slice: &mut Slice) -> Result<Self>;
 }
 
 /// Stores a fixed constructor tag described as a string of `0` and `1` bits.
@@ -264,6 +298,240 @@ where
         Ok(Either::Right(R::load_tlb(slice)?))
     } else {
         Ok(Either::Left(L::load_tlb(slice)?))
+    }
+}
+
+impl<T: TlbSerialize> TlbSerialize for CellRef<T> {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        store_ref_tlb(builder, &self.0)
+    }
+}
+
+impl<T: TlbDeserialize> TlbDeserialize for CellRef<T> {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(Self(load_ref_tlb(slice, "CellRef")?))
+    }
+}
+
+impl<T: TlbSerialize> TlbSerialize for Option<T> {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        store_maybe(builder, self)
+    }
+}
+
+impl<T: TlbDeserialize> TlbDeserialize for Option<T> {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        load_maybe(slice)
+    }
+}
+
+impl<L, R> TlbSerialize for Either<L, R>
+where
+    L: TlbSerialize,
+    R: TlbSerialize,
+{
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        store_either(builder, self)
+    }
+}
+
+impl<L, R> TlbDeserialize for Either<L, R>
+where
+    L: TlbDeserialize,
+    R: TlbDeserialize,
+{
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        load_either(slice)
+    }
+}
+
+impl TlbSerialize for RawCell {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_cell(&self.0)?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for RawCell {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        let mut builder = Builder::new();
+        let remaining_bits = slice.remaining_bits();
+        if remaining_bits > 0 {
+            let bits = slice.load_bits(remaining_bits)?;
+            builder.store_bits(&bits, remaining_bits)?;
+        }
+        for reference in slice.load_remaining_refs()? {
+            builder.store_ref(reference)?;
+        }
+        Ok(Self(builder.build()?))
+    }
+}
+
+impl TlbSerialize for Arc<Cell> {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_cell(self)?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for Arc<Cell> {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(RawCell::load_tlb(slice)?.0)
+    }
+}
+
+impl TlbSerialize for bool {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_bit(*self)?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for bool {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(slice.load_bit()?)
+    }
+}
+
+macro_rules! impl_uint_tlb {
+    ($ty:ty) => {
+        impl<const BITS: usize> StoreBits<BITS> for $ty {
+            fn store_bits_tlb(&self, builder: &mut Builder) -> Result<()> {
+                builder.store_uint(*self as u64, BITS)?;
+                Ok(())
+            }
+        }
+
+        impl<const BITS: usize> LoadBits<BITS> for $ty {
+            fn load_bits_tlb(slice: &mut Slice) -> Result<Self> {
+                let value = slice.load_uint(BITS)?;
+                <$ty>::try_from(value).map_err(|_| TlbError::CustomSchema {
+                    schema: stringify!($ty),
+                    message: format!("decoded value {value} does not fit {}", stringify!($ty)),
+                })
+            }
+        }
+    };
+}
+
+macro_rules! impl_int_tlb {
+    ($ty:ty) => {
+        impl<const BITS: usize> StoreBits<BITS> for $ty {
+            fn store_bits_tlb(&self, builder: &mut Builder) -> Result<()> {
+                builder.store_int(*self as i64, BITS)?;
+                Ok(())
+            }
+        }
+
+        impl<const BITS: usize> LoadBits<BITS> for $ty {
+            fn load_bits_tlb(slice: &mut Slice) -> Result<Self> {
+                let value = slice.load_int(BITS)?;
+                <$ty>::try_from(value).map_err(|_| TlbError::CustomSchema {
+                    schema: stringify!($ty),
+                    message: format!("decoded value {value} does not fit {}", stringify!($ty)),
+                })
+            }
+        }
+    };
+}
+
+impl_uint_tlb!(u8);
+impl_uint_tlb!(u16);
+impl_uint_tlb!(u32);
+impl_uint_tlb!(u64);
+
+impl<const BITS: usize> StoreBits<BITS> for u128 {
+    fn store_bits_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_big_uint(&BigUint::from(*self), BITS)?;
+        Ok(())
+    }
+}
+
+impl<const BITS: usize> LoadBits<BITS> for u128 {
+    fn load_bits_tlb(slice: &mut Slice) -> Result<Self> {
+        let value = slice.load_big_uint(BITS)?;
+        let digits = value.to_u64_digits();
+        if digits.len() > 2 {
+            return Err(TlbError::CustomSchema {
+                schema: "u128",
+                message: format!("decoded value {value} does not fit u128"),
+            });
+        }
+        let low = digits.first().copied().unwrap_or(0) as u128;
+        let high = digits.get(1).copied().unwrap_or(0) as u128;
+        Ok(low | (high << 64))
+    }
+}
+
+impl_int_tlb!(i8);
+impl_int_tlb!(i16);
+impl_int_tlb!(i32);
+impl_int_tlb!(i64);
+
+impl<const BITS: usize> StoreBits<BITS> for i128 {
+    fn store_bits_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_big_int(&num_bigint::BigInt::from(*self), BITS)?;
+        Ok(())
+    }
+}
+
+impl<const BITS: usize> LoadBits<BITS> for i128 {
+    fn load_bits_tlb(slice: &mut Slice) -> Result<Self> {
+        let value = slice.load_big_int(BITS)?;
+        i128::try_from(value.clone()).map_err(|_| TlbError::CustomSchema {
+            schema: "i128",
+            message: format!("decoded value {value} does not fit i128"),
+        })
+    }
+}
+
+impl StoreBits<256> for [u8; 32] {
+    fn store_bits_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_bytes(self)?;
+        Ok(())
+    }
+}
+
+impl LoadBits<256> for [u8; 32] {
+    fn load_bits_tlb(slice: &mut Slice) -> Result<Self> {
+        let mut bytes = [0; 32];
+        bytes.copy_from_slice(&slice.load_bytes(32)?);
+        Ok(bytes)
+    }
+}
+
+impl<const LEN_BITS: usize> TlbSerialize for VarUInteger<LEN_BITS> {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        store_var_uint(builder, &self.0, LEN_BITS)
+    }
+}
+
+impl<const LEN_BITS: usize> TlbDeserialize for VarUInteger<LEN_BITS> {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(Self(load_var_uint(slice, LEN_BITS)?))
+    }
+}
+
+impl<T, const KEY_BITS: usize> TlbSerialize for TlbHashmapE<T, KEY_BITS>
+where
+    T: TlbSerialize,
+{
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_hashmap_e_with(&self.0, |builder, value| {
+            value.store_tlb(builder).map_err(anyhow::Error::from)
+        })?;
+        Ok(())
+    }
+}
+
+impl<T, const KEY_BITS: usize> TlbDeserialize for TlbHashmapE<T, KEY_BITS>
+where
+    T: TlbDeserialize,
+{
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(Self(slice.load_hashmap_e_with(KEY_BITS, |slice| {
+            T::load_tlb(slice).map_err(anyhow::Error::from)
+        })?))
     }
 }
 

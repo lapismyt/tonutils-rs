@@ -10,10 +10,11 @@ network APIs, while TL-B serializes structured values into cell bits and cell
 references.
 
 This document fixes the crate direction for TL-B runtime traits, model codecs,
-schema parsing, and future macro support. Phase 1 includes hand-written codecs
-for the first blockchain model surface plus a deterministic schema parser and
-checked-summary workflow. It does not introduce a proc-macro crate or any heavy
-macro dependency.
+schema parsing, and macro support. The current implementation includes
+hand-written codecs for the first blockchain model surface, raw-preserving
+wrappers for deeper block families, a deterministic schema parser and
+checked-summary workflow, and an optional proc-macro crate behind
+`tlb-derive`.
 
 ## TL Compared With TL-B
 
@@ -80,9 +81,36 @@ low-level builder and slice APIs, not the canonical implementation points.
 result name, and optional static tag bits. Runtime codecs must stay usable
 without generated schema metadata.
 
-The first implementation should prefer hand-written implementations for a small
-set of core models. Derive macros can be added later after the codec rules are
-proven by fixtures.
+Hand-written implementations remain preferred for protocol-critical built-in
+models until schema generation is complete. The derive macro is available for
+application-specific TL-B bodies and small local schemas; it emits the same
+`TlbSerialize` and `TlbDeserialize` traits used by handwritten models.
+
+## Derive Macro Architecture
+
+`tonutils-tlb-derive` is a workspace proc-macro crate enabled only through the
+`tlb-derive` feature. The main crate re-exports `tlb::Tlb` and `tlb::TlbDerive`
+under that feature. Default builds do not depend on `syn`, `quote`, or
+`proc-macro2` through this path.
+
+Supported derive attributes:
+
+- `#[tlb(tag = "0101")]`, `#[tlb(tag = "0b0101")]`,
+  `#[tlb(tag = "0x5")]`, and `#[tlb(tag = "#5")]` write and check fixed
+  constructor tags. Hex forms expand to four bits per digit.
+- `#[tlb(bits = N)]` stores exact-width primitive integers and `[u8; 32]`
+  through `StoreBits<N>` and `LoadBits<N>`. Unsigned primitive fields `u8`,
+  `u16`, `u32`, `u64`, and `u128` infer their natural bit width when this
+  attribute is omitted. Signed integer fields require an explicit `bits`
+  attribute. Float primitive fields are rejected because the runtime does not
+  define TL-B float semantics.
+- `#[tlb(reference)]` or `#[tlb(ref)]` stores a field as `^T` using
+  `store_ref_tlb` and `load_ref_tlb`.
+
+The macro currently supports structs and tagged enums. Enum variants must have
+explicit tags. `TlbDeserialize::from_cell` remains the exact decode
+entry point and rejects trailing bits or references after the generated decoder
+returns.
 
 ## Struct Mapping
 

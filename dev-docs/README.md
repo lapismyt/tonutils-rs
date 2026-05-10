@@ -19,10 +19,11 @@ wire formats, invariants, source priorities, and crate mapping belong here.
 9. [BoC format](tvm/boc.md)
 10. [TL-B data models](tvm/tlb.md)
 11. [Blockchain data model](blockchain/data-model.md)
-12. [Block, config, and proof TL-B slice](blockchain/block-config-proof.md)
-13. [LiteClient request flow](liteclient/request-flow.md)
-14. [LiteClient rate limiting](liteclient/rate-limiting.md)
-15. [Smart-contract get-methods](contracts/get-methods.md)
+12. [Blockchain TL-B coverage](blockchain/tlb-coverage.md)
+13. [Block, config, and proof TL-B slice](blockchain/block-config-proof.md)
+14. [LiteClient request flow](liteclient/request-flow.md)
+15. [LiteClient rate limiting](liteclient/rate-limiting.md)
+16. [Smart-contract get-methods](contracts/get-methods.md)
 
 ## Directory Map
 

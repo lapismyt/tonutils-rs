@@ -1,14 +1,18 @@
-//! Deterministic TL-B schema parsing and Phase 1 codegen checks.
+//! Deterministic TL-B schema parsing and blockchain schema checks.
 //!
 //! This is intentionally a small, checked generator foundation. It preserves
 //! constructor names, explicit tags, field text, grouped references, and result
-//! types for the block/config/proof schema slice used by Phase 1. It is not yet
-//! a general Rust emitter for every upstream `block.tlb` expression.
+//! types for the checked block/config/proof schema surface. It is not yet a
+//! general Rust emitter for every upstream `block.tlb` expression.
 
 use crate::tlb::{Result, TlbError};
 
-/// Local upstream-derived TL-B subset used by the Phase 1 generated model check.
-pub const BLOCK_PHASE1_TLB: &str = include_str!("schemas/block_phase1.tlb");
+/// Local checked snapshot of upstream `crypto/block/block.tlb` constructors
+/// currently covered by deterministic schema checks.
+pub const BLOCK_TLB: &str = include_str!("schemas/block.tlb");
+
+/// Backward-compatible alias for older examples and tests.
+pub const BLOCK_PHASE1_TLB: &str = BLOCK_TLB;
 
 /// Checked-in generated summary for `BLOCK_PHASE1_TLB`.
 pub const BLOCK_PHASE1_GENERATED: &str = include_str!("generated/block_phase1.rs");
@@ -90,7 +94,7 @@ pub fn generate_summary(constructors: &[Constructor]) -> String {
 
 /// Regenerates the Phase 1 summary from the local schema slice.
 pub fn generate_block_phase1() -> Result<String> {
-    Ok(generate_summary(&parse_schema(BLOCK_PHASE1_TLB)?))
+    Ok(generate_summary(&parse_schema(BLOCK_TLB)?))
 }
 
 fn parse_constructor(statement: &str) -> Result<Constructor> {

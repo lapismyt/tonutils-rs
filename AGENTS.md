@@ -111,6 +111,7 @@ implementation comparisons. They are references only; do not copy code or add
 third-party Rust TON SDK dependencies.
 
 - Upstream TON implementation and schemas: https://github.com/ton-blockchain/ton
+- TON JVM SDK reference for API and behavior comparison: https://github.com/ton-blockchain/ton4j
 - Official TON documentation index for LLM-assisted research: https://docs.ton.org/llms.txt
 - Go SDK reference inspired by this crate's direction: https://github.com/xssnick/tonutils-go
 - Tongo SDK reference: https://github.com/tonkeeper/tongo

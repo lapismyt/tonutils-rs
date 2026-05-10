@@ -95,9 +95,51 @@ fn example() -> anyhow::Result<()> {
 }
 ```
 
-The dictionary encoder implements canonical labels and fork nodes. Official
-TON golden fixtures, proof-friendly traversal, and typed TL-B value codecs
-remain TODO items.
+The dictionary encoder implements canonical labels and fork nodes. TL-B code can
+use `tlb::TlbHashmapE<T, N>` when dictionary values implement the TL-B runtime
+traits. Official TON golden fixtures and proof-friendly traversal remain TODO
+items.
+
+## TL-B Models And Derive
+
+The `tvm` feature exposes `tonutils::tlb` for typed cell models. Messages,
+accounts, transactions, common transaction phases, block roots, config wrappers,
+and proof wrappers are public APIs. Some deep block and shard-state families are
+raw-preserving wrappers while the full upstream `block.tlb` generator is still
+being expanded.
+
+```rust
+use tonutils::tlb::{Account, TlbDeserialize, TlbSerialize};
+use tonutils::tvm::boc_to_hex;
+
+fn example() -> anyhow::Result<()> {
+    let cell = Account::None.to_cell()?;
+    let decoded = Account::from_cell(cell.clone())?;
+    assert_eq!(decoded, Account::None);
+    println!("{}", boc_to_hex(&cell, false)?);
+    Ok(())
+}
+```
+
+Custom TL-B structs can use the optional `tlb-derive` feature:
+
+```rust
+use tonutils::tlb::{Tlb, TlbDeserialize, TlbSerialize};
+
+#[derive(Tlb)]
+#[tlb(tag = "0x0f8a7ea5")]
+struct Body {
+    query_id: u64,
+}
+```
+
+The derive writes existing `TlbSerialize` and `TlbDeserialize` impls. Use
+`#[tlb(reference)]` for `^T` fields. Tags accept binary strings, `0b...`,
+`0x...`, and TL-B-style `#...` hex forms. Unsigned primitive fields `u8`,
+`u16`, `u32`, `u64`, and `u128` infer their natural bit width; use
+`#[tlb(bits = N)]` when the TL-B width differs or for signed integer and hash
+fields. Float primitive fields are rejected because the runtime does not define
+TL-B float semantics.
 
 ## Stack Values
 

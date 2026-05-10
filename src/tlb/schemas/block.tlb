@@ -1,0 +1,21 @@
+// Checked blockchain TL-B snapshot derived from upstream ton-blockchain/ton
+// crypto/block/block.tlb. This file currently contains the constructor families
+// backed by Rust codecs or raw-preserving public wrappers. TODO.md tracks the
+// remaining full-schema sync before this becomes a complete upstream snapshot.
+shard_ident$00 shard_pfx_bits:(#<= 60) workchain_id:int32 shard_prefix:uint64 = ShardIdent;
+ext_blk_ref$_ end_lt:uint64 seq_no:uint32 root_hash:bits256 file_hash:bits256 = ExtBlkRef;
+block_id_ext$_ shard_id:ShardIdent seq_no:uint32 root_hash:bits256 file_hash:bits256 = BlockIdExt;
+!merkle_update#04 {X:Type} old_hash:bits256 new_hash:bits256 old_depth:uint16 new_depth:uint16 old:^X new:^X = MERKLE_UPDATE X;
+update_hashes#72 {X:Type} old_hash:bits256 new_hash:bits256 = HASH_UPDATE X;
+!merkle_proof#03 {X:Type} virtual_hash:bits256 depth:uint16 virtual_root:^X = MERKLE_PROOF X;
+block#11ef55aa global_id:int32 info:^BlockInfo value_flow:^ValueFlow state_update:^(MERKLE_UPDATE ShardState) extra:^BlockExtra = Block;
+block_info$_ version:uint32 not_master:(## 1) after_merge:(## 1) before_split:(## 1) after_split:(## 1) want_split:Bool want_merge:Bool key_block:Bool vert_seqno_incr:(## 1) flags:(## 8) seq_no:uint32 vert_seq_no:uint32 shard:ShardIdent gen_utime:uint32 start_lt:uint64 end_lt:uint64 gen_validator_list_hash_short:uint32 gen_catchain_seqno:uint32 min_ref_mc_seqno:uint32 prev_key_block_seqno:uint32 gen_software:(Maybe GlobalVersion) master_ref:(Maybe ^BlkMasterInfo) prev_ref:BlockPrevInfo = BlockInfo;
+prev_blk_info$_ prev:ExtBlkRef = BlockPrevInfo;
+prev_blks_info$_ prev1:^ExtBlkRef prev2:^ExtBlkRef = BlockPrevInfo;
+block_extra$_ in_msg_descr:^InMsgDescr out_msg_descr:^OutMsgDescr account_blocks:^ShardAccountBlocks rand_seed:bits256 created_by:bits256 custom:(Maybe ^McBlockExtra) = BlockExtra;
+value_flow#b8e48dfb ^[ from_prev_blk:CurrencyCollection to_next_blk:CurrencyCollection imported:CurrencyCollection exported:CurrencyCollection ] fees_collected:CurrencyCollection ^[ fees_imported:CurrencyCollection recovered:CurrencyCollection created:CurrencyCollection minted:CurrencyCollection ] = ValueFlow;
+value_flow_v2#3ebf98b7 ^[ from_prev_blk:CurrencyCollection to_next_blk:CurrencyCollection imported:CurrencyCollection exported:CurrencyCollection ] fees_collected:CurrencyCollection burned:CurrencyCollection ^[ fees_imported:CurrencyCollection recovered:CurrencyCollection created:CurrencyCollection minted:CurrencyCollection ] = ValueFlow;
+shard_state#9023afe2 global_id:int32 shard_id:ShardIdent seq_no:uint32 vert_seq_no:# gen_utime:uint32 gen_lt:uint64 min_ref_mc_seqno:uint32 out_msg_queue_info:^OutMsgQueueInfo before_split:(## 1) accounts:^ShardAccounts ^[ overload_history:uint64 underload_history:uint64 total_balance:CurrencyCollection total_validator_fees:CurrencyCollection libraries:(HashmapE 256 LibDescr) master_ref:(Maybe BlkMasterInfo) ] custom:(Maybe ^McStateExtra) = ShardStateUnsplit;
+split_state#5f327da5 left:^ShardStateUnsplit right:^ShardStateUnsplit = ShardState;
+_ ShardStateUnsplit = ShardState;
+_ config_addr:bits256 config:^(Hashmap 32 ^Cell) = ConfigParams;

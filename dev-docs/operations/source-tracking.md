@@ -44,7 +44,12 @@ For each synced schema or fixture:
 
 ## Local Schema Policy
 
-Local schemas under `src/tl/schemas/` should have an adjacent note or generated metadata recording upstream origin. The long-term goal is automated schema sync validation.
+Local TL schemas under `src/tl/schemas/` and TL-B schemas under
+`src/tlb/schemas/` should have an adjacent note or generated metadata recording
+upstream origin. `src/tlb/schemas/block.tlb` is currently a checked partial
+snapshot of upstream `crypto/block/block.tlb`; the full upstream commit/date
+sync remains tracked in `TODO.md`. The long-term goal is automated schema sync
+validation for both TL and TL-B files.
 
 ## Fixture Policy
 
