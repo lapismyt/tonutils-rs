@@ -23,19 +23,20 @@ The project has a strong foundation (feature gates, ADNL TCP transport,
 LiteClient/LiteBalancer surfaces, TVM primitives, contract wrappers, CLI, and
 dev-docs). These are enablers, not the top priority.
 
-Phase 1 has closed as the SDK foundation needed for pytoniq-core-like TVM and
-contract ergonomics. The immediate priority moves to parity-facing LiteClient,
-contract, wallet, and ABI work:
+Phase 1 has closed as the SDK foundation needed for TVM, BoC, TL, TL-B, and
+contract ergonomics. The immediate priority moves to ergonomic LiteClient,
+LiteBalancer, contract, wallet, and ABI capabilities:
 
 1. Complete TVM types.
-2. Complete BoC handling, including an `Address` type with pytoniq-core-like
-   capabilities.
+2. Complete BoC handling, including an `Address` type with raw,
+   user-friendly, bounceable, non-bounceable, testnet, base64/base64url,
+   hex/raw, external-address, and precise parse/format capabilities.
 3. Use the supported TL-B schema parser/check-summary workflow for schema work.
 4. Expand user-defined TL and TL-B schemas where higher-level APIs need them.
 5. Add broader built-in TL and TL-B schemas beyond the Phase 1 surface.
 6. Close important LiteClient and LiteBalancer methods for contract data,
    balance, transactions, code, and data.
-7. Add custom smart-contract client support similar to pytoniq.
+7. Add custom smart-contract client support with idiomatic Rust wrappers.
 8. Add built-in smart-contract wrappers for wallets and jettons.
 9. Add an ABI module organized by protocol, version, and contract family.
 
@@ -55,7 +56,7 @@ without depending on third-party Rust TON SDK crates:
 - Complete BoC serialization and deserialization, including common BoC variants,
   CRC handling, index/cache-bit behavior where required, exotic cells, golden
   fixtures, and string conversions.
-- Bring `Address` to pytoniq-core-level capability: raw, user-friendly,
+- Bring `Address` to complete user-facing capability: raw, user-friendly,
   bounceable/non-bounceable, testnet, base64/base64url, hex/raw forms, external
   addresses, and precise parse/format validation.
 - Add macro support for TL-B definitions so crate code can express cell-level
@@ -73,7 +74,7 @@ Exit criteria for Phase 1:
 - Core TL-B data models roundtrip through cells with golden fixtures.
 - Custom TL/TL-B schemas can be defined by crate users through the supported
   macro/schema workflow.
-- Address behavior is compatible with pytoniq-core expectations.
+- Address behavior is protocol-correct and covered by TON Docs fixtures.
 
 Current Phase 1 fixture status:
 
@@ -146,10 +147,10 @@ Current Phase 1 fixture status:
   transaction-description constructor families. Normal library tests decode
   these offline, compare root representation hashes, decode TL-B shape, and
   require canonical reserialization.
-- Phase 1 TL-B macro support is deliberately defined as the
-  `src/tlb/schema.rs` parser and deterministic checked-summary workflow. A
-  separate proc-macro crate is not part of Phase 1 and remains a later optional
-  workspace decision.
+- Phase 1 TL-B macro support includes the `src/tlb/schema.rs` parser and
+  deterministic checked-summary workflow plus the optional
+  `tonutils-tlb-derive` workspace proc-macro crate for custom TL-B structs and
+  enums.
 - Full deep block/header/value-flow models, typed config-param families, and
   broader captured live/upstream proof fixture evidence remain follow-up work
   tracked in `TODO.md`.
@@ -162,10 +163,10 @@ foundation:
 - Close important LiteClient and LiteBalancer methods for contract workflows:
   fetch contract state, balance, transactions, code, data, raw state, and
   get-method results with typed decoding where available.
-- Add custom smart-contract client support similar to pytoniq. The minimum
-  surface must support contract data serialization/deserialization, address
-  computation from state init plus workchain, deployment by external message,
-  balance lookup, and user-defined contract methods.
+- Add custom smart-contract client support. The minimum surface must support
+  contract data serialization/deserialization, address computation from state
+  init plus workchain, deployment by external message, balance lookup, and
+  user-defined contract methods.
 - Add built-in smart-contract wrappers. Initially include wallet wrappers for
   V4, V5, and Highload wallets, plus jetton wrappers based on a selected
   available contract variant.

@@ -19,11 +19,12 @@ messages/accounts/transactions, a deterministic upstream-derived TL-B schema
 slice for block/config/proof wrappers, LiteClient BoC decode helpers, and
 offline CLI inspection.
 
-The active priorities are pytoniq-facing LiteClient and LiteBalancer parity,
-contract workflows, wallet and jetton wrappers, ABI support, and broader
-fixture evidence. Full trust-level proof verification, complete `block.tlb`
-expansion, production balancer behavior, DHT, overlays, and mempool workflows
-remain tracked follow-up work in [TODO.md](TODO.md).
+The active priorities are ergonomic LiteClient, LiteBalancer, contract, wallet,
+jetton, and ABI capabilities guided by idiomatic Rust API design and TON
+protocol correctness, plus broader fixture evidence. Full trust-level proof
+verification, complete `block.tlb` expansion, production balancer behavior,
+DHT, overlays, and mempool workflows remain tracked follow-up work in
+[TODO.md](TODO.md).
 
 ## Where To Start
 

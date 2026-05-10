@@ -19,8 +19,12 @@ Follow these rules in order when instructions conflict:
    enabling heavy features by default.
 7. Use upstream `ton-blockchain/ton` schemas and implementation as the source
    of truth for TL, TL-B, LiteAPI, BoC, and proof behavior.
-8. Keep protocol facts in `dev-docs/` before or alongside implementation.
-9. Keep `TODO.md` current and todo-md compliant when adding, completing, or
+8. Prefer idiomatic, maintainable, performant Rust APIs and implementation over
+   matching pytoniq APIs, naming, module structure, or behavior quirks.
+9. Use pytoniq and pytoniq-core only as capability inspiration or comparison
+   evidence, never as parity targets or dependency sources.
+10. Keep protocol facts in `dev-docs/` before or alongside implementation.
+11. Keep `TODO.md` current and todo-md compliant when adding, completing, or
    deferring known gaps.
 
 ## Safe Development Workflow
@@ -51,7 +55,8 @@ Follow these rules in order when instructions conflict:
   checked fixtures, upstream schemas, or recorded live evidence.
 - Prefer upstream `ton-blockchain/ton` over SDK behavior when sources disagree.
   Use SDKs such as `tonutils-go`, `tongo`, `pytoniq`, and `pytoniq-core` for
-  compatibility comparisons, not as dependency sources.
+  capability ideas and compatibility comparisons, not as parity targets or
+  dependency sources.
 - Keep schema maintenance checked and deterministic. Prefer parser or schema
   summary checks over hand-maintained drift.
 - When live-network behavior is unavailable, add offline fixtures or mark the

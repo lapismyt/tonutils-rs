@@ -302,11 +302,12 @@ user-defined schema snippet and separately verifies the built-in
 slice remains in `src/tlb/schemas/block_phase1.tlb`; its checked summary remains
 in `src/tlb/generated/block_phase1.rs`.
 
-This is an explicit Phase 1 decision: no separate proc-macro crate is added.
-That keeps low-level TVM and TL-B users free from macro compile cost while the
-schema parser, runtime traits, and fixture coverage stabilize.
+The checked schema workflow remains the broad upstream-schema path. A separate
+optional `tonutils-tlb-derive` proc-macro crate now covers hand-written Rust
+structs and enums without adding compile cost for users who do not enable the
+`tlb-derive` feature.
 
-Future macro work should support two complementary forms:
+Macro work supports two complementary forms:
 
 - A derive macro for manually written Rust structs and enums, where attributes
   provide constructor tags, field widths, references, and helper codecs.
@@ -319,8 +320,7 @@ The schema-driven form is useful for broad upstream coverage and drift checks.
 Both forms must generate code that calls the same `TlbSerialize` and
 `TlbDeserialize` traits, so hand-written and generated models compose.
 
-Proc-macro support remains a later workspace and dependency decision. If a new
-crate is added, keep it feature-gated so users who only need low-level TVM
+Keep proc-macro support feature-gated so users who only need low-level TVM
 primitives do not pay macro compile cost.
 
 ## Current Crate Mapping
@@ -333,12 +333,12 @@ Current implemented building blocks:
 - `src/tvm/slice.rs`: bit, integer, reference, and dictionary loading helpers.
 - `src/tvm/dict.rs`: canonical `HashmapE` and augmentation-preserving
   `HashmapAug`/`HashmapAugE` foundation.
-- `src/tlb/mod.rs`: minimal public TL-B runtime with `TlbSerialize`,
+- `src/tlb/mod.rs`: public TL-B runtime with `TlbSerialize`,
   `TlbDeserialize`, `TlbScheme`, `TlbError`, fixed-tag helpers, exact decode
   checks, `Maybe`, `Either`, referenced value helpers, and canonical
   `VarUInteger` helpers.
-
-The crate does not yet expose derive macros or schema parsing.
+- `tonutils-tlb-derive/`: optional proc-macro crate for deriving the TL-B
+  runtime traits on hand-written Rust structs and enums.
 
 The first built-in hand-written blockchain model slice is implemented in
 `src/tlb/message.rs` from the current upstream
@@ -474,8 +474,9 @@ TL-B tests should be layered:
 
 ## Missing Work
 
-- Decide whether derive support lives in a separate proc-macro crate and which
-  feature gate exposes it.
-- Add golden fixture tests for the hand-written message models.
-- Add schema drift checks against upstream `ton-blockchain/ton` TL-B sources.
-- Add public rustdoc examples once the first models exist.
+- Expand `tlb-derive` with parameterized TL-B types, implicit or CRC tags if
+  needed, ambiguous-prefix checks, and negative compile tests.
+- Add broader captured live/upstream golden fixtures for block, shard-state,
+  config-param, Merkle proof, and Merkle update models.
+- Replace raw-preserving block, shard-state, config, and proof wrappers with
+  generated or handwritten typed models where stable.

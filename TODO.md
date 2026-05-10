@@ -2,43 +2,41 @@
 
 This file follows the `todo-md/todo-md` format and is the detailed tracker for
 work that should not be hidden in prose. Active work is currently prioritized
-around pytoniq behavioral parity, LiteClient and contract workflows, ABI
-support, and post-Phase-1 protocol hardening. `ROADMAP.md` explains the phase
-intent at a higher level; `dev-docs/` records protocol facts and source
-evidence. Completed work moves to `# DONE`; postponed work moves to
-`# BACKLOG`.
+around idiomatic high-level LiteClient, LiteBalancer, contract, wallet,
+mnemonic, and ABI capabilities, plus post-Phase-1 protocol hardening.
+`ROADMAP.md` explains the phase intent at a higher level; `dev-docs/` records
+protocol facts and source evidence. Completed work moves to `# DONE`;
+postponed work moves to `# BACKLOG`.
 
-## Pytoniq Behavioral Parity
+## High-Level SDK Capability Coverage
 
-- [ ] Define and maintain pytoniq behavioral parity acceptance criteria #parity #liteclient #contracts #network #tests #docs
-  - [ ] Document the exact parity scope for core user-facing workflows (behavioral parity, not architecture parity) #parity #docs
-  - [ ] Explicitly lock parity scope to `TlbScheme`, `Cell`, `Slice`, `Builder`, `Contract`, `Wallets`, full `LiteClient` API, full `LiteBalancer` API, and mnemonic workflows #parity #docs #tvm #liteclient #balancer #contracts #wallet #crypto
-  - [ ] Define expected success and failure behavior for each workflow #parity #tests #docs
-  - [ ] Record known deviations and closure criteria for each deviation #parity #docs
-- [ ] Build and maintain a pytoniq compatibility matrix #parity #liteclient #contracts #network #tests #docs
-  - [ ] Track TVM/schema primitives parity: `TlbScheme`, `Cell`, `Slice`, `Builder`, BoC and codec behavior #parity #tvm #tlb
-  - [ ] Track LiteClient workflows: connect, masterchain info, block lookup, account state, run method, send message, raw query #parity #liteclient
-  - [ ] Track full LiteClient API parity method-by-method against pytoniq #parity #liteclient #tests
-  - [ ] Track full LiteBalancer API parity method-by-method against pytoniq #parity #balancer #tests
-  - [-] Track RPS-limiting capability as required extension beyond pytoniq parity for rented liteservers (for example tonconsole-style quotas) #parity #balancer #liteclient #network #perf #tests
-  - [ ] Track contract workflows: method naming/id conventions, stack argument shapes, return decoding behavior #parity #contracts #tvm
-  - [ ] Track wallet workflows: mnemonic to key material, wallet init/deploy, transfer/message signing, seqno and state handling #parity #wallet #contracts #crypto
-  - [ ] Track mnemonic workflows: generation/import/validation and derivation behavior #parity #wallet #crypto #tests
-  - [ ] Track networking behavior expected by pytoniq users: timeouts, retry/failover, error semantics #parity #network
-- [ ] Add parity-focused verification coverage #parity #tests
-  - [ ] Add fixture-backed compatibility tests for core workflows #parity #tests
-  - [ ] Add ignored live-network parity smoke tests against public config #parity #tests #network
-  - [ ] Add regression tests for known pytoniq incompatibilities before and after fixes #parity #tests
-  - [x] Add deterministic tests for RPS limiter behavior: burst handling, steady-state throttle, per-peer quotas, and backoff timing #parity #tests #balancer #network
-- [-] Implement RPS limiting for rented liteserver usage as a first-class SDK capability #parity #balancer #liteclient #network #perf
-  - [x] Add API-level configuration for global and per-peer RPS caps #parity #balancer #liteclient
-  - [x] Enforce limiter in LiteClient and LiteBalancer request paths with clear error/throttle semantics #parity #balancer #liteclient #network
-  - [x] Add CLI options for rate limits where network calls are exposed #parity #cli #network
-  - [x] Document tonconsole-style quota usage patterns and safe defaults #parity #docs #network
-  - [ ] Validate limiter behavior against live tonconsole-style rented liteserver credentials #parity #network #tests
-- [ ] Keep a parity feature gap tracker synchronized with implementation work #parity #docs
-  - [ ] Map each gap to owner subsystem tags and acceptance test IDs #parity #docs #tests
-  - [ ] Reconcile tracker entries whenever a parity task is completed or deferred #parity #docs
+- [ ] Track LiteClient workflow coverage #liteclient #network #contracts #tests #docs
+  - [ ] Define expected success and failure behavior for connect, masterchain info, block lookup, account state, run method, send message, and raw query workflows #liteclient #network #tests #docs
+  - [ ] Map typed LiteClient helpers to current local LiteAPI schema coverage and accepted protocol evidence #liteclient #tl #docs
+  - [ ] Add fixture-backed tests for typed LiteClient payload decoding and error behavior #liteclient #tvm #tlb #tests
+  - [ ] Add ignored live-network smoke tests for public config workflows #liteclient #network #tests
+- [ ] Track LiteBalancer workflow coverage #balancer #liteclient #network #tests #docs
+  - [ ] Define expected success and failure behavior for peer selection, retry, archival routing, and raw query delegation #balancer #network #tests #docs
+  - [ ] Add verification coverage for peer health state transitions, failover, and request routing decisions #balancer #network #tests
+  - [ ] Keep LiteBalancer typed helper coverage synchronized with LiteClient helper coverage #balancer #liteclient #docs
+- [-] Maintain RPS limiting for rented liteserver quotas as a first-class SDK capability #balancer #liteclient #network #perf #tests
+  - [x] Add API-level configuration for global and per-peer RPS caps #balancer #liteclient
+  - [x] Enforce limiter in LiteClient and LiteBalancer request paths with clear error/throttle semantics #balancer #liteclient #network
+  - [x] Add CLI options for rate limits where network calls are exposed #cli #network
+  - [x] Document tonconsole-style quota usage patterns and safe defaults #docs #network
+  - [x] Add deterministic tests for RPS limiter behavior: burst handling, steady-state throttle, per-peer quotas, and backoff timing #tests #balancer #network
+  - [ ] Validate limiter behavior against live tonconsole-style rented liteserver credentials #network #tests
+- [ ] Track contract workflow capabilities #contracts #liteclient #tvm #tests #docs
+  - [ ] Define get-method argument encoding, method id/name handling, TVM stack return decoding, and error semantics for contract wrappers #contracts #tvm #docs
+  - [ ] Track state-init address derivation, data/code loading, deployment message construction, and balance access #contracts #wallet #tvm #docs
+  - [ ] Add fixture-backed tests for representative contract get-method and external-message workflows #contracts #tvm #tests
+- [ ] Track wallet and mnemonic capabilities #wallet #contracts #crypto #tests #docs
+  - [ ] Define mnemonic generation, import, validation, and derivation behavior #wallet #crypto #docs
+  - [ ] Track wallet init/deploy, transfer/message signing, seqno, timeout, and state handling #wallet #contracts #crypto #docs
+  - [ ] Add deterministic wallet and mnemonic fixtures before live send workflows are enabled #wallet #crypto #tests
+- [ ] Track ABI and typed wrapper capabilities #abi #contracts #wallet #tests #docs
+  - [ ] Map each ABI and wrapper gap to subsystem tags and acceptance tests #abi #contracts #docs #tests
+  - [ ] Keep capability tracker entries synchronized whenever implementation work completes or defers a gap #docs #tests
 
 ## ABI (Tongo-Level)
 
@@ -63,24 +61,19 @@ evidence. Completed work moves to `# DONE`; postponed work moves to
   - [ ] Cross-check behavior against tongo-compatible expectations and TON protocol definitions #abi #tests #docs
   - [ ] Document known unsupported ABI patterns and planned follow-up tasks #abi #docs
 
-## Subsequent Phases (Post-Parity And Post-ABI)
+## Subsequent Phases (Post-ABI)
 
 - [ ] Complete blockchain TL-B coverage from upstream `block.tlb` #tvm #tlb #docs #tests
   - [x] Add checked local `src/tlb/schemas/block.tlb` snapshot for currently implemented constructor families #tvm #tlb
   - [x] Add deterministic constructor summary checks for typed and raw-preserving block/config/proof families #tvm #tlb #tests
-  - [x] Add optional feature-gated `tonutils-tlb-derive` proc-macro crate for custom TL-B structs #tvm #tlb #features
-  - [x] Add public TL-B adapters for referenced values, raw cells, varuints, fixed-width fields, and typed `HashmapE` values #tvm #tlb
   - [ ] Sync the complete upstream `crypto/block/block.tlb` file with source commit/date and full constructor drift tests #tvm #tlb #docs #tests
   - [ ] Replace raw-preserving block, shard-state, config, and proof wrappers with generated or handwritten typed models where stable #tvm #tlb #proofs
   - [ ] Add fixture-backed block, shard-state, config-param, Merkle proof, and Merkle update roundtrips from upstream TON or live captures #tvm #tlb #tests #proofs
-  - [ ] Expand `tlb-derive` with `Maybe`, `Either`, dictionary adapters, parameterized types, implicit tags, ambiguous-prefix checks, and negative compile tests #tvm #tlb #tests #features
+  - [ ] Expand `tlb-derive` with parameterized TL-B types, implicit or CRC tags if needed, ambiguous-prefix checks, and negative compile tests #tvm #tlb #tests #features
 - [ ] Expand captured upstream/live fixture evidence beyond Phase 1 synthetic vectors #tvm #boc #tlb #tests
   - [ ] Add public liteserver account-state captures with endpoint, date, schema revision, and root hashes #tvm #liteclient #tests
   - [ ] Add upstream TON or pytoniq-derived proof BoCs for account, block, shard-state, config, Merkle proof, and Merkle update workflows #tvm #proofs #tests
   - [ ] Cross-check checked-in message and transaction fixtures against independent upstream or pytoniq serialization #tvm #tlb #tests
-- [ ] Revisit TL-B proc-macro derive after schema/codegen workflow stabilizes #tvm #tlb #features
-  - [ ] Decide whether derive support belongs in a separate workspace proc-macro crate #tvm #tlb #features
-  - [ ] Keep any derive crate feature-gated and absent from low-level TVM compile paths #tvm #tlb #features
 
 ## Documentation
 
@@ -215,7 +208,7 @@ evidence. Completed work moves to `# DONE`; postponed work moves to
     - [x] Decode `getAccountState.state` as a TL-B `Account` BoC root cell #liteclient #tvm #tlb
     - [x] Structurally inspect multi-root proof BoCs for root counts and hashes #liteclient #tvm #proofs
     - [x] Decode block and shard proofs into cells where possible #liteclient #tvm
-    - [x] Add Pytoniq-like typed `LiteClient` helpers for block, account, transaction, shard, config, library, and get-method response payloads #liteclient #tvm #tlb
+    - [x] Add typed `LiteClient` helpers for block, account, transaction, shard, config, library, and get-method response payloads #liteclient #tvm #tlb
     - [x] Add matching typed `LiteBalancer` delegation helpers through peer selection, retry, and rate-limit logic #balancer #liteclient
     - [ ] Expand typed shard/config payloads beyond opaque cells after full `block.tlb` model generation lands #liteclient #tvm #tlb
   - [ ] Add ignored live-network tests #liteclient #tests
@@ -430,7 +423,7 @@ evidence. Completed work moves to `# DONE`; postponed work moves to
 
 # DONE
 
-- [x] Establish pytoniq-core-compatible Address and ordinary BoC baseline #tvm #boc #address #tests #docs
+- [x] Establish protocol-compatible Address and ordinary BoC baseline #tvm #boc #address #tests #docs
   - [x] Document supported raw and user-friendly address formats in `dev-docs/tvm/addresses.md` #tvm #address #docs
   - [x] Add strict raw `workchain:hash` parsing and formatting helpers #tvm #address
   - [x] Support user-friendly base64 and base64url input with and without padding #tvm #address
@@ -452,9 +445,13 @@ evidence. Completed work moves to `# DONE`; postponed work moves to
   - [x] Map TL-B codec errors to builder, slice, tag, reference, and non-canonical encoding failures #tvm #tlb #tests
   - [x] Add focused tests for tags, `Maybe`, `Either`, refs, `VarUInteger`, and trailing data #tvm #tlb #tests
 - [x] Decide TL-B derive/proc-macro crate shape for Phase 1 #tvm #tlb #features
-  - [x] Decide that Phase 1 uses `src/tlb/schema.rs` parse/check-summary workflow instead of a separate proc-macro crate #tvm #tlb #features
+  - [x] Add optional feature-gated `tonutils-tlb-derive` proc-macro crate for custom TL-B structs #tvm #tlb #features
   - [x] Keep macro support optional and avoid adding compile cost to low-level TVM users #tvm #tlb #features
   - [x] Define schema-driven drift checks against upstream TON TL-B sources #tvm #tlb #tests
+  - [x] Add public TL-B adapters for referenced values, raw cells, varuints, fixed-width fields, and typed `HashmapE` values #tvm #tlb
+  - [x] Support binary and hex constructor tags in derive attributes #tvm #tlb #features
+  - [x] Infer natural unsigned bit widths and support `u128` and `i128` fixed-width fields #tvm #tlb #features
+  - [x] Add a standard jetton transfer derive example and public docs updates #docs #examples #tvm #tlb
 - [x] Implement first core TL-B models from the documented design #tvm #tlb
   - [x] Start with hand-written `CommonMsgInfo`, `Message`, and `StateInit` codecs before deriving them #tvm #tlb
   - [x] Add focused unit tests for message address tags, values, state init references, common info variants, and `Message Any` placement #tvm #tlb #tests

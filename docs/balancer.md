@@ -55,7 +55,7 @@ clients.
 The balancer exposes typed helpers for common LiteAPI calls, including
 masterchain info, version, time, block and state loading, block headers,
 account state, get-methods, transactions, shard info, config, libraries, and
-message sending. Pytoniq-like typed methods such as `raw_get_block`,
+message sending. Typed methods such as `raw_get_block`,
 `get_account_state_simple`, `run_get_method_typed`, and
 `get_config_params_typed` delegate to the underlying `LiteClient` through the
 same peer selection and retry path. Request routing builds a priority list from

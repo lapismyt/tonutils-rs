@@ -60,9 +60,11 @@ When sources disagree, prefer this order:
 1. Upstream `ton-blockchain/ton` schemas and C++ implementation.
 2. Official TON documentation and specs.
 3. Behavior observed from public liteservers with recorded fixtures.
-4. Mature SDK behavior such as `tonutils-go` and `tongo`.
+4. Mature SDK behavior such as `tonutils-go`, `tongo`, pytoniq, and
+   pytoniq-core.
 5. Existing crate behavior.
 
-For pytoniq parity work, pytoniq and pytoniq-core are compatibility references
-after upstream TON facts are established. Record any deliberate compatibility
-deviation in `TODO.md` and in the relevant subsystem document.
+Use pytoniq and pytoniq-core for capability inspiration or comparison evidence
+after upstream TON facts are established. They are not API or structure parity
+targets. Record any deliberate protocol compatibility deviation in `TODO.md`
+and in the relevant subsystem document.
