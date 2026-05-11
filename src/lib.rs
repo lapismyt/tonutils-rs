@@ -13,6 +13,7 @@
 //! - `liteclient`: LiteAPI client, LiteBalancer, and LiteClient BoC helpers.
 //! - `network-config`: TON global config parsing and liteserver extraction.
 //! - `cli`: command-line interface support.
+//! - `wallet`: offline wallet data, signing, and message-construction helpers.
 //!
 //! The crate preserves raw protocol bytes where typed models are incomplete.
 //! Proof payloads are not full trust verification unless a specific API says so;
@@ -39,3 +40,5 @@ pub mod tlb;
 #[cfg(feature = "tvm")]
 pub mod tvm;
 pub mod utils;
+#[cfg(feature = "tvm")]
+pub mod wallet;

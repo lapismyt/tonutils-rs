@@ -155,7 +155,7 @@ Current Phase 1 fixture status:
   broader captured live/upstream proof fixture evidence remain follow-up work
   tracked in `TODO.md`.
 
-## Phase 2: LiteClient, Contract Clients, Wrappers, And ABI
+## Phase 2: LiteClient, Contract Clients, Wrappers, Metadata, And ABI
 
 Build ergonomic high-level SDK surfaces on top of the TVM, BoC, TL, and TL-B
 foundation:
@@ -170,9 +170,17 @@ foundation:
 - Add built-in smart-contract wrappers. Initially include wallet wrappers for
   V4, V5, and Highload wallets, plus jetton wrappers based on a selected
   available contract variant.
+- Add TEP metadata parsing before or alongside ABI work. Initial coverage must
+  include a common raw-preserving metadata cell parser, TEP-64 on-chain and
+  off-chain content handling, jetton metadata for TEP-74 wrappers, and NFT item
+  and collection metadata for TEP-62 wrappers.
 - Add an `abi` module split by protocol and then by version or contract family.
   Initial ABI coverage must include wallets V4, V5, Highload, and jettons
   TEP-74 and TEP-89.
+- Start wallet wrappers with Wallet V5R1. The first executable milestone is
+  offline-safe: V5R1 storage data cells, wallet-id packing, signed external
+  body construction, external message BoC construction, address derivation, and
+  deterministic tests before live sending workflows are promoted.
 - Keep a clear distinction between a concrete contract wrapper and an ABI
   description. As in tongo, contracts with different code must still work when
   they support the required methods and message shapes.
@@ -183,7 +191,10 @@ Exit criteria for Phase 2:
 
 - Users can implement their own contract clients with typed data, methods,
   state-init address derivation, deployment, and balance access.
-- Built-in wallet and jetton wrappers cover the initial contract families.
+- Built-in wallet and jetton wrappers cover the initial contract families,
+  starting with Wallet V5R1.
+- Jetton and NFT wrappers can decode supported TEP-64 metadata content while
+  preserving unsupported raw content for follow-up parsing.
 - ABI definitions can be used independently from concrete code hashes when the
   method and message interfaces are compatible.
 - LiteClient and LiteBalancer expose the contract data retrieval methods needed

@@ -41,14 +41,36 @@ postponed work moves to `# BACKLOG`.
     - [ ] Add checked protocol fixtures or ignored live-network evidence for representative contract workflows #contracts #tvm #tests
 - [ ] Track wallet and mnemonic capabilities #wallet #contracts #crypto #tests #docs
   - [ ] Define mnemonic generation, import, validation, and derivation behavior #wallet #crypto #docs
-  - [ ] Track wallet init/deploy, transfer/message signing, seqno, timeout, and state handling #wallet #contracts #crypto #docs
-  - [ ] Add deterministic wallet and mnemonic fixtures before live send workflows are enabled #wallet #crypto #tests
+  - [-] Track wallet init/deploy, transfer/message signing, seqno, timeout, and state handling #wallet #contracts #crypto #docs
+    - [x] Add Wallet V5R1 storage data, wallet-id packing, signed external body construction, external message BoC construction, and address derivation #wallet #contracts #crypto #tests
+    - [ ] Add get-method helpers for V5R1 seqno, wallet id, public key, signature-auth status, and extension lookup #wallet #contracts #tvm #docs
+    - [ ] Promote live V5R1 send/deploy helpers after deterministic fixtures and provider behavior are accepted #wallet #contracts #network #tests
+  - [-] Add deterministic wallet and mnemonic fixtures before live send workflows are enabled #wallet #crypto #tests
+    - [x] Add offline Wallet V5R1 tests for wallet-id vectors, data roundtrip, empty extensions, signed body construction, action-count limits, signature verification, and external message BoC decoding #wallet #crypto #tests
+    - [ ] Add upstream or official-code Wallet V5R1 state-init/address fixtures for mainnet and testnet defaults #wallet #crypto #tests
+    - [ ] Add mnemonic generation/import/derivation fixtures #wallet #crypto #tests
 - [ ] Track ABI and typed wrapper capabilities #abi #contracts #wallet #tests #docs
   - [-] Map each ABI and wrapper gap to subsystem tags and acceptance tests #abi #contracts #docs #tests
     - [x] Add direct address-bound `Contract<'a, P>` typed-client delegation test #contracts #docs #tests
     - [x] Add derive-backed contract blueprint pattern for typed data and fixed code BoCs #contracts #docs #tests #features
     - [ ] Map ABI parser/encoder gaps to typed wrapper acceptance tests #abi #contracts #docs #tests
   - [ ] Keep capability tracker entries synchronized whenever implementation work completes or defers a gap #docs #tests
+
+## TEP Metadata And Typed Wrappers
+
+- [ ] Implement common TEP metadata parsing #metadata #contracts #tvm #tests #docs
+  - [ ] Decode TEP-64 snake and chunked content cells with canonical bounds checks #metadata #tvm #tests
+  - [ ] Decode on-chain and off-chain URI content forms while preserving unsupported raw cells #metadata #tvm #tests
+  - [ ] Add raw-preserving fallback types for unknown keys, malformed values, and future TEP extensions #metadata #contracts
+  - [ ] Document metadata wire formats, known limits, and unsupported content forms in `dev-docs/` #metadata #docs
+- [ ] Add jetton metadata support for TEP-74 wrappers #metadata #jettons #contracts #tests
+  - [ ] Decode typed jetton master get-method output needed for metadata lookup #jettons #contracts #tvm
+  - [ ] Map TEP-64 jetton metadata keys into typed Rust fields with raw unknown-key preservation #metadata #jettons
+  - [ ] Add fixture-backed jetton metadata cells for on-chain and off-chain content #metadata #jettons #tests
+- [ ] Add NFT metadata support for TEP-62 wrappers #metadata #nft #contracts #tests
+  - [ ] Decode typed NFT collection and item get-method outputs needed for metadata lookup #nft #contracts #tvm
+  - [ ] Map TEP-64 NFT collection and item metadata keys into typed Rust fields with raw unknown-key preservation #metadata #nft
+  - [ ] Add fixture-backed NFT metadata cells for collection, item, and individual-content merge behavior #metadata #nft #tests
 
 ## ABI (Tongo-Level)
 
