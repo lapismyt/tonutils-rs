@@ -89,8 +89,10 @@ construction. It does not verify deployed wallet code, account state, seqno
 freshness, timeout acceptance, extension authorization, or transaction inclusion.
 
 Address derivation is deterministic for the provided code cell and data cell.
-This repo does not yet embed the canonical Wallet V5R1 code BoC; callers must
-provide the code cell until an upstream-pinned fixture is added.
+This repo embeds a Wallet V5R1 code BoC from the `@ton/ton`
+`WalletContractV5R1` package source and pins its decoded cell hash in tests.
+Reconciling that package hash with the current TON wallet-history table remains
+tracked follow-up work.
 
 ## Tests
 
@@ -102,6 +104,7 @@ provide the code cell until an upstream-pinned fixture is added.
 - Signed external body construction and signature verification.
 - Rejection of more than 255 wallet messages.
 - External inbound message BoC decoding.
+- Embedded code BoC hash stability for the local decoder.
 
 Missing fixture work is tracked in `TODO.md`.
 

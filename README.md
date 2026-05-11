@@ -34,6 +34,8 @@ DHT, overlays, and mempool workflows remain tracked follow-up work in
   [docs/balancer.md](docs/balancer.md).
 - Contract callers: read [docs/contracts.md](docs/contracts.md) for account
   state and get-method helpers.
+- Wallet callers: read [docs/wallets.md](docs/wallets.md) for mnemonic,
+  address, and signed transfer helpers.
 - TVM and BoC users: read [docs/tvm.md](docs/tvm.md) and
   [docs/tl.md](docs/tl.md).
 - CLI users: read [docs/cli.md](docs/cli.md) and

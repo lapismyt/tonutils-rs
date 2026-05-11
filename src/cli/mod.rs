@@ -3,7 +3,11 @@ use crate::liteclient::{balancer::LiteBalancer, client::LiteClient, rate_limit::
 use crate::network_config::ConfigGlobal;
 use crate::tl::{AccountId, BlockIdExt, Int256, common::TransactionId3};
 use crate::tlb::TlbDeserialize;
-use crate::tvm::{Cell, TvmStack, TvmStackEntry, address::Address};
+use crate::tvm::{Builder, Cell, TvmStack, TvmStackEntry, address::Address};
+use crate::wallet::{
+    MAINNET_GLOBAL_ID, TESTNET_GLOBAL_ID, TonMnemonic, WALLET_V4R2_DEFAULT_ID, WalletMessage,
+    WalletV4R2, WalletV5R1, WalletV5R1WalletId, wallet_v4r2_code, wallet_v5r1_code,
+};
 use anyhow::{Context, Result};
 use base64::Engine;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -15,7 +19,8 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::num::NonZeroU32;
 use std::str::FromStr;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Network {
@@ -31,6 +36,13 @@ pub enum OutputFormat {
     Raw,
     Hex,
     Base64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WalletVersionArg {
+    V4R2,
+    V5R1,
 }
 
 /// tonutils command line interface.
@@ -103,6 +115,11 @@ pub enum Commands {
     Contract {
         #[command(subcommand)]
         command: ContractCommand,
+    },
+    /// Wallet generation, address derivation, transfer preparation, and send.
+    Wallet {
+        #[command(subcommand)]
+        command: WalletCommand,
     },
     /// Offline TVM, BoC, and TL-B tooling.
     Tvm {
@@ -704,6 +721,95 @@ pub enum ContractCommand {
     },
 }
 
+#[derive(Subcommand, Debug)]
+pub enum WalletCommand {
+    /// Generate a 24-word TON mnemonic and print derived wallet addresses.
+    Generate {
+        /// Workchain used for derived addresses.
+        #[arg(long, default_value = "0")]
+        workchain: i8,
+        /// Read optional mnemonic password from this environment variable.
+        #[arg(long)]
+        mnemonic_password_env: Option<String>,
+    },
+    /// Derive a wallet address from a mnemonic read from file, env, or stdin.
+    Address(WalletAddressArgs),
+    /// Fetch wallet seqno via get-method at latest masterchain block.
+    Seqno {
+        /// Wallet address in raw or friendly form.
+        address: String,
+    },
+    /// Build a signed external transfer message BoC without sending it.
+    PrepareTransfer(WalletTransferArgs),
+    /// Build and send a signed external transfer message BoC.
+    Send(WalletTransferArgs),
+}
+
+#[derive(Parser, Debug)]
+pub struct WalletAddressArgs {
+    /// Wallet version to derive.
+    #[arg(long, default_value = "v5r1")]
+    version: WalletVersionArg,
+    /// Workchain used for derived address.
+    #[arg(long, default_value = "0")]
+    workchain: i8,
+    /// Override wallet id.
+    #[arg(long)]
+    wallet_id: Option<u32>,
+    /// Read mnemonic phrase from a file, or from stdin when set to '-'.
+    #[arg(long, conflicts_with = "mnemonic_env")]
+    mnemonic_file: Option<String>,
+    /// Read mnemonic phrase from an environment variable.
+    #[arg(long, conflicts_with = "mnemonic_file")]
+    mnemonic_env: Option<String>,
+    /// Read optional mnemonic password from this environment variable.
+    #[arg(long)]
+    mnemonic_password_env: Option<String>,
+}
+
+#[derive(Parser, Debug)]
+pub struct WalletTransferArgs {
+    /// Wallet version to use.
+    #[arg(long, default_value = "v5r1")]
+    version: WalletVersionArg,
+    /// Destination address in raw or friendly form.
+    #[arg(long)]
+    to: String,
+    /// Amount in nanotons.
+    #[arg(long)]
+    amount: u64,
+    /// Optional text comment stored as a standard comment body.
+    #[arg(long)]
+    comment: Option<String>,
+    /// Send mode for the internal transfer.
+    #[arg(long, default_value = "3")]
+    mode: u8,
+    /// Message timeout in seconds. Used to compute valid_until from local time.
+    #[arg(long, default_value = "60")]
+    timeout: u32,
+    /// Override wallet seqno. Required for offline prepare-transfer.
+    #[arg(long)]
+    seqno: Option<u32>,
+    /// Override wallet id.
+    #[arg(long)]
+    wallet_id: Option<u32>,
+    /// Wallet workchain.
+    #[arg(long, default_value = "0")]
+    workchain: i8,
+    /// Include StateInit in the external message.
+    #[arg(long)]
+    deploy: bool,
+    /// Read mnemonic phrase from a file, or from stdin when set to '-'.
+    #[arg(long, conflicts_with = "mnemonic_env")]
+    mnemonic_file: Option<String>,
+    /// Read mnemonic phrase from an environment variable.
+    #[arg(long, conflicts_with = "mnemonic_file")]
+    mnemonic_env: Option<String>,
+    /// Read optional mnemonic password from this environment variable.
+    #[arg(long)]
+    mnemonic_password_env: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 struct BlockIdExtView {
     workchain: i32,
@@ -881,6 +987,49 @@ struct HighLevelTransactionsView {
     ids: Vec<BlockIdExtView>,
     transactions: Vec<Value>,
     decode_errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct WalletAddressView {
+    version: WalletVersionArg,
+    workchain: i8,
+    wallet_id: u32,
+    address: String,
+    bounceable: String,
+    non_bounceable: String,
+}
+
+#[derive(Debug, Serialize)]
+struct WalletGenerateView {
+    mnemonic: String,
+    public_key: String,
+    v5r1: WalletAddressView,
+    v4r2: WalletAddressView,
+}
+
+#[derive(Debug, Serialize)]
+struct WalletSeqnoView {
+    address: String,
+    seqno: u32,
+    block: BlockIdExtView,
+}
+
+#[derive(Debug, Serialize)]
+struct WalletPreparedTransferView {
+    version: WalletVersionArg,
+    address: WalletAddressView,
+    to: String,
+    amount: u64,
+    seqno: u32,
+    valid_until: u32,
+    deploy: bool,
+    boc: RawBytesView,
+}
+
+#[derive(Debug, Serialize)]
+struct WalletSendView {
+    prepared: WalletPreparedTransferView,
+    status: u32,
 }
 
 fn block_id_ext_view(block: &BlockIdExt) -> BlockIdExtView {
@@ -1668,6 +1817,13 @@ impl HighLevelBackend {
         }
     }
 
+    async fn send_external_message_boc(&mut self, body: Vec<u8>) -> Result<u32> {
+        match self {
+            HighLevelBackend::Single(client) => Ok(client.send_message(body).await?),
+            HighLevelBackend::Balanced(balancer) => Ok(balancer.send_message(body).await?),
+        }
+    }
+
     async fn get_config_all_typed(
         &mut self,
         block: BlockIdExt,
@@ -1805,6 +1961,190 @@ fn account_summary(account: Option<&crate::tlb::Account>) -> (String, Option<Str
     }
 }
 
+fn wallet_id_for_cli(
+    version: WalletVersionArg,
+    network: Network,
+    workchain: i8,
+    wallet_id: Option<u32>,
+) -> Result<u32> {
+    if let Some(wallet_id) = wallet_id {
+        return Ok(wallet_id);
+    }
+    match version {
+        WalletVersionArg::V4R2 => Ok(WALLET_V4R2_DEFAULT_ID),
+        WalletVersionArg::V5R1 => {
+            let global_id = match network {
+                Network::Mainnet => MAINNET_GLOBAL_ID,
+                Network::Testnet => TESTNET_GLOBAL_ID,
+            };
+            Ok(WalletV5R1WalletId::client(global_id, workchain, 0, 0).pack()?)
+        }
+    }
+}
+
+fn wallet_address_view(
+    version: WalletVersionArg,
+    workchain: i8,
+    wallet_id: u32,
+    public_key: [u8; 32],
+) -> Result<WalletAddressView> {
+    let address = match version {
+        WalletVersionArg::V4R2 => {
+            WalletV4R2::new(public_key, wallet_id, wallet_v4r2_code()?, workchain).address()?
+        }
+        WalletVersionArg::V5R1 => {
+            WalletV5R1::new(public_key, wallet_id, wallet_v5r1_code()?, workchain).address()?
+        }
+    };
+    Ok(WalletAddressView {
+        version,
+        workchain,
+        wallet_id,
+        address: address.to_raw(),
+        bounceable: address.to_bounceable(true),
+        non_bounceable: address.to_non_bounceable(true),
+    })
+}
+
+fn read_mnemonic_phrase(file: &Option<String>, env: &Option<String>) -> Result<String> {
+    match (file, env) {
+        (Some(path), None) if path == "-" => {
+            let mut phrase = String::new();
+            io::stdin().read_to_string(&mut phrase)?;
+            Ok(phrase)
+        }
+        (Some(path), None) => {
+            fs::read_to_string(path).with_context(|| format!("failed to read mnemonic file {path}"))
+        }
+        (None, Some(name)) => std::env::var(name)
+            .with_context(|| format!("failed to read mnemonic from environment variable {name}")),
+        (None, None) => {
+            let mut phrase = String::new();
+            io::stdin().read_to_string(&mut phrase)?;
+            Ok(phrase)
+        }
+        (Some(_), Some(_)) => {
+            anyhow::bail!("--mnemonic-file and --mnemonic-env are mutually exclusive")
+        }
+    }
+}
+
+fn read_mnemonic_password(env: &Option<String>) -> Result<Option<String>> {
+    env.as_ref()
+        .map(|name| {
+            std::env::var(name).with_context(|| {
+                format!("failed to read mnemonic password from environment variable {name}")
+            })
+        })
+        .transpose()
+}
+
+fn comment_body(comment: &Option<String>) -> Result<Option<Arc<Cell>>> {
+    let Some(comment) = comment else {
+        return Ok(None);
+    };
+    let mut builder = Builder::new();
+    builder.store_u32(0)?;
+    builder.store_bytes(comment.as_bytes())?;
+    Ok(Some(builder.build()?))
+}
+
+fn valid_until_from_timeout(timeout: u32) -> Result<u32> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before unix epoch")?
+        .as_secs();
+    let valid_until = now
+        .checked_add(timeout as u64)
+        .context("valid_until overflow")?;
+    Ok(u32::try_from(valid_until).context("valid_until does not fit into uint32")?)
+}
+
+fn seqno_from_stack(result: crate::tl::response::RunMethodResult) -> Result<u32> {
+    let stack = match result.result_stack_lossless() {
+        DecodedRunMethodResult::Decoded(stack) => stack,
+        DecodedRunMethodResult::Missing => anyhow::bail!("seqno get-method returned no stack"),
+        DecodedRunMethodResult::Undecodable { error, .. } => {
+            anyhow::bail!("failed to decode seqno stack: {error}")
+        }
+    };
+    let Some(TvmStackEntry::Int(value)) = stack.entries().first() else {
+        anyhow::bail!("seqno get-method did not return an integer at stack[0]");
+    };
+    value
+        .to_str_radix(10)
+        .parse::<u32>()
+        .context("seqno integer does not fit into uint32")
+}
+
+fn seqno_from_stack_or_deploy_zero(
+    result: crate::tl::response::RunMethodResult,
+    deploy: bool,
+) -> Result<u32> {
+    if deploy
+        && matches!(
+            result.result_stack_lossless(),
+            DecodedRunMethodResult::Missing
+        )
+    {
+        return Ok(0);
+    }
+    seqno_from_stack(result)
+}
+
+fn build_wallet_transfer(
+    network: Network,
+    args: &WalletTransferArgs,
+    mnemonic: &TonMnemonic,
+    seqno: u32,
+) -> Result<(Vec<u8>, WalletPreparedTransferView)> {
+    let public_key = mnemonic.public_key();
+    let wallet_id = wallet_id_for_cli(args.version, network, args.workchain, args.wallet_id)?;
+    let address = wallet_address_view(args.version, args.workchain, wallet_id, public_key)?;
+    let mut message = WalletMessage::internal(
+        Address::from_str(&args.to).context("wallet transfer: invalid destination address")?,
+        args.amount,
+    )
+    .with_mode(args.mode);
+    if let Some(body) = comment_body(&args.comment)? {
+        message = message.with_body(body);
+    }
+    let valid_until = valid_until_from_timeout(args.timeout)?;
+    let boc = match args.version {
+        WalletVersionArg::V4R2 => {
+            WalletV4R2::new(public_key, wallet_id, wallet_v4r2_code()?, args.workchain)
+                .build_external_message_boc(
+                    seqno,
+                    valid_until,
+                    vec![message],
+                    mnemonic.signing_key(),
+                    args.deploy,
+                )?
+        }
+        WalletVersionArg::V5R1 => {
+            WalletV5R1::new(public_key, wallet_id, wallet_v5r1_code()?, args.workchain)
+                .build_external_message_boc(
+                    seqno,
+                    valid_until,
+                    vec![message],
+                    mnemonic.signing_key(),
+                    args.deploy,
+                )?
+        }
+    };
+    let view = WalletPreparedTransferView {
+        version: args.version,
+        address,
+        to: args.to.clone(),
+        amount: args.amount,
+        seqno,
+        valid_until,
+        deploy: args.deploy,
+        boc: raw_bytes_view(&boc),
+    };
+    Ok((boc, view))
+}
+
 async fn download_config(network: Network) -> Result<String> {
     let url = match network {
         Network::Mainnet => "https://ton.org/global.config.json",
@@ -1905,6 +2245,7 @@ impl Cli {
             Commands::Liteclient { command } => self.execute_liteclient(command).await,
             Commands::Balancer { command } => self.execute_balancer(command).await,
             Commands::Contract { command } => self.execute_contract(command).await,
+            Commands::Wallet { command } => self.execute_wallet(command).await,
             Commands::Tvm { command } => self.execute_tvm(command).await,
         }
     }
@@ -2519,6 +2860,132 @@ impl Cli {
         }
     }
 
+    async fn execute_wallet(&self, command: &WalletCommand) -> Result<()> {
+        match command {
+            WalletCommand::Generate {
+                workchain,
+                mnemonic_password_env,
+            } => {
+                let password = read_mnemonic_password(mnemonic_password_env)?;
+                let mnemonic = TonMnemonic::generate(password.as_deref())?;
+                let public_key = mnemonic.public_key();
+                let v5_wallet_id =
+                    wallet_id_for_cli(WalletVersionArg::V5R1, self.network, *workchain, None)?;
+                let v4_wallet_id =
+                    wallet_id_for_cli(WalletVersionArg::V4R2, self.network, *workchain, None)?;
+                self.print_wallet_generate(&WalletGenerateView {
+                    mnemonic: mnemonic.phrase(),
+                    public_key: hex::encode(public_key),
+                    v5r1: wallet_address_view(
+                        WalletVersionArg::V5R1,
+                        *workchain,
+                        v5_wallet_id,
+                        public_key,
+                    )?,
+                    v4r2: wallet_address_view(
+                        WalletVersionArg::V4R2,
+                        *workchain,
+                        v4_wallet_id,
+                        public_key,
+                    )?,
+                })
+            }
+            WalletCommand::Address(args) => {
+                let password = read_mnemonic_password(&args.mnemonic_password_env)?;
+                let phrase = read_mnemonic_phrase(&args.mnemonic_file, &args.mnemonic_env)?;
+                let mnemonic = TonMnemonic::from_phrase(&phrase, password.as_deref())?;
+                let wallet_id =
+                    wallet_id_for_cli(args.version, self.network, args.workchain, args.wallet_id)?;
+                self.print_wallet_address(&wallet_address_view(
+                    args.version,
+                    args.workchain,
+                    wallet_id,
+                    mnemonic.public_key(),
+                )?)
+            }
+            WalletCommand::Seqno { address } => {
+                let mut backend = self.create_high_level_backend().await?;
+                let latest = backend
+                    .get_masterchain_info()
+                    .await
+                    .context("wallet seqno: failed to get latest block")?
+                    .last;
+                let result = backend
+                    .run_get_method(
+                        latest.clone(),
+                        Address::from_str(address).context("wallet seqno: invalid address")?,
+                        crate::utils::method_name_to_id("seqno"),
+                        TvmStack::empty(),
+                    )
+                    .await
+                    .context("wallet seqno: get-method failed")?;
+                backend.close().await?;
+                self.print_wallet_seqno(&WalletSeqnoView {
+                    address: address.clone(),
+                    seqno: seqno_from_stack(result)?,
+                    block: block_id_ext_view(&latest),
+                })
+            }
+            WalletCommand::PrepareTransfer(args) => {
+                let seqno = args
+                    .seqno
+                    .context("wallet prepare-transfer requires --seqno for offline signing")?;
+                let password = read_mnemonic_password(&args.mnemonic_password_env)?;
+                let phrase = read_mnemonic_phrase(&args.mnemonic_file, &args.mnemonic_env)?;
+                let mnemonic = TonMnemonic::from_phrase(&phrase, password.as_deref())?;
+                let (boc, view) = build_wallet_transfer(self.network, args, &mnemonic, seqno)?;
+                match self.output {
+                    OutputFormat::Raw | OutputFormat::Hex | OutputFormat::Base64 => {
+                        self.print_bytes(&boc)
+                    }
+                    OutputFormat::Human => self.print_wallet_prepared(&view),
+                    OutputFormat::Json | OutputFormat::PrettyJson => self.print_structured(&view),
+                }
+            }
+            WalletCommand::Send(args) => {
+                let password = read_mnemonic_password(&args.mnemonic_password_env)?;
+                let phrase = read_mnemonic_phrase(&args.mnemonic_file, &args.mnemonic_env)?;
+                let mnemonic = TonMnemonic::from_phrase(&phrase, password.as_deref())?;
+                let public_key = mnemonic.public_key();
+                let wallet_id =
+                    wallet_id_for_cli(args.version, self.network, args.workchain, args.wallet_id)?;
+                let wallet_address =
+                    wallet_address_view(args.version, args.workchain, wallet_id, public_key)?;
+                let mut backend = self.create_high_level_backend().await?;
+                let latest = backend
+                    .get_masterchain_info()
+                    .await
+                    .context("wallet send: failed to get latest block")?
+                    .last;
+                let seqno = match args.seqno {
+                    Some(seqno) => seqno,
+                    None => {
+                        let result = backend
+                            .run_get_method(
+                                latest,
+                                Address::from_str(&wallet_address.address)?,
+                                crate::utils::method_name_to_id("seqno"),
+                                TvmStack::empty(),
+                            )
+                            .await
+                            .context("wallet send: failed to fetch seqno")?;
+                        seqno_from_stack_or_deploy_zero(result, args.deploy)?
+                    }
+                };
+                let (boc, view) = build_wallet_transfer(self.network, args, &mnemonic, seqno)?;
+                let status = backend
+                    .send_external_message_boc(boc)
+                    .await
+                    .context("wallet send: failed to submit external message BoC")?;
+                backend.close().await?;
+                self.print_wallet_send(&WalletSendView {
+                    prepared: view,
+                    status,
+                })
+            }
+        }
+    }
+
     async fn execute_balancer(&self, command: &BalancerCommand) -> Result<()> {
         match command {
             BalancerCommand::MasterchainInfo { num_servers } => {
@@ -2868,6 +3335,81 @@ impl Cli {
                             .unwrap_or_default()
                     );
                 }
+                Ok(())
+            }
+            _ => self.print_structured(value),
+        }
+    }
+
+    fn print_wallet_generate(&self, value: &WalletGenerateView) -> Result<()> {
+        match self.output {
+            OutputFormat::Human => {
+                println!("mnemonic: {}", value.mnemonic);
+                println!("public_key: {}", value.public_key);
+                println!("v5r1_address: {}", value.v5r1.address);
+                println!("v5r1_bounceable: {}", value.v5r1.bounceable);
+                println!("v5r1_non_bounceable: {}", value.v5r1.non_bounceable);
+                println!("v5r1_wallet_id: {}", value.v5r1.wallet_id);
+                println!("v4r2_address: {}", value.v4r2.address);
+                println!("v4r2_bounceable: {}", value.v4r2.bounceable);
+                println!("v4r2_non_bounceable: {}", value.v4r2.non_bounceable);
+                println!("v4r2_wallet_id: {}", value.v4r2.wallet_id);
+                Ok(())
+            }
+            _ => self.print_structured(value),
+        }
+    }
+
+    fn print_wallet_address(&self, value: &WalletAddressView) -> Result<()> {
+        match self.output {
+            OutputFormat::Human => {
+                println!("version: {:?}", value.version);
+                println!("workchain: {}", value.workchain);
+                println!("wallet_id: {}", value.wallet_id);
+                println!("address: {}", value.address);
+                println!("bounceable: {}", value.bounceable);
+                println!("non_bounceable: {}", value.non_bounceable);
+                Ok(())
+            }
+            _ => self.print_structured(value),
+        }
+    }
+
+    fn print_wallet_seqno(&self, value: &WalletSeqnoView) -> Result<()> {
+        match self.output {
+            OutputFormat::Human => {
+                println!("address: {}", value.address);
+                println!("seqno: {}", value.seqno);
+                print_block_human("block", &value.block);
+                Ok(())
+            }
+            _ => self.print_structured(value),
+        }
+    }
+
+    fn print_wallet_prepared(&self, value: &WalletPreparedTransferView) -> Result<()> {
+        match self.output {
+            OutputFormat::Human => {
+                println!("version: {:?}", value.version);
+                println!("address: {}", value.address.address);
+                println!("to: {}", value.to);
+                println!("amount: {}", value.amount);
+                println!("seqno: {}", value.seqno);
+                println!("valid_until: {}", value.valid_until);
+                println!("deploy: {}", value.deploy);
+                println!("boc_hex: {}", value.boc.hex);
+                println!("boc_base64: {}", value.boc.base64);
+                Ok(())
+            }
+            _ => self.print_structured(value),
+        }
+    }
+
+    fn print_wallet_send(&self, value: &WalletSendView) -> Result<()> {
+        match self.output {
+            OutputFormat::Human => {
+                self.print_wallet_prepared(&value.prepared)?;
+                println!("send_status: {}", value.status);
                 Ok(())
             }
             _ => self.print_structured(value),
@@ -3240,6 +3782,54 @@ mod tests {
     }
 
     #[test]
+    fn parses_wallet_commands() {
+        let address = "0:1111111111111111111111111111111111111111111111111111111111111111";
+        for args in [
+            vec!["wallet", "generate"],
+            vec![
+                "wallet",
+                "address",
+                "--version",
+                "v4r2",
+                "--mnemonic-file",
+                "-",
+            ],
+            vec!["wallet", "seqno", address],
+            vec![
+                "wallet",
+                "prepare-transfer",
+                "--mnemonic-env",
+                "TON_MNEMONIC",
+                "--to",
+                address,
+                "--amount",
+                "1000",
+                "--seqno",
+                "7",
+                "--output",
+                "hex",
+            ],
+            vec![
+                "wallet",
+                "send",
+                "--version",
+                "v4r2",
+                "--mnemonic-env",
+                "TON_MNEMONIC",
+                "--to",
+                address,
+                "--amount",
+                "1000",
+                "--deploy",
+            ],
+        ] {
+            let mut full = vec!["tonutils"];
+            full.extend(args);
+            Cli::try_parse_from(full).unwrap();
+        }
+    }
+
+    #[test]
     fn parses_tvm_boc_decode_with_tlb_type() {
         let cli = Cli::try_parse_from([
             "tonutils",
@@ -3601,5 +4191,34 @@ mod tests {
         assert_eq!(view.state_proof_len, 3);
         assert!(view.decoded_stack.is_some());
         assert!(view.result_decode_error.is_none());
+    }
+
+    #[test]
+    fn wallet_send_deploy_treats_missing_seqno_stack_as_zero() {
+        let block = BlockIdExt {
+            workchain: -1,
+            shard: i64::MIN,
+            seqno: 1,
+            root_hash: crate::tl::Int256([1; 32]),
+            file_hash: crate::tl::Int256([2; 32]),
+        };
+        let result = crate::tl::response::RunMethodResult {
+            mode: (),
+            id: block.clone(),
+            shardblk: block,
+            shard_proof: None,
+            proof: None,
+            state_proof: None,
+            init_c7: None,
+            lib_extras: None,
+            exit_code: 0,
+            result: None,
+        };
+
+        assert_eq!(
+            seqno_from_stack_or_deploy_zero(result.clone(), true).unwrap(),
+            0
+        );
+        assert!(seqno_from_stack_or_deploy_zero(result, false).is_err());
     }
 }

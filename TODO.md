@@ -39,16 +39,22 @@ postponed work moves to `# BACKLOG`.
   - [-] Add fixture-backed tests for representative contract get-method and external-message workflows #contracts #tvm #tests
     - [x] Add mock-provider unit tests for contract get-method, state, transaction, state-init address, and external BoC routing semantics #contracts #tvm #tests
     - [ ] Add checked protocol fixtures or ignored live-network evidence for representative contract workflows #contracts #tvm #tests
-- [ ] Track wallet and mnemonic capabilities #wallet #contracts #crypto #tests #docs
-  - [ ] Define mnemonic generation, import, validation, and derivation behavior #wallet #crypto #docs
+- [-] Track wallet and mnemonic capabilities #wallet #contracts #crypto #tests #docs
+  - [x] Define mnemonic generation, import, validation, and derivation behavior #wallet #crypto #docs
   - [-] Track wallet init/deploy, transfer/message signing, seqno, timeout, and state handling #wallet #contracts #crypto #docs
     - [x] Add Wallet V5R1 storage data, wallet-id packing, signed external body construction, external message BoC construction, and address derivation #wallet #contracts #crypto #tests
+    - [x] Add Wallet V4R2 storage data, default wallet-id handling, signed simple-send body construction, external message BoC construction, and address derivation #wallet #contracts #crypto #tests
+    - [x] Add CLI wallet generate, address, seqno, prepare-transfer, and send MVP without local secret storage #wallet #cli #network #crypto
     - [ ] Add get-method helpers for V5R1 seqno, wallet id, public key, signature-auth status, and extension lookup #wallet #contracts #tvm #docs
-    - [ ] Promote live V5R1 send/deploy helpers after deterministic fixtures and provider behavior are accepted #wallet #contracts #network #tests
+    - [ ] Add mock-provider coverage for wallet send routing through `send_external_message_boc` #wallet #cli #contracts #tests
+    - [ ] Promote live V5R1/V4R2 send/deploy helpers after deterministic fixtures and provider behavior are accepted #wallet #contracts #network #tests
   - [-] Add deterministic wallet and mnemonic fixtures before live send workflows are enabled #wallet #crypto #tests
     - [x] Add offline Wallet V5R1 tests for wallet-id vectors, data roundtrip, empty extensions, signed body construction, action-count limits, signature verification, and external message BoC decoding #wallet #crypto #tests
-    - [ ] Add upstream or official-code Wallet V5R1 state-init/address fixtures for mainnet and testnet defaults #wallet #crypto #tests
-    - [ ] Add mnemonic generation/import/derivation fixtures #wallet #crypto #tests
+    - [x] Add offline Wallet V4R2 tests for data roundtrip, empty plugins, signed body construction, action-count limits, signature verification, and external message BoC decoding #wallet #crypto #tests
+    - [x] Add mnemonic generation/import/derivation fixtures #wallet #crypto #tests
+    - [x] Add deterministic Criterion benchmarks for mnemonic derivation, cached wallet code, address derivation, and signed transfer BoC construction #wallet #crypto #perf #tests
+    - [ ] Reconcile embedded `@ton/ton` Wallet V4R2/V5R1 code BoC hashes with current TON wallet-history documentation hashes #wallet #crypto #docs #tests
+    - [ ] Add upstream Wallet V5R1 and V4R2 state-init/address fixtures for mainnet and testnet defaults #wallet #crypto #tests
 - [ ] Track ABI and typed wrapper capabilities #abi #contracts #wallet #tests #docs
   - [-] Map each ABI and wrapper gap to subsystem tags and acceptance tests #abi #contracts #docs #tests
     - [x] Add direct address-bound `Contract<'a, P>` typed-client delegation test #contracts #docs #tests
@@ -97,6 +103,12 @@ postponed work moves to `# BACKLOG`.
 
 ## Subsequent Phases (Post-ABI)
 
+- [ ] Design the pure Rust emulator and local LiteServer phase #emulator #liteserver #tvm #liteclient #network #tests #docs
+  - [ ] Write `dev-docs/` design notes for emulator scope, trust assumptions, upstream TON source evidence, and unsupported execution paths #emulator #tvm #docs
+  - [ ] Define emulator execution scope for account state, config, time/logical-time context, get-method execution, inbound message execution, transaction results, and action results #emulator #tvm #tests
+  - [ ] Define the fixture strategy for comparing supported emulator paths against upstream TON or recorded live behavior #emulator #tvm #tests #docs
+  - [ ] Define local LiteServer protocol and API scope for fixture-backed account, block, config, get-method, and send-message workflows #liteserver #liteclient #network #tests #docs
+  - [ ] Plan feature gates, examples, CLI integration, and dev-test workflows for offline contract, wallet, jetton, LiteClient, and LiteBalancer tests #emulator #liteserver #liteclient #network #tests #docs
 - [ ] Complete blockchain TL-B coverage from upstream `block.tlb` #tvm #tlb #docs #tests
   - [x] Add checked local `src/tlb/schemas/block.tlb` snapshot for currently implemented constructor families #tvm #tlb
   - [x] Add deterministic constructor summary checks for typed and raw-preserving block/config/proof families #tvm #tlb #tests

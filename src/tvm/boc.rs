@@ -449,7 +449,6 @@ fn compute_raw_cell_hash(
 }
 
 fn parse_cells(data: &[u8], count: usize, ref_index_size: usize) -> Result<Vec<Arc<Cell>>> {
-    let mut cells = Vec::with_capacity(count);
     let mut cell_refs: Vec<Vec<usize>> = Vec::with_capacity(count);
     let mut cell_is_exotic = Vec::with_capacity(count);
     let mut cell_levels = Vec::with_capacity(count);
@@ -515,50 +514,105 @@ fn parse_cells(data: &[u8], count: usize, ref_index_size: usize) -> Result<Vec<A
         let (cell_data, bit_len) = decode_cell_data(&serialized_cell_data, d2)?;
         cell_raw_data.push(cell_data.clone());
         cell_bit_lens.push(bit_len);
-
-        // Create cell (without references for now)
-        let cell = Cell::with_data(cell_data, bit_len)?;
-        cells.push(Arc::new(cell));
     }
 
     if pos != data.len() {
         bail!("Trailing bytes after parsed cells");
     }
 
-    // Second pass: resolve references
-    for i in 0..cells.len() {
-        let refs = &cell_refs[i];
-        let mut references = Vec::with_capacity(refs.len());
-        for &ref_idx in refs {
-            if ref_idx >= cells.len() {
-                bail!("Invalid reference index: {}", ref_idx);
-            }
-            references.push(cells[ref_idx].clone());
-        }
-
-        let new_cell = if cell_is_exotic[i] {
-            Cell::with_exotic_data(cell_raw_data[i].clone(), cell_bit_lens[i], references)
-                .map_err(|err| anyhow::anyhow!("Invalid exotic cell: {}", err))?
-        } else {
-            let mut cell = Cell::with_data(cell_raw_data[i].clone(), cell_bit_lens[i])?;
-            for reference in references {
-                cell.add_reference(reference)?;
-            }
-            cell
-        };
-
-        if new_cell.level() != cell_levels[i] {
-            bail!(
-                "Invalid cell descriptor level: expected {}, got {}",
-                new_cell.level(),
-                cell_levels[i]
-            );
-        }
-
-        cells[i] = Arc::new(new_cell);
+    let mut cells = vec![None; count];
+    let mut states = vec![ParsedCellState::Unvisited; count];
+    for index in 0..count {
+        build_parsed_cell(
+            index,
+            &cell_refs,
+            &cell_is_exotic,
+            &cell_levels,
+            &cell_raw_data,
+            &cell_bit_lens,
+            &mut states,
+            &mut cells,
+        )?;
     }
 
-    Ok(cells)
+    cells
+        .into_iter()
+        .map(|cell| cell.ok_or_else(|| anyhow::anyhow!("BoC cell was not resolved")))
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParsedCellState {
+    Unvisited,
+    Visiting,
+    Done,
+}
+
+fn build_parsed_cell(
+    index: usize,
+    cell_refs: &[Vec<usize>],
+    cell_is_exotic: &[bool],
+    cell_levels: &[u8],
+    cell_raw_data: &[Vec<u8>],
+    cell_bit_lens: &[usize],
+    states: &mut [ParsedCellState],
+    cells: &mut [Option<Arc<Cell>>],
+) -> Result<Arc<Cell>> {
+    match states[index] {
+        ParsedCellState::Done => {
+            return cells[index]
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("BoC cell was not resolved"));
+        }
+        ParsedCellState::Visiting => bail!("BoC cell graph contains a reference cycle"),
+        ParsedCellState::Unvisited => {}
+    }
+
+    states[index] = ParsedCellState::Visiting;
+    let mut references = Vec::with_capacity(cell_refs[index].len());
+    for &ref_idx in &cell_refs[index] {
+        if ref_idx >= cell_refs.len() {
+            bail!("Invalid reference index: {}", ref_idx);
+        }
+        references.push(build_parsed_cell(
+            ref_idx,
+            cell_refs,
+            cell_is_exotic,
+            cell_levels,
+            cell_raw_data,
+            cell_bit_lens,
+            states,
+            cells,
+        )?);
+    }
+
+    let cell = if cell_is_exotic[index] {
+        Cell::with_exotic_data(
+            cell_raw_data[index].clone(),
+            cell_bit_lens[index],
+            references,
+        )
+        .map_err(|err| anyhow::anyhow!("Invalid exotic cell: {}", err))?
+    } else {
+        let mut cell = Cell::with_data(cell_raw_data[index].clone(), cell_bit_lens[index])?;
+        for reference in references {
+            cell.add_reference(reference)?;
+        }
+        cell
+    };
+
+    if cell.level() != cell_levels[index] {
+        bail!(
+            "Invalid cell descriptor level: expected {}, got {}",
+            cell.level(),
+            cell_levels[index]
+        );
+    }
+
+    let cell = Arc::new(cell);
+    cells[index] = Some(cell.clone());
+    states[index] = ParsedCellState::Done;
+    Ok(cell)
 }
 
 fn decode_cell_data(data: &[u8], d2: u8) -> Result<(Vec<u8>, usize)> {

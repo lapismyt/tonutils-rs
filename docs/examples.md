@@ -126,6 +126,9 @@ TON_CONTRACT_ADDRESS=EQ... cargo run -F full --example contract_get_method
 - `tlb_custom_derive` requires `tlb-derive`. It demonstrates a custom
   TEP-74-style jetton transfer struct with a hex constructor tag, inferred
   unsigned field width, wrapper TL-B fields, and generated roundtrip codecs.
+- `wallet_offline_transfer` requires `tvm`. It derives V4R2 and V5R1
+  addresses from a fixed TON mnemonic and builds a signed V4R2 deployment
+  transfer BoC without network access.
 
 Remaining coverage gaps tracked in `TODO.md`: live proof capture and mempool
 examples.

@@ -177,10 +177,11 @@ foundation:
 - Add an `abi` module split by protocol and then by version or contract family.
   Initial ABI coverage must include wallets V4, V5, Highload, and jettons
   TEP-74 and TEP-89.
-- Start wallet wrappers with Wallet V5R1. The first executable milestone is
-  offline-safe: V5R1 storage data cells, wallet-id packing, signed external
-  body construction, external message BoC construction, address derivation, and
-  deterministic tests before live sending workflows are promoted.
+- Start wallet wrappers with Wallet V5R1 and V4R2. The first executable
+  milestone is offline-safe: storage data cells, wallet-id packing, TON
+  mnemonic derivation, signed external body construction, external message BoC
+  construction, address derivation, and deterministic tests before live sending
+  workflows are promoted.
 - Keep a clear distinction between a concrete contract wrapper and an ABI
   description. As in tongo, contracts with different code must still work when
   they support the required methods and message shapes.
@@ -225,6 +226,37 @@ After production hardening:
   fixtures and later live-network tests.
 - Expand docs/examples coverage to match the finalized high-level APIs and
   CLI workflows.
+
+## Phase 5: Pure Rust Emulator And Local LiteServer
+
+After the TVM, TL-B, LiteAPI, ADNL, proof, and networking foundations are mature,
+build local, embeddable infrastructure on top of this crate:
+
+- Add a pure Rust TVM/account-state emulator for offline get-method execution
+  and message execution. It must model account state, config parameters,
+  time/logical-time context, inbound message execution, transaction results, and
+  action results closely enough for deterministic contract tests.
+- Add a pure Rust LiteServer-compatible local service for development fixtures,
+  controlled integration environments, and SDK self-tests. It should handle
+  LiteAPI requests over the existing TL and ADNL layers and serve deterministic
+  fixture-backed account, block, config, get-method, and send-message surfaces.
+- Support practical testing workflows: offline contract tests, wallet and
+  jetton integration tests, reproducible CLI tests, and local network
+  simulation.
+- Keep the implementation autonomous and optional: no native `.so` emulator
+  dependency, no third-party Rust TON SDK dependency, and feature-gated modules
+  only.
+- Continue using upstream TON behavior as the source of truth for supported
+  execution paths, wire formats, failure modes, and fixture validation.
+
+Exit criteria for Phase 5:
+
+- Contract wrappers can run deterministic offline get-method and
+  message-execution tests.
+- The local LiteServer can serve enough LiteAPI to satisfy this crate's
+  LiteClient and LiteBalancer integration tests.
+- Emulator outputs are fixture-checked against upstream TON or recorded live
+  behavior for supported paths.
 
 ## Later Backlog
 

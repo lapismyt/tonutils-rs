@@ -57,6 +57,7 @@ mempool scanning, and optional TON emulator bindings.
 - [LiteClient](liteclient.md): typed and raw LiteAPI workflows.
 - [LiteBalancer](balancer.md): multi-peer workflows and prototype limits.
 - [Contracts](contracts.md): account state and get-method wrappers.
+- [Wallets](wallets.md): mnemonic derivation, addresses, and signed transfer BoCs.
 - [TVM primitives](tvm.md): cells, BoC, stack values, addresses, and dictionaries.
 - [TL and LiteAPI](tl.md): constructors, serialization, raw bytes, and schema checks.
 - [Networking](networking.md): ADNL TCP, network config, and future protocol boundaries.

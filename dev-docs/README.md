@@ -25,7 +25,8 @@ wire formats, invariants, source priorities, and crate mapping belong here.
 15. [LiteClient rate limiting](liteclient/rate-limiting.md)
 16. [Smart-contract get-methods](contracts/get-methods.md)
 17. [Wallet V5R1](contracts/wallet-v5r1.md)
-18. [TEP metadata roadmap](contracts/tep-metadata.md)
+18. [Wallet V4R2 and TON mnemonics](contracts/wallet-v4r2-mnemonics.md)
+19. [TEP metadata roadmap](contracts/tep-metadata.md)
 
 ## Directory Map
 

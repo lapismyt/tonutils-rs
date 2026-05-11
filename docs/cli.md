@@ -87,6 +87,30 @@ lengths, and raw state bytes as hex and base64. JSON get-method output includes
 the execution block ids, exit code, proof byte lengths, raw result BoC, and a
 decoded stack when the current stack decoder supports the returned shape.
 
+## Wallet Commands
+
+Wallet commands do not store mnemonics or private keys. `wallet generate` is the
+only command that prints a mnemonic. Other wallet commands read it from
+`--mnemonic-file <path>`, `--mnemonic-file -` for stdin, or
+`--mnemonic-env <NAME>`. The default wallet version is V5R1; pass
+`--version v4r2` for Wallet V4R2.
+
+```bash
+tonutils wallet generate
+tonutils wallet address --mnemonic-file seed.txt
+tonutils wallet address --version v4r2 --mnemonic-env TON_MNEMONIC
+tonutils wallet seqno '<wallet-address>'
+tonutils --output hex wallet prepare-transfer --mnemonic-file - --to '<addr>' --amount 100000000 --seqno 0
+tonutils wallet send --mnemonic-env TON_MNEMONIC --to '<addr>' --amount 100000000 --deploy
+```
+
+Transfer options are `--to <address>`, `--amount <nanotons>`,
+`--comment <text>`, `--mode <u8>` defaulting to `3`, `--timeout <seconds>`
+defaulting to `60`, optional `--seqno <u32>`, optional `--wallet-id <u32>`,
+`--workchain <i8>` defaulting to `0`, and `--deploy` to include `StateInit`.
+`prepare-transfer` is offline and requires `--seqno`; `send` fetches `seqno`
+unless it is supplied.
+
 ## Advanced Balancer Commands
 
 ```bash
