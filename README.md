@@ -112,6 +112,8 @@ checks, and API comparisons. Thanks to their authors and maintainers:
   [STON.fi](https://github.com/ston-fi)
 - [ston-fi/tonlib-rs](https://github.com/ston-fi/tonlib-rs) by
   [STON.fi](https://github.com/ston-fi)
+- [RSquad/ton-rust-node](https://github.com/RSquad/ton-rust-node) by
+  [RSquad](https://github.com/RSquad)
 - [nessshon/tonutils](https://github.com/nessshon/tonutils) by
   [@nessshon](https://github.com/nessshon)
 - [getgems-io/ton-grpc](https://github.com/getgems-io/ton-grpc) by

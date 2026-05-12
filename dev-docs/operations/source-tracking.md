@@ -23,6 +23,7 @@ Compatibility references:
 - `tongo`: https://github.com/tonkeeper/tongo
 - STON.fi `ton-rs`: https://github.com/ston-fi/ton-rs
 - STON.fi `tonlib-rs`: https://github.com/ston-fi/tonlib-rs
+- RSquad `ton-rust-node`: https://github.com/RSquad/ton-rust-node
 - `nessshon/tonutils`: https://github.com/nessshon/tonutils
 
 Research references:

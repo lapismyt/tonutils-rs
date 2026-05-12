@@ -122,6 +122,7 @@ third-party Rust TON SDK dependencies.
 - Tongo SDK reference: https://github.com/tonkeeper/tongo
 - STON.fi Rust TON libraries for behavior comparison: https://github.com/ston-fi/ton-rs
 - STON.fi tonlib bindings for API behavior comparison: https://github.com/ston-fi/tonlib-rs
+- RSquad Rust TON node reference for implementation and behavior comparison: https://github.com/RSquad/ton-rust-node
 - Alternative Rust tonutils implementation for API comparison: https://github.com/nessshon/tonutils
 - Getgems TON gRPC reference for API and indexing behavior comparison: https://github.com/getgems-io/ton-grpc
 - Mempool research reference: https://github.com/yungwine/ton-mempool
