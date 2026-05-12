@@ -120,6 +120,7 @@ third-party Rust TON SDK dependencies.
 - Official TON documentation index for LLM-assisted research: https://docs.ton.org/llms.txt
 - Go SDK reference inspired by this crate's direction: https://github.com/xssnick/tonutils-go
 - Tongo SDK reference: https://github.com/tonkeeper/tongo
+- Tonstack lite-client reference for LiteAPI behavior comparison: https://github.com/tonstack/lite-client
 - STON.fi Rust TON libraries for behavior comparison: https://github.com/ston-fi/ton-rs
 - STON.fi tonlib bindings for API behavior comparison: https://github.com/ston-fi/tonlib-rs
 - RSquad Rust TON node reference for implementation and behavior comparison: https://github.com/RSquad/ton-rust-node

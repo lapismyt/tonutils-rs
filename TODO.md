@@ -91,12 +91,14 @@ postponed work moves to `# BACKLOG`.
 
 ## ABI (Tongo-Level)
 
-- [ ] Implement full ABI data model coverage #abi #contracts #tvm
-  - [ ] Define ABI Rust types for contracts, methods, events, tuples, arrays, optional fields, and dictionaries #abi
-  - [ ] Define ABI scalar mappings for TON/TVM-relevant integer, bytes, address, bool, and cell-like values #abi #tvm
-  - [ ] Document ABI invariants, numeric limits, and failure modes in `dev-docs/` #abi #docs
+- [-] Implement full ABI data model coverage #abi #contracts #tvm
+  - [x] Define ABI Rust types for contracts, methods, events, tuples, arrays, optional fields, and dictionaries #abi
+  - [x] Define ABI scalar mappings for TON/TVM-relevant integer, bytes, address, bool, and cell-like values #abi #tvm
+  - [x] Document ABI data-model invariants, numeric limits, and current non-goals in `dev-docs/` #abi #docs
 - [ ] Implement ABI encoding and decoding engine #abi #contracts #tvm #tests
-  - [ ] Encode ABI inputs into TVM stack and message-body representations #abi #tvm
+  - [-] Encode ABI inputs into TVM stack and message-body representations #abi #tvm
+    - [x] Add value-level scalar TVM stack encode/decode helpers for integers, booleans, bytes, strings, addresses, cells, slices, tuples, arrays, and optionals #abi #tvm #tests
+    - [ ] Add ABI message-body encoding policy and implementation #abi #tvm #contracts #tests
   - [ ] Decode get-method outputs and external message payload components from ABI definitions #abi #tvm
   - [ ] Add edge-case coverage for tuples, nested arrays, optional values, and dictionary-like payloads #abi #tests
 - [ ] Implement JSON ABI parser and loader #abi #contracts #tests
@@ -110,6 +112,7 @@ postponed work moves to `# BACKLOG`.
 - [ ] Add golden fixtures and cross-reference validation cases #abi #tests #docs
   - [ ] Add fixture-backed encode/decode vectors for representative contracts #abi #tests
   - [ ] Cross-check behavior against tongo-compatible expectations and TON protocol definitions #abi #tests #docs
+  - [ ] Define and document ABI map/dictionary stack and message codec policy before enabling map conversion #abi #tvm #docs
   - [ ] Document known unsupported ABI patterns and planned follow-up tasks #abi #docs
 
 ## Subsequent Phases (Post-ABI)

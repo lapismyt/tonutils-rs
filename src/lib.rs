@@ -20,6 +20,8 @@
 //! current helpers mostly decode, inspect, or preserve proof material for later
 //! verification.
 
+#[cfg(feature = "tvm")]
+pub mod abi;
 #[cfg(feature = "adnl")]
 pub mod adnl;
 #[cfg(feature = "cli")]

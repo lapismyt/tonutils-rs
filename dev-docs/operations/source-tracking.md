@@ -21,6 +21,7 @@ Compatibility references:
 
 - `tonutils-go`: https://github.com/xssnick/tonutils-go
 - `tongo`: https://github.com/tonkeeper/tongo
+- `tonstack/lite-client`: https://github.com/tonstack/lite-client
 - STON.fi `ton-rs`: https://github.com/ston-fi/ton-rs
 - STON.fi `tonlib-rs`: https://github.com/ston-fi/tonlib-rs
 - RSquad `ton-rust-node`: https://github.com/RSquad/ton-rust-node
