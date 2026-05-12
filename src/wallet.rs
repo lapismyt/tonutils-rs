@@ -1485,6 +1485,12 @@ mod tests {
     }
 
     #[cfg(feature = "liteclient")]
+    struct WalletSendMockProvider {
+        result: Result<u32, MockProviderError>,
+        bodies: Vec<Vec<u8>>,
+    }
+
+    #[cfg(feature = "liteclient")]
     #[async_trait]
     impl ContractProvider for WalletGetMockProvider {
         type Error = MockProviderError;
@@ -1559,6 +1565,69 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "liteclient")]
+    #[async_trait]
+    impl ContractProvider for WalletSendMockProvider {
+        type Error = MockProviderError;
+
+        async fn get_masterchain_info(&mut self) -> Result<MasterchainInfo, Self::Error> {
+            unimplemented!("wallet send helpers do not read masterchain info")
+        }
+
+        async fn get_account_state(
+            &mut self,
+            _block: BlockIdExt,
+            _account: AccountId,
+        ) -> Result<AccountState, Self::Error> {
+            unimplemented!("wallet send helpers do not read account state")
+        }
+
+        async fn get_account_state_typed(
+            &mut self,
+            _block: BlockIdExt,
+            _account: Address,
+        ) -> Result<crate::liteclient::boc::DecodedAccountState, Self::Error> {
+            unimplemented!("wallet send helpers do not read account state")
+        }
+
+        async fn get_account_state_simple(
+            &mut self,
+            _block: BlockIdExt,
+            _account: Address,
+        ) -> Result<crate::liteclient::boc::SimpleAccount, Self::Error> {
+            unimplemented!("wallet send helpers do not read account state")
+        }
+
+        async fn run_get_method(
+            &mut self,
+            _mode: u32,
+            _block: BlockIdExt,
+            _account: Address,
+            _method_id: u64,
+            _stack: TvmStack,
+        ) -> Result<RunMethodResult, Self::Error> {
+            unimplemented!("wallet send helpers do not run get-methods")
+        }
+
+        async fn send_external_message_boc(&mut self, body: Vec<u8>) -> Result<u32, Self::Error> {
+            self.bodies.push(body);
+            match self.result {
+                Ok(seqno) => Ok(seqno),
+                Err(_) => Err(MockProviderError),
+            }
+        }
+
+        async fn get_transactions(
+            &mut self,
+            _count: u32,
+            _account: AccountId,
+            _lt: u64,
+            _hash: Int256,
+        ) -> Result<TransactionList, Self::Error> {
+            unimplemented!("wallet send helpers do not read transactions")
+        }
+    }
+
     fn test_code() -> Arc<Cell> {
         let mut builder = Builder::new();
         builder.store_u32(0xfeed_beef).unwrap();
@@ -1619,6 +1688,26 @@ mod tests {
             test_code(),
             0,
         )
+    }
+
+    #[cfg(feature = "liteclient")]
+    fn wallet_send_mock(result: Result<u32, MockProviderError>) -> WalletSendMockProvider {
+        WalletSendMockProvider {
+            result,
+            bodies: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "liteclient")]
+    fn assert_external_send_boc(body: &[u8], destination: Address, expect_init: bool) {
+        let decoded = Message::from_cell(deserialize_boc(body).unwrap()).unwrap();
+        match decoded.info {
+            CommonMsgInfo::ExternalIn { dest, .. } => {
+                assert_eq!(dest, MsgAddressInt::std(destination));
+            }
+            _ => panic!("expected external inbound message"),
+        }
+        assert_eq!(decoded.init.is_some(), expect_init);
     }
 
     #[cfg(feature = "liteclient")]
@@ -1889,6 +1978,142 @@ mod tests {
             wallet.seqno(&mut provider).await.unwrap_err(),
             WalletGetMethodError::Provider(_)
         ));
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v5r1_send_external_message_routes_one_boc_and_returns_provider_result() {
+        let key = signing_key();
+        let wallet = WalletV5R1::new(
+            VerifyingKey::from(&key).to_bytes(),
+            WALLET_V5R1_MAINNET_DEFAULT_ID,
+            test_code(),
+            0,
+        );
+        let mut provider = wallet_send_mock(Ok(43));
+
+        let result = wallet
+            .send_external_message(&mut provider, 42, 1_700_000_001, Vec::new(), &key, true)
+            .await
+            .unwrap();
+
+        assert_eq!(result, 43);
+        assert_eq!(provider.bodies.len(), 1);
+        assert_external_send_boc(&provider.bodies[0], wallet.address().unwrap(), true);
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v4r2_send_external_message_routes_one_boc_and_returns_provider_result() {
+        let key = signing_key();
+        let wallet = WalletV4R2::new(
+            VerifyingKey::from(&key).to_bytes(),
+            WALLET_V4R2_DEFAULT_ID,
+            test_code(),
+            0,
+        );
+        let mut provider = wallet_send_mock(Ok(8));
+
+        let result = wallet
+            .send_external_message(&mut provider, 7, 1_700_000_001, Vec::new(), &key, true)
+            .await
+            .unwrap();
+
+        assert_eq!(result, 8);
+        assert_eq!(provider.bodies.len(), 1);
+        assert_external_send_boc(&provider.bodies[0], wallet.address().unwrap(), true);
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn wallet_send_external_message_preserves_state_init_choice() {
+        let key = signing_key();
+        let public_key = VerifyingKey::from(&key).to_bytes();
+        let v5 = WalletV5R1::new(public_key, WALLET_V5R1_MAINNET_DEFAULT_ID, test_code(), 0);
+        let v4 = WalletV4R2::new(public_key, WALLET_V4R2_DEFAULT_ID, test_code(), 0);
+
+        let mut provider = wallet_send_mock(Ok(1));
+        v5.send_external_message(&mut provider, 0, 1_700_000_001, Vec::new(), &key, true)
+            .await
+            .unwrap();
+        assert_external_send_boc(&provider.bodies[0], v5.address().unwrap(), true);
+
+        let mut provider = wallet_send_mock(Ok(1));
+        v5.send_external_message(&mut provider, 0, 1_700_000_001, Vec::new(), &key, false)
+            .await
+            .unwrap();
+        assert_external_send_boc(&provider.bodies[0], v5.address().unwrap(), false);
+
+        let mut provider = wallet_send_mock(Ok(1));
+        v4.send_external_message(&mut provider, 0, 1_700_000_001, Vec::new(), &key, true)
+            .await
+            .unwrap();
+        assert_external_send_boc(&provider.bodies[0], v4.address().unwrap(), true);
+
+        let mut provider = wallet_send_mock(Ok(1));
+        v4.send_external_message(&mut provider, 0, 1_700_000_001, Vec::new(), &key, false)
+            .await
+            .unwrap();
+        assert_external_send_boc(&provider.bodies[0], v4.address().unwrap(), false);
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn wallet_send_external_message_propagates_provider_errors() {
+        let key = signing_key();
+        let public_key = VerifyingKey::from(&key).to_bytes();
+
+        let v5 = WalletV5R1::new(public_key, WALLET_V5R1_MAINNET_DEFAULT_ID, test_code(), 0);
+        let mut provider = wallet_send_mock(Err(MockProviderError));
+        assert!(matches!(
+            v5.send_external_message(&mut provider, 0, 1_700_000_001, Vec::new(), &key, true)
+                .await
+                .unwrap_err(),
+            WalletSendError::Provider(_)
+        ));
+        assert_eq!(provider.bodies.len(), 1);
+
+        let v4 = WalletV4R2::new(public_key, WALLET_V4R2_DEFAULT_ID, test_code(), 0);
+        let mut provider = wallet_send_mock(Err(MockProviderError));
+        assert!(matches!(
+            v4.send_external_message(&mut provider, 0, 1_700_000_001, Vec::new(), &key, true)
+                .await
+                .unwrap_err(),
+            WalletSendError::Provider(_)
+        ));
+        assert_eq!(provider.bodies.len(), 1);
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn wallet_send_external_message_build_errors_do_not_call_provider() {
+        let key = signing_key();
+        let public_key = VerifyingKey::from(&key).to_bytes();
+
+        let v5 = WalletV5R1::new(public_key, WALLET_V5R1_MAINNET_DEFAULT_ID, test_code(), 0);
+        let mut provider = wallet_send_mock(Ok(1));
+        let messages = vec![WalletMessage::internal(Address::new(0, [1; 32]), 1); 256];
+        assert!(matches!(
+            v5.send_external_message(&mut provider, 0, 1_700_000_001, messages, &key, true)
+                .await
+                .unwrap_err(),
+            WalletSendError::Build(WalletError::TooManyActions {
+                count: 256,
+                max: 255
+            })
+        ));
+        assert!(provider.bodies.is_empty());
+
+        let v4 = WalletV4R2::new(public_key, WALLET_V4R2_DEFAULT_ID, test_code(), 0);
+        let mut provider = wallet_send_mock(Ok(1));
+        let messages = vec![WalletMessage::internal(Address::new(0, [1; 32]), 1); 5];
+        assert!(matches!(
+            v4.send_external_message(&mut provider, 0, 1_700_000_001, messages, &key, true)
+                .await
+                .unwrap_err(),
+            WalletSendError::Build(WalletError::TooManyActions { count: 5, max: 4 })
+        ));
+        assert!(provider.bodies.is_empty());
     }
 
     #[test]
