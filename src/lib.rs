@@ -29,12 +29,16 @@ pub mod contracts;
 #[cfg(feature = "contract-derive")]
 pub use tonutils_tlb_derive::Contract;
 pub mod crc;
+#[cfg(feature = "tvm")]
+pub mod jetton;
 #[cfg(feature = "liteclient")]
 pub mod liteclient;
 #[cfg(feature = "tvm")]
 pub mod metadata;
 #[cfg(feature = "network-config")]
 pub mod network_config;
+#[cfg(feature = "tvm")]
+pub mod nft;
 #[cfg(feature = "tl")]
 pub mod tl;
 #[cfg(feature = "tvm")]

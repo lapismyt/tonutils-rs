@@ -1,7 +1,10 @@
 //! Tests for liteclient module
 
 use super::types::*;
-use crate::tl::{BlockIdExt, Int256, TlError};
+use crate::tl::{
+    BlockId, BlockIdExt, Int256, TlError, ZeroStateIdExt, common::LibraryEntry, request::Request,
+    response::Response,
+};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower::service_fn;
@@ -152,7 +155,15 @@ fn test_block_id() -> BlockIdExt {
     }
 }
 
-fn response_client(response: crate::tl::response::Response) -> super::client::LiteClient {
+fn test_zero_state_id() -> ZeroStateIdExt {
+    ZeroStateIdExt {
+        workchain: -1,
+        root_hash: Int256([3; 32]),
+        file_hash: Int256([4; 32]),
+    }
+}
+
+fn response_client(response: Response) -> super::client::LiteClient {
     let bytes = tl_proto::serialize(response);
     super::client::LiteClient::from_service(service_fn(
         move |_request: crate::tl::request::RawWrappedRequest| {
@@ -160,6 +171,169 @@ fn response_client(response: crate::tl::response::Response) -> super::client::Li
             async move { Ok::<_, LiteError>(bytes) }
         },
     ))
+}
+
+fn request_response_client(
+    requests: Arc<Mutex<Vec<Vec<u8>>>>,
+    response: Response,
+) -> super::client::LiteClient {
+    let bytes = tl_proto::serialize(response);
+    super::client::LiteClient::from_service(service_fn(
+        move |request: crate::tl::request::RawWrappedRequest| {
+            let requests = Arc::clone(&requests);
+            let bytes = bytes.clone();
+            async move {
+                requests.lock().await.push(request.request);
+                Ok::<_, LiteError>(bytes)
+            }
+        },
+    ))
+}
+
+#[tokio::test]
+async fn query_raw_preserves_unknown_request_and_response_bytes() {
+    let captured = Arc::new(Mutex::new(Vec::new()));
+    let service_captured = Arc::clone(&captured);
+    let response = vec![0xde, 0xad, 0xbe, 0xef, 0x00];
+    let service_response = response.clone();
+    let service = service_fn(move |request: crate::tl::request::RawWrappedRequest| {
+        let service_captured = Arc::clone(&service_captured);
+        let service_response = service_response.clone();
+        async move {
+            service_captured.lock().await.push(request.request);
+            Ok::<_, LiteError>(service_response)
+        }
+    });
+    let mut client = super::client::LiteClient::from_service(service);
+
+    let request = vec![0xfe, 0xed, 0xfa, 0xce, 0x01, 0x02];
+    assert_eq!(client.query_raw(&request).await.unwrap(), response);
+    assert_eq!(*captured.lock().await, vec![request]);
+}
+
+#[tokio::test]
+async fn query_typed_decodes_success_response_and_rejects_unexpected_type() {
+    let info = crate::tl::response::MasterchainInfo {
+        last: test_block_id(),
+        state_root_hash: Int256([5; 32]),
+        init: test_zero_state_id(),
+    };
+    let mut client = response_client(Response::MasterchainInfo(info.clone()));
+    let decoded: crate::tl::response::MasterchainInfo = client
+        .query_typed(Request::GetMasterchainInfo)
+        .await
+        .unwrap();
+    assert_eq!(decoded, info);
+
+    let mut client = response_client(Response::CurrentTime(crate::tl::response::CurrentTime {
+        now: 123,
+    }));
+    let error = client
+        .query_typed::<crate::tl::response::MasterchainInfo>(Request::GetMasterchainInfo)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, LiteError::UnexpectedMessage));
+}
+
+#[tokio::test]
+async fn lookup_block_builds_request_and_decodes_block_header_response() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let block = BlockId {
+        workchain: -1,
+        shard: i64::MIN,
+        seqno: 7,
+    };
+    let response = crate::tl::response::BlockHeader {
+        id: test_block_id(),
+        mode: (),
+        with_state_update: Some(()),
+        with_value_flow: None,
+        with_extra: Some(()),
+        with_shard_hashes: None,
+        with_prev_blk_signatures: Some(()),
+        header_proof: vec![1, 2, 3],
+    };
+    let mut client = request_response_client(
+        Arc::clone(&requests),
+        Response::BlockHeader(response.clone()),
+    );
+
+    let decoded = client
+        .lookup_block(
+            (),
+            block.clone(),
+            Some(()),
+            Some(11),
+            Some(22),
+            true,
+            false,
+            true,
+            false,
+            true,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(decoded, response);
+    let request: Request = tl_proto::deserialize(&requests.lock().await[0]).unwrap();
+    assert_eq!(
+        request,
+        Request::LookupBlock(crate::tl::request::LookupBlock {
+            mode: (),
+            id: block,
+            seqno: Some(()),
+            lt: Some(11),
+            utime: Some(22),
+            with_state_update: Some(()),
+            with_value_flow: None,
+            with_extra: Some(()),
+            with_shard_hashes: None,
+            with_prev_blk_signatures: Some(()),
+        })
+    );
+}
+
+#[tokio::test]
+async fn lookup_block_with_proof_builds_request_and_decodes_result() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let id = BlockId {
+        workchain: 0,
+        shard: 1,
+        seqno: 9,
+    };
+    let mc_block_id = test_block_id();
+    let response = crate::tl::response::LookupBlockResult {
+        id: test_block_id(),
+        mode: (),
+        mc_block_id: mc_block_id.clone(),
+        client_mc_state_proof: vec![1],
+        mc_block_proof: vec![2],
+        shard_links: Vec::new(),
+        header: vec![3],
+        prev_header: vec![4],
+    };
+    let mut client = request_response_client(
+        Arc::clone(&requests),
+        Response::LookupBlockResult(response.clone()),
+    );
+
+    let decoded = client
+        .lookup_block_with_proof((), id.clone(), mc_block_id.clone(), Some(33), Some(44))
+        .await
+        .unwrap();
+
+    assert_eq!(decoded, response);
+    let request: Request = tl_proto::deserialize(&requests.lock().await[0]).unwrap();
+    assert_eq!(
+        request,
+        Request::LookupBlockWithProof(crate::tl::request::LookupBlockWithProof {
+            mode: (),
+            id,
+            mc_block_id,
+            lt: Some(33),
+            utime: Some(44),
+        })
+    );
 }
 
 #[tokio::test]
@@ -182,6 +356,33 @@ async fn raw_get_block_decodes_block_boc() {
     ));
 
     assert_eq!(client.raw_get_block(test_block_id()).await.unwrap(), block);
+}
+
+#[tokio::test]
+async fn typed_boc_helpers_return_decode_errors_for_malformed_payloads() {
+    let mut client = response_client(Response::BlockData(crate::tl::response::BlockData {
+        id: test_block_id(),
+        data: vec![0, 1, 2],
+    }));
+    let error = client
+        .raw_get_block_data(test_block_id())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, LiteError::TlError(_)));
+
+    let mut client = response_client(Response::LibraryResult(
+        crate::tl::response::LibraryResult {
+            result: vec![LibraryEntry {
+                hash: Int256([9; 32]),
+                data: vec![0, 1, 2],
+            }],
+        },
+    ));
+    let error = client
+        .get_libraries_typed(vec![Int256([9; 32])])
+        .await
+        .unwrap_err();
+    assert!(matches!(error, LiteError::TlError(_)));
 }
 
 #[tokio::test]

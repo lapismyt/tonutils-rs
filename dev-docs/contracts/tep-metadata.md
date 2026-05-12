@@ -50,41 +50,94 @@ metadata parsing.
 
 ## Jetton Metadata
 
-Jetton support should decode typed get-method output for TEP-74-compatible
-masters, then parse TEP-64 content into typed fields where the standard defines
-them. Unknown keys and unsupported value encodings must remain available as raw
-metadata entries.
+`src/jetton.rs` implements typed metadata support for TEP-74-compatible jetton
+masters. The wrapper decodes the official `get_jetton_data()` stack layout:
+
+- `total_supply` as a non-negative integer;
+- `mintable` as `-1` for true and `0` for false;
+- `admin_address` as a standard internal address or `addr_none`;
+- `jetton_content` as a TEP-64 content cell;
+- `jetton_wallet_code` as the returned wallet code cell.
+
+`JettonMasterData::metadata()` maps the parsed TEP-64 content into
+`JettonMetadata` fields for `uri`, `name`, `description`, `image`,
+`image_data`, `symbol`, `decimals`, and `amount_style`. Unknown keys,
+unsupported jetton-adjacent keys, raw content, and field-level malformed value
+diagnostics remain inspectable. Off-chain JSON fetching is not implemented in
+this layer; off-chain content only fills the discovered URI.
 
 Required fixture coverage:
 
-- Off-chain URI content.
-- On-chain dictionary content.
-- Unknown-key preservation.
-- Malformed snake and chunked content rejection.
+- Off-chain URI content: covered by deterministic unit tests.
+- On-chain dictionary content: covered by deterministic unit tests.
+- Unknown-key preservation: covered by deterministic unit tests.
+- Malformed field diagnostics and top-level malformed content rejection:
+  covered by deterministic unit tests.
+
+The `Contract` helper `jetton_master_data_latest()` runs `get_jetton_data` at
+the provider's latest masterchain block and decodes successful stacks.
+`jetton_metadata_latest()` returns the mapped metadata. Mock-provider tests
+cover method-id routing, latest-block lookup, provider errors, and non-zero
+exit code propagation.
 
 ## NFT Metadata
 
-NFT support should decode typed get-method output for TEP-62-compatible
-collections and items, then parse TEP-64 collection and item content. Item
-metadata must leave room for individual-content merge behavior where collection
-data and item data are combined by contract convention.
+`src/nft.rs` implements typed metadata support for TEP-62-compatible NFT
+collections and items. The wrapper decodes the official get-method stack
+layouts:
+
+- `get_collection_data()` returns `next_item_index`, `collection_content`, and
+  `owner_address`;
+- `get_nft_data()` returns `init?`, `index`, `collection_address`,
+  `owner_address`, and `individual_content`;
+- `get_nft_content(index, individual_content)` returns a full TEP-64 content
+  cell for a collection-backed item.
+
+`NftCollectionData::metadata()` maps collection content into `NftMetadata`.
+Standalone item metadata is supported by `nft_item_metadata_latest()` when
+`collection_address` is `addr_none`; collection-backed item metadata should be
+resolved by running `nft_full_item_metadata_latest(&item_data)` on the
+collection contract so merge behavior remains contract-defined.
+
+Address stack entries accept `addr_none` as `None` and standard internal
+addresses as `Some(Address)`. External addresses, variable-length internal
+addresses, anycast, trailing data, and malformed cells are structured decode
+errors.
+
+`NftMetadata` maps `uri`, `name`, `description`, `image`, `image_data`,
+`render_type`, `content_url`, and `video`. Unknown keys and known but
+NFT-unmapped jetton fields such as `symbol`, `decimals`, and `amount_style`
+remain raw-preserved. Malformed known field values become field diagnostics
+instead of invalidating the whole metadata object.
 
 Required fixture coverage:
 
-- Collection metadata.
-- Item metadata.
-- Individual-content merge behavior.
-- Unknown-key preservation.
-- Malformed content rejection.
+- Collection metadata: covered by deterministic unit tests.
+- Item metadata: covered by deterministic unit tests.
+- Individual-content merge behavior through `get_nft_content`: covered by
+  deterministic mock-provider tests.
+- Unknown-key preservation: covered by deterministic unit tests.
+- Malformed content rejection and malformed field diagnostics: covered by
+  deterministic unit tests.
 
 ## Current Limits
 
-The common parser does not yet fetch off-chain JSON, merge semi-chain content,
-or decode jetton/NFT get-method stacks. Those wrapper integrations remain
-tracked in `TODO.md`.
+The common parser, jetton metadata mapper, and NFT metadata mapper do not fetch
+off-chain JSON or merge semi-chain content locally. NFT transfers, royalty
+helpers, `get_nft_address_by_index`, SBT extensions, and indexer API
+integration remain out of scope for the current wrapper layer.
 
 ## Sources
 
 - Official TON token metadata documentation for TEP-64 content markers, snake
   encoding, chunked encoding, and common jetton/NFT metadata keys:
   <https://docs.ton.org/standard/tokens/metadata>.
+- Official TON jetton interface documentation for `get_jetton_data()` stack
+  fields and `mintable` `-1/0` semantics:
+  <https://docs.ton.org/standard/tokens/jettons/api>.
+- Official TON NFT interface documentation for `get_collection_data()`,
+  `get_nft_data()`, and `get_nft_content()` stack fields:
+  <https://docs.ton.org/standard/tokens/nft/api>.
+- Official TON NFT reference documentation for contract-defined full item
+  content composition:
+  <https://docs.ton.org/standard/tokens/nft/nft-reference>.

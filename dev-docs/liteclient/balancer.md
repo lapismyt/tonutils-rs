@@ -51,6 +51,13 @@ Do not blindly retry on:
 - malformed local request,
 - proof verification failure.
 
+Current offline tests cover representative retry and non-retry paths with
+in-memory peers: typed helper calls retry after ADNL transport errors, do not
+retry `liteServer.error`, and do not retry local BoC decode failures. The same
+tests pin the current failure bookkeeping behavior: failed attempts decrement
+in-flight counters, update request statistics, remove the peer from the alive
+set, and mark the peer `Dead`.
+
 ## Rate Limiting
 
 The balancer supports two independent limiter placements:
@@ -67,6 +74,6 @@ token per peer attempt, not one token for the high-level method call.
 
 - Reconnect descriptors.
 - EWMA implementation.
-- State transition tests.
+- Reconnect and timeout state-machine tests.
 - Shared method dispatch with LiteClient.
 - Live validation against rented liteserver quota behavior.

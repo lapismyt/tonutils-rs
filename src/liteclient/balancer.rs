@@ -1062,6 +1062,8 @@ impl LiteBalancer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adnl::helper_types::AdnlError;
+    use crate::tl::request::Request;
     use std::sync::Arc;
     use std::time::Duration;
     use tokio::sync::Mutex;
@@ -1089,6 +1091,70 @@ mod tests {
                 }
             },
         ))
+    }
+
+    fn queued_response_client(
+        calls: Arc<Mutex<usize>>,
+        outcomes: Vec<std::result::Result<crate::tl::response::Response, LiteError>>,
+    ) -> LiteClient {
+        let outcomes = Arc::new(Mutex::new(std::collections::VecDeque::from(outcomes)));
+        LiteClient::from_service(service_fn(
+            move |_request: crate::tl::request::RawWrappedRequest| {
+                let calls = Arc::clone(&calls);
+                let outcomes = Arc::clone(&outcomes);
+                async move {
+                    *calls.lock().await += 1;
+                    match outcomes.lock().await.pop_front() {
+                        Some(Ok(response)) => Ok::<_, LiteError>(tl_proto::serialize(response)),
+                        Some(Err(error)) => Err(error),
+                        None => Err(LiteError::UnexpectedMessage),
+                    }
+                }
+            },
+        ))
+    }
+
+    fn recording_response_client(
+        requests: Arc<Mutex<Vec<Request>>>,
+        response: crate::tl::response::Response,
+    ) -> LiteClient {
+        let response = tl_proto::serialize(response);
+        LiteClient::from_service(service_fn(
+            move |request: crate::tl::request::RawWrappedRequest| {
+                let requests = Arc::clone(&requests);
+                let response = response.clone();
+                async move {
+                    let request = tl_proto::deserialize(&request.request).map_err(|error| {
+                        LiteError::TlError(crate::tl::TlError::ParseError(error.to_string()))
+                    })?;
+                    requests.lock().await.push(request);
+                    Ok::<_, LiteError>(response)
+                }
+            },
+        ))
+    }
+
+    fn test_block_id(seqno: i32) -> BlockIdExt {
+        BlockIdExt {
+            workchain: -1,
+            shard: i64::MIN,
+            seqno,
+            root_hash: Int256([seqno as u8; 32]),
+            file_hash: Int256([(seqno + 1) as u8; 32]),
+        }
+    }
+
+    fn block_header_response(seqno: i32) -> crate::tl::response::Response {
+        crate::tl::response::Response::BlockHeader(crate::tl::response::BlockHeader {
+            id: test_block_id(seqno),
+            mode: (),
+            with_state_update: None,
+            with_value_flow: None,
+            with_extra: None,
+            with_shard_hashes: None,
+            with_prev_blk_signatures: None,
+            header_proof: Vec::new(),
+        })
     }
 
     #[test]
@@ -1582,6 +1648,226 @@ mod tests {
         // Build priority list for all
         let all_list = balancer.build_priority_list(false).await;
         assert_eq!(all_list.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn typed_helper_retries_adnl_errors_through_peer_selection_path() {
+        let peer0_calls = Arc::new(Mutex::new(0usize));
+        let peer1_calls = Arc::new(Mutex::new(0usize));
+        let peers = vec![
+            queued_response_client(
+                Arc::clone(&peer0_calls),
+                vec![Err(LiteError::AdnlError(AdnlError::EndOfStream))],
+            ),
+            queued_response_client(
+                Arc::clone(&peer1_calls),
+                vec![Ok(crate::tl::response::Response::LibraryResult(
+                    crate::tl::response::LibraryResult {
+                        result: vec![LibraryEntry {
+                            hash: Int256([7; 32]),
+                            data: Vec::new(),
+                        }],
+                    },
+                ))],
+            ),
+        ];
+        let mut balancer = LiteBalancer::new(peers, Duration::from_millis(50));
+        balancer.max_retries = 2;
+        balancer.alive_peers.write().await.extend([0, 1]);
+        balancer.peer_stats.write().await.extend([
+            (
+                0,
+                PeerStats {
+                    mc_block_seqno: 10,
+                    avg_response_time_ms: 1,
+                    ..Default::default()
+                },
+            ),
+            (
+                1,
+                PeerStats {
+                    mc_block_seqno: 10,
+                    avg_response_time_ms: 2,
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        let result = balancer
+            .get_libraries_typed(vec![Int256([7; 32])])
+            .await
+            .unwrap();
+
+        assert!(matches!(result.get(&Int256([7; 32])), Some(None)));
+        assert_eq!(*peer0_calls.lock().await, 1);
+        assert_eq!(*peer1_calls.lock().await, 1);
+        assert!(!balancer.alive_peers.read().await.contains(&0));
+        assert!(balancer.alive_peers.read().await.contains(&1));
+        assert_eq!(
+            balancer.peer_states.read().await.get(&0),
+            Some(&PeerState::Dead)
+        );
+        assert_eq!(
+            balancer
+                .peer_stats
+                .read()
+                .await
+                .get(&0)
+                .map(|stats| (stats.total_requests, stats.current_requests)),
+            Some((1, 0))
+        );
+    }
+
+    #[tokio::test]
+    async fn lite_server_error_is_not_retried_but_updates_peer_failure_state() {
+        let peer0_calls = Arc::new(Mutex::new(0usize));
+        let peer1_calls = Arc::new(Mutex::new(0usize));
+        let peers = vec![
+            queued_response_client(
+                Arc::clone(&peer0_calls),
+                vec![Ok(crate::tl::response::Response::Error(
+                    crate::tl::response::Error {
+                        code: 400,
+                        message: "bad request".into(),
+                    },
+                ))],
+            ),
+            queued_response_client(
+                Arc::clone(&peer1_calls),
+                vec![Ok(crate::tl::response::Response::CurrentTime(
+                    crate::tl::response::CurrentTime { now: 1 },
+                ))],
+            ),
+        ];
+        let mut balancer = LiteBalancer::new(peers, Duration::from_millis(50));
+        balancer.max_retries = 2;
+        balancer.alive_peers.write().await.extend([0, 1]);
+        balancer.peer_stats.write().await.extend([
+            (
+                0,
+                PeerStats {
+                    mc_block_seqno: 10,
+                    avg_response_time_ms: 1,
+                    ..Default::default()
+                },
+            ),
+            (
+                1,
+                PeerStats {
+                    mc_block_seqno: 10,
+                    avg_response_time_ms: 2,
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        let error = balancer.get_time().await.unwrap_err();
+
+        assert!(matches!(
+            error,
+            BalancerError::LiteError(LiteError::ServerError(_))
+        ));
+        assert_eq!(*peer0_calls.lock().await, 1);
+        assert_eq!(*peer1_calls.lock().await, 0);
+        assert!(!balancer.alive_peers.read().await.contains(&0));
+        assert_eq!(
+            balancer.peer_states.read().await.get(&0),
+            Some(&PeerState::Dead)
+        );
+        assert_eq!(
+            balancer
+                .peer_stats
+                .read()
+                .await
+                .get(&0)
+                .map(|stats| (stats.total_requests, stats.current_requests)),
+            Some((1, 0))
+        );
+    }
+
+    #[tokio::test]
+    async fn local_typed_decode_error_is_not_retried() {
+        let peer0_calls = Arc::new(Mutex::new(0usize));
+        let peer1_calls = Arc::new(Mutex::new(0usize));
+        let peers = vec![
+            queued_response_client(
+                Arc::clone(&peer0_calls),
+                vec![Ok(crate::tl::response::Response::LibraryResult(
+                    crate::tl::response::LibraryResult {
+                        result: vec![LibraryEntry {
+                            hash: Int256([8; 32]),
+                            data: vec![0, 1, 2],
+                        }],
+                    },
+                ))],
+            ),
+            queued_response_client(
+                Arc::clone(&peer1_calls),
+                vec![Ok(crate::tl::response::Response::LibraryResult(
+                    crate::tl::response::LibraryResult { result: Vec::new() },
+                ))],
+            ),
+        ];
+        let mut balancer = LiteBalancer::new(peers, Duration::from_millis(50));
+        balancer.max_retries = 2;
+        balancer.alive_peers.write().await.extend([0, 1]);
+        balancer.peer_stats.write().await.extend([
+            (
+                0,
+                PeerStats {
+                    mc_block_seqno: 10,
+                    avg_response_time_ms: 1,
+                    ..Default::default()
+                },
+            ),
+            (
+                1,
+                PeerStats {
+                    mc_block_seqno: 10,
+                    avg_response_time_ms: 2,
+                    ..Default::default()
+                },
+            ),
+        ]);
+
+        let error = balancer
+            .get_libraries_typed(vec![Int256([8; 32])])
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            BalancerError::LiteError(LiteError::TlError(_))
+        ));
+        assert_eq!(*peer0_calls.lock().await, 1);
+        assert_eq!(*peer1_calls.lock().await, 0);
+        assert!(!balancer.alive_peers.read().await.contains(&0));
+    }
+
+    #[tokio::test]
+    async fn archive_probe_records_only_peers_that_accept_old_block_lookup() {
+        let peer1_requests = Arc::new(Mutex::new(Vec::new()));
+        let peers = vec![
+            queued_response_client(
+                Arc::new(Mutex::new(0)),
+                vec![Ok(crate::tl::response::Response::Error(
+                    crate::tl::response::Error {
+                        code: 404,
+                        message: "not archive".into(),
+                    },
+                ))],
+            ),
+            recording_response_client(Arc::clone(&peer1_requests), block_header_response(1)),
+        ];
+        let mut balancer = LiteBalancer::new(peers, Duration::from_millis(50));
+        balancer.alive_peers.write().await.extend([0, 1]);
+
+        balancer.find_archives().await;
+
+        assert_eq!(*balancer.archival_peers.read().await, HashSet::from([1]));
+        let requests = peer1_requests.lock().await;
+        assert_eq!(requests.len(), 1);
+        assert!(matches!(requests[0], Request::LookupBlock(_)));
     }
 
     #[tokio::test]

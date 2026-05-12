@@ -13,16 +13,26 @@ postponed work moves to `# BACKLOG`.
 - [ ] Track LiteClient workflow coverage #liteclient #network #contracts #tests #docs
   - [-] Define expected success and failure behavior for connect, masterchain info, block lookup, account state, run method, send message, and raw query workflows #liteclient #network #tests #docs
     - [x] Document contract-facing account state, run method, send message, and transaction workflow behavior for LiteClient providers #liteclient #contracts #docs
-    - [ ] Complete connect, block lookup, and raw query acceptance coverage #liteclient #network #tests #docs
+    - [-] Complete connect, block lookup, and raw query acceptance coverage #liteclient #network #tests #docs
+      - [x] Add offline acceptance tests for block lookup request construction and raw query byte preservation #liteclient #network #tests
+      - [ ] Add connect-path acceptance coverage without live credentials #liteclient #network #tests
   - [ ] Map typed LiteClient helpers to current local LiteAPI schema coverage and accepted protocol evidence #liteclient #tl #docs
-  - [ ] Add fixture-backed tests for typed LiteClient payload decoding and error behavior #liteclient #tvm #tlb #tests
+  - [-] Add fixture-backed tests for typed LiteClient payload decoding and error behavior #liteclient #tvm #tlb #tests
+    - [x] Add offline tests for typed success decoding, unexpected response rejection, lookup result decoding, and malformed BoC decode errors #liteclient #tvm #tlb #tests
+    - [ ] Add checked upstream or live-captured fixtures for representative block/account/proof payloads #liteclient #tvm #tlb #tests
   - [ ] Add ignored live-network smoke tests for public config workflows #liteclient #network #tests
 - [ ] Track LiteBalancer workflow coverage #balancer #liteclient #network #tests #docs
   - [-] Define expected success and failure behavior for peer selection, retry, archival routing, and raw query delegation #balancer #network #tests #docs
     - [x] Document contract-facing account state, get-method, external-message, and transaction delegation parity with LiteClient #balancer #contracts #docs
-    - [ ] Complete peer selection, retry, archival routing, and raw query acceptance coverage #balancer #network #tests #docs
-  - [ ] Add verification coverage for peer health state transitions, failover, and request routing decisions #balancer #network #tests
-  - [ ] Keep LiteBalancer typed helper coverage synchronized with LiteClient helper coverage #balancer #liteclient #docs
+    - [-] Complete peer selection, retry, archival routing, and raw query acceptance coverage #balancer #network #tests #docs
+      - [x] Add offline tests for typed-helper retry routing, archival probe filtering, non-retryable server errors, and local decode errors #balancer #network #tests
+      - [ ] Add raw query delegation coverage if a public balancer raw-query helper is introduced #balancer #network #tests
+  - [-] Add verification coverage for peer health state transitions, failover, and request routing decisions #balancer #network #tests
+    - [x] Verify current failure handling removes failed peers, records dead state, and clears in-flight counters #balancer #network #tests
+    - [ ] Add reconnect and timeout state-machine coverage after those behaviors are implemented #balancer #network #tests
+  - [-] Keep LiteBalancer typed helper coverage synchronized with LiteClient helper coverage #balancer #liteclient #docs
+    - [x] Add offline parity checks for representative typed helper routing through peer selection, retry, and local decode error paths #balancer #liteclient #tests
+    - [ ] Keep adding representative parity checks when LiteClient typed helper coverage expands #balancer #liteclient #tests
 - [-] Maintain RPS limiting for rented liteserver quotas as a first-class SDK capability #balancer #liteclient #network #perf #tests
   - [x] Add API-level configuration for global and per-peer RPS caps #balancer #liteclient
   - [x] Enforce limiter in LiteClient and LiteBalancer request paths with clear error/throttle semantics #balancer #liteclient #network
@@ -70,14 +80,14 @@ postponed work moves to `# BACKLOG`.
   - [x] Decode on-chain and off-chain URI content forms while preserving unsupported raw cells #metadata #tvm #tests
   - [x] Add raw-preserving fallback types for unknown keys, malformed values, and future TEP extensions #metadata #contracts
   - [x] Document metadata wire formats, known limits, and unsupported content forms in `dev-docs/` #metadata #docs
-- [ ] Add jetton metadata support for TEP-74 wrappers #metadata #jettons #contracts #tests
-  - [ ] Decode typed jetton master get-method output needed for metadata lookup #jettons #contracts #tvm
-  - [ ] Map TEP-64 jetton metadata keys into typed Rust fields with raw unknown-key preservation #metadata #jettons
-  - [ ] Add fixture-backed jetton metadata cells for on-chain and off-chain content #metadata #jettons #tests
-- [ ] Add NFT metadata support for TEP-62 wrappers #metadata #nft #contracts #tests
-  - [ ] Decode typed NFT collection and item get-method outputs needed for metadata lookup #nft #contracts #tvm
-  - [ ] Map TEP-64 NFT collection and item metadata keys into typed Rust fields with raw unknown-key preservation #metadata #nft
-  - [ ] Add fixture-backed NFT metadata cells for collection, item, and individual-content merge behavior #metadata #nft #tests
+- [x] Add jetton metadata support for TEP-74 wrappers #metadata #jettons #contracts #tests
+  - [x] Decode typed jetton master get-method output needed for metadata lookup #jettons #contracts #tvm
+  - [x] Map TEP-64 jetton metadata keys into typed Rust fields with raw unknown-key preservation #metadata #jettons
+  - [x] Add fixture-backed jetton metadata cells for on-chain and off-chain content #metadata #jettons #tests
+- [x] Add NFT metadata support for TEP-62 wrappers #metadata #nft #contracts #tests
+  - [x] Decode typed NFT collection and item get-method outputs needed for metadata lookup #nft #contracts #tvm
+  - [x] Map TEP-64 NFT collection and item metadata keys into typed Rust fields with raw unknown-key preservation #metadata #nft
+  - [x] Add fixture-backed NFT metadata cells for collection, item, and individual-content merge behavior #metadata #nft #tests
 
 ## ABI (Tongo-Level)
 
