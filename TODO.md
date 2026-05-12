@@ -45,7 +45,8 @@ postponed work moves to `# BACKLOG`.
     - [x] Add Wallet V5R1 storage data, wallet-id packing, signed external body construction, external message BoC construction, and address derivation #wallet #contracts #crypto #tests
     - [x] Add Wallet V4R2 storage data, default wallet-id handling, signed simple-send body construction, external message BoC construction, and address derivation #wallet #contracts #crypto #tests
     - [x] Add CLI wallet generate, address, seqno, prepare-transfer, and send MVP without local secret storage #wallet #cli #network #crypto
-    - [ ] Add get-method helpers for V5R1 seqno, wallet id, public key, signature-auth status, and extension lookup #wallet #contracts #tvm #docs
+    - [x] Add get-method helpers for V5R1 seqno, wallet id, public key, signature-auth status, and raw extension payload lookup #wallet #contracts #tvm #docs
+    - [ ] Add decoded Wallet V5R1 extension dictionary lookup and management policy #wallet #contracts #tvm #docs
     - [ ] Add mock-provider coverage for wallet send routing through `send_external_message_boc` #wallet #cli #contracts #tests
     - [ ] Promote live V5R1/V4R2 send/deploy helpers after deterministic fixtures and provider behavior are accepted #wallet #contracts #network #tests
   - [-] Add deterministic wallet and mnemonic fixtures before live send workflows are enabled #wallet #crypto #tests

@@ -14,7 +14,7 @@ use crate::tvm::{Address, Builder, Cell, HashmapE, Slice, serialize_boc};
 use bip39::{Language, Mnemonic};
 use ed25519_dalek::{Signer, SigningKey};
 use hmac::{Hmac, Mac};
-use num_bigint::BigUint;
+use num_bigint::{BigInt, BigUint, Sign};
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
 use sha2::Sha512;
@@ -349,6 +349,53 @@ where
     Build(#[from] WalletError),
     #[error("contract provider error: {0}")]
     Provider(#[source] E),
+}
+
+/// Errors returned by Wallet V5R1 get-method helpers.
+#[cfg(feature = "liteclient")]
+#[derive(Debug, thiserror::Error)]
+pub enum WalletGetMethodError<E>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    #[error("failed to derive wallet address: {0}")]
+    Build(#[from] WalletError),
+    #[error("contract provider error: {0}")]
+    Provider(#[source] E),
+    #[error("wallet get-method {method} exited with code {exit_code}")]
+    NonZeroExitCode {
+        method: &'static str,
+        exit_code: i32,
+    },
+    #[error("wallet get-method {method} returned no result stack")]
+    MissingStack { method: &'static str },
+    #[error("failed to decode wallet get-method {method} result stack: {error}")]
+    UndecodableStack { method: &'static str, error: String },
+    #[error("wallet get-method {method} returned no stack entry at index {index}")]
+    MissingStackEntry { method: &'static str, index: usize },
+    #[error(
+        "wallet get-method {method} returned wrong stack entry type at index {index}: expected {expected}"
+    )]
+    WrongStackType {
+        method: &'static str,
+        index: usize,
+        expected: &'static str,
+    },
+    #[error("wallet get-method {method} integer at index {index} is outside {expected}")]
+    IntegerRange {
+        method: &'static str,
+        index: usize,
+        expected: &'static str,
+    },
+    #[error(
+        "wallet get-method {method} public key is {actual_bits} bits, expected at most 256 bits"
+    )]
+    PublicKeyWidth {
+        method: &'static str,
+        actual_bits: usize,
+    },
+    #[error("wallet get-method {method} returned an empty cell/slice entry")]
+    MissingCell { method: &'static str },
 }
 
 /// Persistent Wallet V5R1 storage data.
@@ -1034,6 +1081,104 @@ impl WalletV5R1 {
         Ok(serialize_boc(&message.to_cell()?, false)?)
     }
 
+    /// Reads the deployed wallet `seqno` get-method from the latest
+    /// masterchain block known by the provider.
+    #[cfg(feature = "liteclient")]
+    pub async fn seqno<P: crate::contracts::ContractProvider + ?Sized>(
+        &self,
+        provider: &mut P,
+    ) -> Result<u32, WalletGetMethodError<P::Error>> {
+        let stack = self.run_v5r1_get_method(provider, "seqno").await?;
+        wallet_stack_u32("seqno", &stack, 0)
+    }
+
+    /// Reads the deployed wallet id through `get_wallet_id`.
+    #[cfg(feature = "liteclient")]
+    pub async fn wallet_id_onchain<P: crate::contracts::ContractProvider + ?Sized>(
+        &self,
+        provider: &mut P,
+    ) -> Result<u32, WalletGetMethodError<P::Error>> {
+        let stack = self.run_v5r1_get_method(provider, "get_wallet_id").await?;
+        wallet_stack_u32("get_wallet_id", &stack, 0)
+    }
+
+    /// Reads the deployed Ed25519 public key through `get_public_key`.
+    #[cfg(feature = "liteclient")]
+    pub async fn public_key_onchain<P: crate::contracts::ContractProvider + ?Sized>(
+        &self,
+        provider: &mut P,
+    ) -> Result<[u8; 32], WalletGetMethodError<P::Error>> {
+        let stack = self.run_v5r1_get_method(provider, "get_public_key").await?;
+        wallet_stack_public_key("get_public_key", &stack, 0)
+    }
+
+    /// Reads whether signature authentication is enabled through
+    /// `is_signature_allowed`.
+    #[cfg(feature = "liteclient")]
+    pub async fn is_signature_allowed_onchain<P: crate::contracts::ContractProvider + ?Sized>(
+        &self,
+        provider: &mut P,
+    ) -> Result<bool, WalletGetMethodError<P::Error>> {
+        let stack = self
+            .run_v5r1_get_method(provider, "is_signature_allowed")
+            .await?;
+        wallet_stack_bool_int("is_signature_allowed", &stack, 0)
+    }
+
+    /// Reads the raw extension dictionary payload through `get_extensions`.
+    ///
+    /// The returned cell or slice is preserved as-is; this helper intentionally
+    /// does not decode extension addresses or dictionary values.
+    #[cfg(feature = "liteclient")]
+    pub async fn extensions_raw_onchain<P: crate::contracts::ContractProvider + ?Sized>(
+        &self,
+        provider: &mut P,
+    ) -> Result<Arc<Cell>, WalletGetMethodError<P::Error>> {
+        let stack = self.run_v5r1_get_method(provider, "get_extensions").await?;
+        wallet_stack_cell("get_extensions", &stack, 0)
+    }
+
+    #[cfg(feature = "liteclient")]
+    async fn run_v5r1_get_method<P: crate::contracts::ContractProvider + ?Sized>(
+        &self,
+        provider: &mut P,
+        method: &'static str,
+    ) -> Result<crate::tvm::TvmStack, WalletGetMethodError<P::Error>> {
+        use crate::contracts::{DecodedRunMethodResult, RunMethodResultExt};
+        use crate::tvm::TvmStack;
+
+        let block = provider
+            .get_masterchain_info()
+            .await
+            .map_err(WalletGetMethodError::Provider)?
+            .last;
+        let result = provider
+            .run_get_method(
+                0,
+                block,
+                self.address()?,
+                crate::utils::method_name_to_id(method),
+                TvmStack::empty(),
+            )
+            .await
+            .map_err(WalletGetMethodError::Provider)?;
+
+        if result.exit_code != 0 {
+            return Err(WalletGetMethodError::NonZeroExitCode {
+                method,
+                exit_code: result.exit_code,
+            });
+        }
+
+        match result.result_stack_lossless() {
+            DecodedRunMethodResult::Decoded(stack) => Ok(stack),
+            DecodedRunMethodResult::Missing => Err(WalletGetMethodError::MissingStack { method }),
+            DecodedRunMethodResult::Undecodable { error, .. } => {
+                Err(WalletGetMethodError::UndecodableStack { method, error })
+            }
+        }
+    }
+
     /// Sends a signed external message BoC through any contract provider.
     #[cfg(feature = "liteclient")]
     pub async fn send_external_message<P: crate::contracts::ContractProvider + ?Sized>(
@@ -1168,12 +1313,251 @@ fn load_v5_inner_request(slice: &mut Slice) -> crate::tlb::Result<Option<OutList
     Ok(out_list)
 }
 
+#[cfg(feature = "liteclient")]
+fn wallet_stack_entry<'a, E>(
+    method: &'static str,
+    stack: &'a crate::tvm::TvmStack,
+    index: usize,
+) -> Result<&'a crate::tvm::TvmStackEntry, WalletGetMethodError<E>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    stack
+        .entries()
+        .get(index)
+        .ok_or(WalletGetMethodError::MissingStackEntry { method, index })
+}
+
+#[cfg(feature = "liteclient")]
+fn wallet_stack_int<'a, E>(
+    method: &'static str,
+    stack: &'a crate::tvm::TvmStack,
+    index: usize,
+) -> Result<&'a BigInt, WalletGetMethodError<E>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    match wallet_stack_entry(method, stack, index)? {
+        crate::tvm::TvmStackEntry::Int(value) => Ok(value),
+        _ => Err(WalletGetMethodError::WrongStackType {
+            method,
+            index,
+            expected: "integer",
+        }),
+    }
+}
+
+#[cfg(feature = "liteclient")]
+fn wallet_stack_u32<E>(
+    method: &'static str,
+    stack: &crate::tvm::TvmStack,
+    index: usize,
+) -> Result<u32, WalletGetMethodError<E>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let value = wallet_stack_int(method, stack, index)?;
+    if value.sign() == Sign::Minus || value > &BigInt::from(u32::MAX) {
+        return Err(WalletGetMethodError::IntegerRange {
+            method,
+            index,
+            expected: "uint32",
+        });
+    }
+    value
+        .to_string()
+        .parse::<u32>()
+        .map_err(|_| WalletGetMethodError::IntegerRange {
+            method,
+            index,
+            expected: "uint32",
+        })
+}
+
+#[cfg(feature = "liteclient")]
+fn wallet_stack_bool_int<E>(
+    method: &'static str,
+    stack: &crate::tvm::TvmStack,
+    index: usize,
+) -> Result<bool, WalletGetMethodError<E>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let value = wallet_stack_int(method, stack, index)?;
+    if value == &BigInt::from(0u8) {
+        Ok(false)
+    } else if value == &BigInt::from(1u8) {
+        Ok(true)
+    } else {
+        Err(WalletGetMethodError::IntegerRange {
+            method,
+            index,
+            expected: "0 or 1",
+        })
+    }
+}
+
+#[cfg(feature = "liteclient")]
+fn wallet_stack_public_key<E>(
+    method: &'static str,
+    stack: &crate::tvm::TvmStack,
+    index: usize,
+) -> Result<[u8; 32], WalletGetMethodError<E>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let value = wallet_stack_int(method, stack, index)?;
+    let Some(value) = value.to_biguint() else {
+        return Err(WalletGetMethodError::IntegerRange {
+            method,
+            index,
+            expected: "uint256",
+        });
+    };
+    let bytes = value.to_bytes_be();
+    if bytes.len() > 32 {
+        return Err(WalletGetMethodError::PublicKeyWidth {
+            method,
+            actual_bits: bytes.len() * 8,
+        });
+    }
+    let mut public_key = [0u8; 32];
+    public_key[32 - bytes.len()..].copy_from_slice(&bytes);
+    Ok(public_key)
+}
+
+#[cfg(feature = "liteclient")]
+fn wallet_stack_cell<E>(
+    method: &'static str,
+    stack: &crate::tvm::TvmStack,
+    index: usize,
+) -> Result<Arc<Cell>, WalletGetMethodError<E>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    match wallet_stack_entry(method, stack, index)? {
+        crate::tvm::TvmStackEntry::Cell(cell) | crate::tvm::TvmStackEntry::Slice(cell) => {
+            if cell.bit_len() == 0 && cell.references().is_empty() {
+                Err(WalletGetMethodError::MissingCell { method })
+            } else {
+                Ok(cell.clone())
+            }
+        }
+        _ => Err(WalletGetMethodError::WrongStackType {
+            method,
+            index,
+            expected: "cell or slice",
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tlb::{TlbDeserialize, TlbSerialize};
     use crate::tvm::deserialize_boc;
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
+    #[cfg(feature = "liteclient")]
+    use {
+        crate::contracts::ContractProvider,
+        crate::tl::{
+            BlockIdExt,
+            common::{AccountId, Int256},
+            response::{AccountState, MasterchainInfo, RunMethodResult, TransactionList},
+        },
+        crate::tvm::{TvmStack, TvmStackEntry},
+        async_trait::async_trait,
+    };
+
+    #[cfg(feature = "liteclient")]
+    #[derive(Debug, thiserror::Error)]
+    #[error("mock provider error")]
+    struct MockProviderError;
+
+    #[cfg(feature = "liteclient")]
+    struct WalletGetMockProvider {
+        latest: BlockIdExt,
+        account: Address,
+        result: Result<RunMethodResult, MockProviderError>,
+        method_calls: Vec<u64>,
+        account_calls: Vec<Address>,
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[async_trait]
+    impl ContractProvider for WalletGetMockProvider {
+        type Error = MockProviderError;
+
+        async fn get_masterchain_info(&mut self) -> Result<MasterchainInfo, Self::Error> {
+            Ok(MasterchainInfo {
+                last: self.latest.clone(),
+                state_root_hash: Int256([1; 32]),
+                init: crate::tl::common::ZeroStateIdExt {
+                    workchain: -1,
+                    root_hash: Int256([2; 32]),
+                    file_hash: Int256([3; 32]),
+                },
+            })
+        }
+
+        async fn get_account_state(
+            &mut self,
+            _block: BlockIdExt,
+            _account: AccountId,
+        ) -> Result<AccountState, Self::Error> {
+            unimplemented!("wallet get-method helpers do not read account state")
+        }
+
+        async fn get_account_state_typed(
+            &mut self,
+            _block: BlockIdExt,
+            _account: Address,
+        ) -> Result<crate::liteclient::boc::DecodedAccountState, Self::Error> {
+            unimplemented!("wallet get-method helpers do not read account state")
+        }
+
+        async fn get_account_state_simple(
+            &mut self,
+            _block: BlockIdExt,
+            _account: Address,
+        ) -> Result<crate::liteclient::boc::SimpleAccount, Self::Error> {
+            unimplemented!("wallet get-method helpers do not read account state")
+        }
+
+        async fn run_get_method(
+            &mut self,
+            _mode: u32,
+            block: BlockIdExt,
+            account: Address,
+            method_id: u64,
+            stack: TvmStack,
+        ) -> Result<RunMethodResult, Self::Error> {
+            assert_eq!(block, self.latest);
+            assert_eq!(account, self.account);
+            assert!(stack.entries().is_empty());
+            self.method_calls.push(method_id);
+            self.account_calls.push(account);
+            match &self.result {
+                Ok(result) => Ok(result.clone()),
+                Err(_) => Err(MockProviderError),
+            }
+        }
+
+        async fn send_external_message_boc(&mut self, _body: Vec<u8>) -> Result<u32, Self::Error> {
+            unimplemented!("wallet get-method helpers do not send messages")
+        }
+
+        async fn get_transactions(
+            &mut self,
+            _count: u32,
+            _account: AccountId,
+            _lt: u64,
+            _hash: Int256,
+        ) -> Result<TransactionList, Self::Error> {
+            unimplemented!("wallet get-method helpers do not read transactions")
+        }
+    }
 
     fn test_code() -> Arc<Cell> {
         let mut builder = Builder::new();
@@ -1187,6 +1571,324 @@ mod tests {
 
     fn fixture_mnemonic() -> &'static str {
         "open price dish charge law skirt alien churn fire swap number brass outdoor diamond lesson april remain puzzle title elbow valley grant champion staff"
+    }
+
+    #[cfg(feature = "liteclient")]
+    fn wallet_get_block() -> BlockIdExt {
+        BlockIdExt {
+            workchain: -1,
+            shard: i64::MIN,
+            seqno: 42,
+            root_hash: Int256([4; 32]),
+            file_hash: Int256([5; 32]),
+        }
+    }
+
+    #[cfg(feature = "liteclient")]
+    fn wallet_get_result(exit_code: i32, result: Option<TvmStack>) -> RunMethodResult {
+        RunMethodResult {
+            mode: (),
+            id: wallet_get_block(),
+            shardblk: wallet_get_block(),
+            shard_proof: None,
+            proof: None,
+            state_proof: None,
+            init_c7: None,
+            lib_extras: None,
+            exit_code,
+            result: result.map(|stack| stack.to_boc().unwrap()),
+        }
+    }
+
+    #[cfg(feature = "liteclient")]
+    fn wallet_get_mock(wallet: &WalletV5R1, stack: TvmStack) -> WalletGetMockProvider {
+        WalletGetMockProvider {
+            latest: wallet_get_block(),
+            account: wallet.address().unwrap(),
+            result: Ok(wallet_get_result(0, Some(stack))),
+            method_calls: Vec::new(),
+            account_calls: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "liteclient")]
+    fn wallet_get_wallet() -> WalletV5R1 {
+        WalletV5R1::new(
+            VerifyingKey::from(&signing_key()).to_bytes(),
+            WALLET_V5R1_MAINNET_DEFAULT_ID,
+            test_code(),
+            0,
+        )
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v5r1_get_method_helpers_route_expected_methods() {
+        let wallet = wallet_get_wallet();
+
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::int(7)]));
+        assert_eq!(wallet.seqno(&mut provider).await.unwrap(), 7);
+        assert_eq!(
+            provider.method_calls,
+            vec![crate::utils::method_name_to_id("seqno")]
+        );
+        assert_eq!(provider.account_calls, vec![wallet.address().unwrap()]);
+
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::int(8)]));
+        assert_eq!(wallet.wallet_id_onchain(&mut provider).await.unwrap(), 8);
+        assert_eq!(
+            provider.method_calls,
+            vec![crate::utils::method_name_to_id("get_wallet_id")]
+        );
+
+        let mut provider = wallet_get_mock(
+            &wallet,
+            TvmStack::new(vec![TvmStackEntry::int(BigInt::from_bytes_be(
+                Sign::Plus,
+                &[0x11; 32],
+            ))]),
+        );
+        assert_eq!(
+            wallet.public_key_onchain(&mut provider).await.unwrap(),
+            [0x11; 32]
+        );
+        assert_eq!(
+            provider.method_calls,
+            vec![crate::utils::method_name_to_id("get_public_key")]
+        );
+
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::int(1)]));
+        assert!(
+            wallet
+                .is_signature_allowed_onchain(&mut provider)
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            provider.method_calls,
+            vec![crate::utils::method_name_to_id("is_signature_allowed")]
+        );
+
+        let raw_extensions = test_code();
+        let mut provider = wallet_get_mock(
+            &wallet,
+            TvmStack::new(vec![TvmStackEntry::Cell(raw_extensions.clone())]),
+        );
+        assert_eq!(
+            wallet
+                .extensions_raw_onchain(&mut provider)
+                .await
+                .unwrap()
+                .hash(),
+            raw_extensions.hash()
+        );
+        assert_eq!(
+            provider.method_calls,
+            vec![crate::utils::method_name_to_id("get_extensions")]
+        );
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v5r1_get_method_uint32_decoding_rejects_invalid_values() {
+        let wallet = wallet_get_wallet();
+
+        let mut provider = wallet_get_mock(
+            &wallet,
+            TvmStack::new(vec![TvmStackEntry::int(BigInt::from(u32::MAX))]),
+        );
+        assert_eq!(wallet.seqno(&mut provider).await.unwrap(), u32::MAX);
+
+        let mut provider = wallet_get_mock(
+            &wallet,
+            TvmStack::new(vec![TvmStackEntry::int(BigInt::from(u32::MAX) + 1)]),
+        );
+        assert!(matches!(
+            wallet.seqno(&mut provider).await.unwrap_err(),
+            WalletGetMethodError::IntegerRange {
+                method: "seqno",
+                expected: "uint32",
+                ..
+            }
+        ));
+
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::int(-1)]));
+        assert!(matches!(
+            wallet.wallet_id_onchain(&mut provider).await.unwrap_err(),
+            WalletGetMethodError::IntegerRange {
+                method: "get_wallet_id",
+                expected: "uint32",
+                ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v5r1_get_public_key_decodes_uint256_integer() {
+        let wallet = wallet_get_wallet();
+        let mut expected = [0u8; 32];
+        expected[31] = 0x2a;
+
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::int(0x2a)]));
+        assert_eq!(
+            wallet.public_key_onchain(&mut provider).await.unwrap(),
+            expected
+        );
+
+        let too_wide = BigInt::from_bytes_be(Sign::Plus, &[1u8; 33]);
+        let mut provider =
+            wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::int(too_wide)]));
+        assert!(matches!(
+            wallet.public_key_onchain(&mut provider).await.unwrap_err(),
+            WalletGetMethodError::PublicKeyWidth {
+                method: "get_public_key",
+                ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v5r1_signature_allowed_accepts_only_zero_or_one() {
+        let wallet = wallet_get_wallet();
+
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::int(0)]));
+        assert!(
+            !wallet
+                .is_signature_allowed_onchain(&mut provider)
+                .await
+                .unwrap()
+        );
+
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::int(1)]));
+        assert!(
+            wallet
+                .is_signature_allowed_onchain(&mut provider)
+                .await
+                .unwrap()
+        );
+
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::int(2)]));
+        assert!(matches!(
+            wallet
+                .is_signature_allowed_onchain(&mut provider)
+                .await
+                .unwrap_err(),
+            WalletGetMethodError::IntegerRange {
+                method: "is_signature_allowed",
+                expected: "0 or 1",
+                ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v5r1_get_extensions_preserves_raw_slice_entry() {
+        let wallet = wallet_get_wallet();
+        let raw_extensions = test_code();
+        let mut provider = wallet_get_mock(
+            &wallet,
+            TvmStack::new(vec![TvmStackEntry::Slice(raw_extensions.clone())]),
+        );
+
+        assert_eq!(
+            wallet
+                .extensions_raw_onchain(&mut provider)
+                .await
+                .unwrap()
+                .hash(),
+            raw_extensions.hash()
+        );
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v5r1_get_method_helpers_report_stack_failures() {
+        let wallet = wallet_get_wallet();
+
+        let mut provider = WalletGetMockProvider {
+            latest: wallet_get_block(),
+            account: wallet.address().unwrap(),
+            result: Ok(wallet_get_result(5, Some(TvmStack::empty()))),
+            method_calls: Vec::new(),
+            account_calls: Vec::new(),
+        };
+        assert!(matches!(
+            wallet.seqno(&mut provider).await.unwrap_err(),
+            WalletGetMethodError::NonZeroExitCode {
+                method: "seqno",
+                exit_code: 5
+            }
+        ));
+
+        let mut provider = WalletGetMockProvider {
+            latest: wallet_get_block(),
+            account: wallet.address().unwrap(),
+            result: Ok(wallet_get_result(0, None)),
+            method_calls: Vec::new(),
+            account_calls: Vec::new(),
+        };
+        assert!(matches!(
+            wallet.seqno(&mut provider).await.unwrap_err(),
+            WalletGetMethodError::MissingStack { method: "seqno" }
+        ));
+
+        let mut provider = WalletGetMockProvider {
+            latest: wallet_get_block(),
+            account: wallet.address().unwrap(),
+            result: Ok(RunMethodResult {
+                result: Some(vec![0xff]),
+                ..wallet_get_result(0, None)
+            }),
+            method_calls: Vec::new(),
+            account_calls: Vec::new(),
+        };
+        assert!(matches!(
+            wallet.seqno(&mut provider).await.unwrap_err(),
+            WalletGetMethodError::UndecodableStack {
+                method: "seqno",
+                ..
+            }
+        ));
+
+        let mut provider = wallet_get_mock(&wallet, TvmStack::empty());
+        assert!(matches!(
+            wallet.seqno(&mut provider).await.unwrap_err(),
+            WalletGetMethodError::MissingStackEntry {
+                method: "seqno",
+                index: 0
+            }
+        ));
+
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::Null]));
+        assert!(matches!(
+            wallet.seqno(&mut provider).await.unwrap_err(),
+            WalletGetMethodError::WrongStackType {
+                method: "seqno",
+                expected: "integer",
+                ..
+            }
+        ));
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v5r1_get_method_helpers_propagate_provider_errors() {
+        let wallet = wallet_get_wallet();
+        let mut provider = WalletGetMockProvider {
+            latest: wallet_get_block(),
+            account: wallet.address().unwrap(),
+            result: Err(MockProviderError),
+            method_calls: Vec::new(),
+            account_calls: Vec::new(),
+        };
+
+        assert!(matches!(
+            wallet.seqno(&mut provider).await.unwrap_err(),
+            WalletGetMethodError::Provider(_)
+        ));
     }
 
     #[test]

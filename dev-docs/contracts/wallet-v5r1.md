@@ -16,6 +16,9 @@ The first milestone is offline-safe and deterministic:
 - `WalletV5R1` builds `StateInit`, derives addresses, creates external signed
   request bodies, signs their cell hash with Ed25519, and wraps them in
   external-in message BoCs.
+- With `liteclient`, `WalletV5R1` provides get-method helpers for `seqno`,
+  `get_wallet_id`, `get_public_key`, `is_signature_allowed`, and
+  `get_extensions` over the existing `ContractProvider` trait.
 
 Live sending remains an adapter over `ContractProvider::send_external_message_boc`.
 The wallet module must not hide provider failures or treat BoC submission as
@@ -35,6 +38,12 @@ The implemented `WalletV5R1Data` maps this directly. The extensions dictionary
 is decoded as `HashmapE<bool>` because `int1` is a single bit. The current public
 builder creates an empty dictionary; non-empty extension management is follow-up
 work.
+
+The live `get_extensions` helper is deliberately raw-preserving. It returns the
+stack cell or slice payload as `Arc<Cell>` and does not interpret the
+`HashmapE 256 int1` keys or values. Typed extension lookup and mutation policy
+remain follow-up work so callers can still inspect or persist the exact
+on-chain payload.
 
 The external signed request body uses opcode `0x7369676e` followed by:
 
@@ -87,6 +96,9 @@ Backoffice/custom context is preserved as a 31-bit value with leading bit `0`.
 The wallet helper verifies only local serialization and local Ed25519 signature
 construction. It does not verify deployed wallet code, account state, seqno
 freshness, timeout acceptance, extension authorization, or transaction inclusion.
+The V5R1 get-method helpers decode successful TVM stack values from the wallet
+address derived locally, but they do not prove that the deployed code at that
+address is the embedded wallet code.
 
 Address derivation is deterministic for the provided code cell and data cell.
 This repo embeds a Wallet V5R1 code BoC from the `@ton/ton`
@@ -105,6 +117,10 @@ tracked follow-up work.
 - Rejection of more than 255 wallet messages.
 - External inbound message BoC decoding.
 - Embedded code BoC hash stability for the local decoder.
+- Mock-provider coverage for V5R1 get-method routing, typed integer/public-key
+  decoding, signature-auth status decoding, raw extension payload preservation,
+  non-zero exit codes, missing or undecodable stacks, wrong stack entry types,
+  and provider error propagation.
 
 Missing fixture work is tracked in `TODO.md`.
 

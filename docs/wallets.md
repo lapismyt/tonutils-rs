@@ -37,3 +37,13 @@ let address = wallet.address()?;
 `valid_until` is a Unix timestamp stored as `uint32`. `seqno` is replay
 protection and must match the current wallet contract state. Include `StateInit`
 only for deployment or first-message workflows.
+
+With the `liteclient` feature, `WalletV5R1` also exposes typed get-method
+helpers over any `ContractProvider`. The helpers read the latest masterchain
+block from the provider, call the deployed wallet address derived from
+`WalletV5R1::address()`, and decode successful TVM stack values for `seqno`,
+`get_wallet_id`, `get_public_key`, `is_signature_allowed`, and
+`get_extensions`.
+
+`get_extensions` is intentionally raw-preserving: it returns the cell or slice
+payload as `Arc<Cell>` and does not decode extension address dictionaries yet.
