@@ -46,16 +46,16 @@ postponed work moves to `# BACKLOG`.
     - [x] Add Wallet V4R2 storage data, default wallet-id handling, signed simple-send body construction, external message BoC construction, and address derivation #wallet #contracts #crypto #tests
     - [x] Add CLI wallet generate, address, seqno, prepare-transfer, and send MVP without local secret storage #wallet #cli #network #crypto
     - [x] Add get-method helpers for V5R1 seqno, wallet id, public key, signature-auth status, and raw extension payload lookup #wallet #contracts #tvm #docs
-    - [ ] Add decoded Wallet V5R1 extension dictionary lookup and management policy #wallet #contracts #tvm #docs
+    - [x] Add decoded Wallet V5R1 extension dictionary lookup and management policy #wallet #contracts #tvm #docs
     - [x] Add mock-provider coverage for wallet send routing through `send_external_message_boc` #wallet #cli #contracts #tests
-    - [ ] Promote live V5R1/V4R2 send/deploy helpers after deterministic fixtures and provider behavior are accepted #wallet #contracts #network #tests
+    - [x] Promote live V5R1/V4R2 send/deploy helpers after deterministic fixtures and provider behavior are accepted #wallet #contracts #network #tests
   - [-] Add deterministic wallet and mnemonic fixtures before live send workflows are enabled #wallet #crypto #tests
     - [x] Add offline Wallet V5R1 tests for wallet-id vectors, data roundtrip, empty extensions, signed body construction, action-count limits, signature verification, and external message BoC decoding #wallet #crypto #tests
     - [x] Add offline Wallet V4R2 tests for data roundtrip, empty plugins, signed body construction, action-count limits, signature verification, and external message BoC decoding #wallet #crypto #tests
     - [x] Add mnemonic generation/import/derivation fixtures #wallet #crypto #tests
     - [x] Add deterministic Criterion benchmarks for mnemonic derivation, cached wallet code, address derivation, and signed transfer BoC construction #wallet #crypto #perf #tests
-    - [ ] Reconcile embedded `@ton/ton` Wallet V4R2/V5R1 code BoC hashes with current TON wallet-history documentation hashes #wallet #crypto #docs #tests
-    - [ ] Add upstream Wallet V5R1 and V4R2 state-init/address fixtures for mainnet and testnet defaults #wallet #crypto #tests
+    - [x] Reconcile embedded `@ton/ton` Wallet V4R2/V5R1 code BoC hashes with current TON wallet-history documentation hashes #wallet #crypto #docs #tests
+    - [x] Add upstream Wallet V5R1 and V4R2 state-init/address fixtures for mainnet and testnet defaults #wallet #crypto #tests
 - [ ] Track ABI and typed wrapper capabilities #abi #contracts #wallet #tests #docs
   - [-] Map each ABI and wrapper gap to subsystem tags and acceptance tests #abi #contracts #docs #tests
     - [x] Add direct address-bound `Contract<'a, P>` typed-client delegation test #contracts #docs #tests
@@ -65,11 +65,11 @@ postponed work moves to `# BACKLOG`.
 
 ## TEP Metadata And Typed Wrappers
 
-- [ ] Implement common TEP metadata parsing #metadata #contracts #tvm #tests #docs
-  - [ ] Decode TEP-64 snake and chunked content cells with canonical bounds checks #metadata #tvm #tests
-  - [ ] Decode on-chain and off-chain URI content forms while preserving unsupported raw cells #metadata #tvm #tests
-  - [ ] Add raw-preserving fallback types for unknown keys, malformed values, and future TEP extensions #metadata #contracts
-  - [ ] Document metadata wire formats, known limits, and unsupported content forms in `dev-docs/` #metadata #docs
+- [x] Implement common TEP metadata parsing #metadata #contracts #tvm #tests #docs
+  - [x] Decode TEP-64 snake and chunked content cells with canonical bounds checks #metadata #tvm #tests
+  - [x] Decode on-chain and off-chain URI content forms while preserving unsupported raw cells #metadata #tvm #tests
+  - [x] Add raw-preserving fallback types for unknown keys, malformed values, and future TEP extensions #metadata #contracts
+  - [x] Document metadata wire formats, known limits, and unsupported content forms in `dev-docs/` #metadata #docs
 - [ ] Add jetton metadata support for TEP-74 wrappers #metadata #jettons #contracts #tests
   - [ ] Decode typed jetton master get-method output needed for metadata lookup #jettons #contracts #tvm
   - [ ] Map TEP-64 jetton metadata keys into typed Rust fields with raw unknown-key preservation #metadata #jettons

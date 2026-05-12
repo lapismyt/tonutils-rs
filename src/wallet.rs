@@ -10,7 +10,7 @@ use crate::tlb::{
     MessageRelaxed, MsgAddress, MsgAddressExt, MsgAddressInt, OutAction, OutList, StateInit,
     TlbDeserialize, TlbError, TlbSerialize, ensure_empty,
 };
-use crate::tvm::{Address, Builder, Cell, HashmapE, Slice, serialize_boc};
+use crate::tvm::{Address, BitKey, Builder, Cell, HashmapE, Slice, serialize_boc};
 use bip39::{Language, Mnemonic};
 use ed25519_dalek::{Signer, SigningKey};
 use hmac::{Hmac, Mac};
@@ -41,6 +41,9 @@ const WALLET_V4R2_CODE_BOC_HEX: &str = "b5ee9c72010214010002d4000114ff00f4a413f4
 const WALLET_V5R1_EXTERNAL_SIGNED_OP: u32 = 0x7369_676e;
 const WALLET_V5R1_EXTENSIONS_KEY_BITS: usize = 256;
 const WALLET_V5R1_MAX_ACTIONS: usize = 255;
+const WALLET_V5R1_ADD_EXTENSION_TAG: u8 = 0x02;
+const WALLET_V5R1_DELETE_EXTENSION_TAG: u8 = 0x03;
+const WALLET_V5R1_SET_SIGNATURE_AUTH_ALLOWED_TAG: u8 = 0x04;
 const WALLET_V5R1_CLIENT_CONTEXT_FLAG: u32 = 1 << 31;
 const WALLET_V5R1_CLIENT_SUBWALLET_BITS: u32 = 15;
 const WALLET_V5R1_CLIENT_SUBWALLET_MAX: u16 = (1 << WALLET_V5R1_CLIENT_SUBWALLET_BITS) - 1;
@@ -90,6 +93,8 @@ pub enum WalletError {
     CustomContextTooLarge(u32),
     #[error("Wallet V5R1 action count {count} exceeds maximum {max}")]
     TooManyActions { count: usize, max: usize },
+    #[error("Wallet V5R1 extension dictionary key width {actual} does not match {expected}")]
+    InvalidExtensionKeyWidth { actual: usize, expected: usize },
     #[error("failed to serialize wallet TL-B value: {0}")]
     Tlb(#[from] TlbError),
     #[error("failed to build wallet cell or BoC: {0}")]
@@ -396,6 +401,8 @@ where
     },
     #[error("wallet get-method {method} returned an empty cell/slice entry")]
     MissingCell { method: &'static str },
+    #[error("wallet get-method {method} returned malformed cell/slice payload: {error}")]
+    InvalidCell { method: &'static str, error: String },
 }
 
 /// Persistent Wallet V5R1 storage data.
@@ -411,6 +418,139 @@ pub struct WalletV5R1Data {
     pub public_key: [u8; 32],
     /// Extension dictionary keyed by 256-bit address hash, with `int1` values.
     pub extensions: HashmapE<bool>,
+}
+
+/// Typed Wallet V5R1 extension dictionary.
+///
+/// Wallet V5R1 stores extension authorization as `HashmapE 256 int1`. The
+/// canonical key is the 256-bit account hash only; address helpers use
+/// [`Address::hash_part`] and intentionally ignore the workchain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalletV5R1Extensions {
+    inner: HashmapE<bool>,
+}
+
+impl WalletV5R1Extensions {
+    /// Creates an empty extension dictionary.
+    pub fn empty() -> Self {
+        Self {
+            inner: HashmapE::new(WALLET_V5R1_EXTENSIONS_KEY_BITS),
+        }
+    }
+
+    /// Wraps a decoded `HashmapE<bool>` after verifying the V5R1 key width.
+    pub fn from_hashmap(hashmap: HashmapE<bool>) -> Result<Self, WalletError> {
+        if hashmap.key_bits() != WALLET_V5R1_EXTENSIONS_KEY_BITS {
+            return Err(WalletError::InvalidExtensionKeyWidth {
+                actual: hashmap.key_bits(),
+                expected: WALLET_V5R1_EXTENSIONS_KEY_BITS,
+            });
+        }
+        Ok(Self { inner: hashmap })
+    }
+
+    /// Returns the wrapped dictionary.
+    pub fn as_hashmap(&self) -> &HashmapE<bool> {
+        &self.inner
+    }
+
+    /// Consumes this wrapper and returns the wrapped dictionary.
+    pub fn into_hashmap(self) -> HashmapE<bool> {
+        self.inner
+    }
+
+    /// Returns the number of extension hashes.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns true when there are no extensions.
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Inserts a 256-bit extension hash. Returns whether an entry was replaced.
+    pub fn insert_hash(&mut self, hash: [u8; 32]) -> bool {
+        let key = extension_hash_key(hash);
+        self.inner
+            .insert_bit_key(key, true)
+            .expect("fixed 256-bit hash key matches extension dictionary")
+            .is_some()
+    }
+
+    /// Removes a 256-bit extension hash. Returns whether it was present.
+    pub fn remove_hash(&mut self, hash: [u8; 32]) -> bool {
+        let key = extension_hash_key(hash);
+        self.inner
+            .remove_bit_key(&key)
+            .expect("fixed 256-bit hash key matches extension dictionary")
+            .is_some()
+    }
+
+    /// Returns true when the 256-bit extension hash is present.
+    pub fn contains_hash(&self, hash: [u8; 32]) -> bool {
+        let key = extension_hash_key(hash);
+        self.inner
+            .get_bit_key(&key)
+            .expect("fixed 256-bit hash key matches extension dictionary")
+            .is_some()
+    }
+
+    /// Iterates extension hashes in canonical dictionary order.
+    pub fn iter_hashes(&self) -> impl Iterator<Item = [u8; 32]> + '_ {
+        self.inner.iter().map(|(key, _)| {
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(key.data());
+            hash
+        })
+    }
+
+    /// Inserts the hash part of an address, ignoring its workchain.
+    pub fn insert_address(&mut self, address: &Address) -> bool {
+        self.insert_hash(address.hash_part)
+    }
+
+    /// Removes the hash part of an address, ignoring its workchain.
+    pub fn remove_address(&mut self, address: &Address) -> bool {
+        self.remove_hash(address.hash_part)
+    }
+
+    /// Checks the hash part of an address, ignoring its workchain.
+    pub fn contains_address(&self, address: &Address) -> bool {
+        self.contains_hash(address.hash_part)
+    }
+}
+
+impl Default for WalletV5R1Extensions {
+    fn default() -> Self {
+        Self::empty()
+    }
+}
+
+impl TlbSerialize for WalletV5R1Extensions {
+    fn store_tlb(&self, builder: &mut Builder) -> crate::tlb::Result<()> {
+        builder.store_hashmap_e_with(&self.inner, |builder, value| {
+            builder.store_bit(*value)?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for WalletV5R1Extensions {
+    fn load_tlb(slice: &mut Slice) -> crate::tlb::Result<Self> {
+        let inner =
+            slice.load_hashmap_e_with(WALLET_V5R1_EXTENSIONS_KEY_BITS, |slice| slice.load_bit())?;
+        Self::from_hashmap(inner).map_err(|error| TlbError::CustomSchema {
+            schema: "WalletV5R1Extensions",
+            message: error.to_string(),
+        })
+    }
+}
+
+fn extension_hash_key(hash: [u8; 32]) -> BitKey {
+    BitKey::from_bits(hash.to_vec(), WALLET_V5R1_EXTENSIONS_KEY_BITS)
+        .expect("32 bytes always encode a 256-bit key")
 }
 
 impl WalletV5R1Data {
@@ -752,6 +892,198 @@ impl WalletMessage {
     }
 }
 
+/// Wallet V5R1 management action from `W5ExtendedAction`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WalletV5R1ExtendedAction {
+    /// `add_extension#02 addr:MsgAddressInt`.
+    AddExtension {
+        /// Extension contract address to authorize.
+        address: MsgAddressInt,
+    },
+    /// `delete_extension#03 addr:MsgAddressInt`.
+    DeleteExtension {
+        /// Extension contract address to remove.
+        address: MsgAddressInt,
+    },
+    /// `set_signature_auth_allowed#04 allowed:Bool`.
+    SetSignatureAuthAllowed {
+        /// Whether public-key signature authentication remains allowed.
+        allowed: bool,
+    },
+}
+
+impl WalletV5R1ExtendedAction {
+    /// Creates an add-extension action from a standard address.
+    pub fn add_extension(address: Address) -> Self {
+        Self::AddExtension {
+            address: MsgAddressInt::std(address),
+        }
+    }
+
+    /// Creates a delete-extension action from a standard address.
+    pub fn delete_extension(address: Address) -> Self {
+        Self::DeleteExtension {
+            address: MsgAddressInt::std(address),
+        }
+    }
+
+    /// Creates a signature-auth policy action.
+    pub fn set_signature_auth_allowed(allowed: bool) -> Self {
+        Self::SetSignatureAuthAllowed { allowed }
+    }
+}
+
+impl TlbSerialize for WalletV5R1ExtendedAction {
+    fn store_tlb(&self, builder: &mut Builder) -> crate::tlb::Result<()> {
+        match self {
+            Self::AddExtension { address } => {
+                builder.store_u8(WALLET_V5R1_ADD_EXTENSION_TAG)?;
+                address.store_tlb(builder)?;
+            }
+            Self::DeleteExtension { address } => {
+                builder.store_u8(WALLET_V5R1_DELETE_EXTENSION_TAG)?;
+                address.store_tlb(builder)?;
+            }
+            Self::SetSignatureAuthAllowed { allowed } => {
+                builder.store_u8(WALLET_V5R1_SET_SIGNATURE_AUTH_ALLOWED_TAG)?;
+                builder.store_bit(*allowed)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for WalletV5R1ExtendedAction {
+    fn load_tlb(slice: &mut Slice) -> crate::tlb::Result<Self> {
+        match slice.load_u8()? {
+            WALLET_V5R1_ADD_EXTENSION_TAG => Ok(Self::AddExtension {
+                address: MsgAddressInt::load_tlb(slice)?,
+            }),
+            WALLET_V5R1_DELETE_EXTENSION_TAG => Ok(Self::DeleteExtension {
+                address: MsgAddressInt::load_tlb(slice)?,
+            }),
+            WALLET_V5R1_SET_SIGNATURE_AUTH_ALLOWED_TAG => Ok(Self::SetSignatureAuthAllowed {
+                allowed: slice.load_bit()?,
+            }),
+            tag => Err(TlbError::CustomSchema {
+                schema: "WalletV5R1ExtendedAction",
+                message: format!("unknown extended action tag 0x{tag:02x}"),
+            }),
+        }
+    }
+}
+
+/// Wallet V5R1 non-empty `W5ExtendedActionList`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalletV5R1ExtendedActionList {
+    /// Extended actions in serialization order.
+    pub actions: Vec<WalletV5R1ExtendedAction>,
+}
+
+impl WalletV5R1ExtendedActionList {
+    /// Creates a non-empty extended action list.
+    pub fn new(actions: Vec<WalletV5R1ExtendedAction>) -> crate::tlb::Result<Self> {
+        if actions.is_empty() {
+            return Err(TlbError::CustomSchema {
+                schema: "W5ExtendedActionList",
+                message: "extended action list cannot be empty".to_string(),
+            });
+        }
+        if actions.len() > WALLET_V5R1_MAX_ACTIONS {
+            return Err(TlbError::CustomSchema {
+                schema: "W5ExtendedActionList",
+                message: format!(
+                    "action count {} exceeds maximum {WALLET_V5R1_MAX_ACTIONS}",
+                    actions.len()
+                ),
+            });
+        }
+        Ok(Self { actions })
+    }
+
+    /// Returns the number of extended actions.
+    pub fn len(&self) -> usize {
+        self.actions.len()
+    }
+
+    /// Returns false because `W5ExtendedActionList` has no empty constructor.
+    pub fn is_empty(&self) -> bool {
+        self.actions.is_empty()
+    }
+
+    fn store_actions(
+        actions: &[WalletV5R1ExtendedAction],
+        builder: &mut Builder,
+    ) -> crate::tlb::Result<()> {
+        let Some((first, rest)) = actions.split_first() else {
+            return Err(TlbError::CustomSchema {
+                schema: "W5ExtendedActionList",
+                message: "extended action list cannot be empty".to_string(),
+            });
+        };
+        first.store_tlb(builder)?;
+        if !rest.is_empty() {
+            let mut next = Builder::new();
+            Self::store_actions(rest, &mut next)?;
+            builder.store_ref(next.build()?)?;
+        }
+        Ok(())
+    }
+
+    fn load_actions(
+        slice: &mut Slice,
+        depth: usize,
+    ) -> crate::tlb::Result<Vec<WalletV5R1ExtendedAction>> {
+        if depth >= WALLET_V5R1_MAX_ACTIONS {
+            return Err(TlbError::CustomSchema {
+                schema: "W5ExtendedActionList",
+                message: format!("action count exceeds maximum {WALLET_V5R1_MAX_ACTIONS}"),
+            });
+        }
+
+        let action = WalletV5R1ExtendedAction::load_tlb(slice)?;
+        let mut actions = vec![action];
+        match slice.remaining_refs() {
+            0 => {}
+            1 => {
+                let next = slice.load_reference()?;
+                let mut next_slice = Slice::new(next);
+                actions.extend(Self::load_actions(&mut next_slice, depth + 1).map_err(
+                    |source| TlbError::InvalidReferencePayload {
+                        schema: "W5ExtendedActionList",
+                        source: Box::new(source),
+                    },
+                )?);
+                ensure_empty(&next_slice).map_err(|source| TlbError::InvalidReferencePayload {
+                    schema: "W5ExtendedActionList",
+                    source: Box::new(source),
+                })?;
+            }
+            count => {
+                return Err(TlbError::CustomSchema {
+                    schema: "W5ExtendedActionList",
+                    message: format!(
+                        "list node has {count} continuation references, expected at most 1"
+                    ),
+                });
+            }
+        }
+        Ok(actions)
+    }
+}
+
+impl TlbSerialize for WalletV5R1ExtendedActionList {
+    fn store_tlb(&self, builder: &mut Builder) -> crate::tlb::Result<()> {
+        Self::store_actions(&self.actions, builder)
+    }
+}
+
+impl TlbDeserialize for WalletV5R1ExtendedActionList {
+    fn load_tlb(slice: &mut Slice) -> crate::tlb::Result<Self> {
+        Self::new(Self::load_actions(slice, 0)?)
+    }
+}
+
 /// Wallet V4R2 offline helper bound to code, workchain, wallet id, and public key.
 #[derive(Debug, Clone)]
 pub struct WalletV4R2 {
@@ -1010,7 +1342,24 @@ impl WalletV5R1 {
         valid_until: u32,
         messages: Vec<WalletMessage>,
     ) -> Result<Arc<Cell>, WalletError> {
-        validate_action_count(messages.len())?;
+        self.build_external_signing_cell_with_extended_actions(
+            seqno,
+            valid_until,
+            messages,
+            Vec::new(),
+        )
+    }
+
+    /// Builds the unsigned signing cell for an external signed request with
+    /// optional Wallet V5R1 extended management actions.
+    pub fn build_external_signing_cell_with_extended_actions(
+        &self,
+        seqno: u32,
+        valid_until: u32,
+        messages: Vec<WalletMessage>,
+        extended_actions: Vec<WalletV5R1ExtendedAction>,
+    ) -> Result<Arc<Cell>, WalletError> {
+        validate_action_count(messages.len() + extended_actions.len())?;
         let out_list = if messages.is_empty() {
             None
         } else {
@@ -1021,13 +1370,18 @@ impl WalletV5R1 {
                     .collect(),
             ))
         };
+        let extended_actions = if extended_actions.is_empty() {
+            None
+        } else {
+            Some(WalletV5R1ExtendedActionList::new(extended_actions)?)
+        };
 
         let mut builder = Builder::new();
         builder.store_u32(WALLET_V5R1_EXTERNAL_SIGNED_OP)?;
         builder.store_u32(self.wallet_id)?;
         builder.store_u32(valid_until)?;
         builder.store_u32(seqno)?;
-        store_v5_inner_request(&mut builder, out_list.as_ref())?;
+        store_v5_inner_request(&mut builder, out_list.as_ref(), extended_actions.as_ref())?;
         Ok(builder.build()?)
     }
 
@@ -1040,7 +1394,31 @@ impl WalletV5R1 {
         messages: Vec<WalletMessage>,
         signing_key: &SigningKey,
     ) -> Result<WalletV5R1SignedBody, WalletError> {
-        let signing_cell = self.build_external_signing_cell(seqno, valid_until, messages)?;
+        self.build_signed_external_body_with_extended_actions(
+            seqno,
+            valid_until,
+            messages,
+            Vec::new(),
+            signing_key,
+        )
+    }
+
+    /// Builds a signed external body cell with optional Wallet V5R1 extended
+    /// management actions.
+    pub fn build_signed_external_body_with_extended_actions(
+        &self,
+        seqno: u32,
+        valid_until: u32,
+        messages: Vec<WalletMessage>,
+        extended_actions: Vec<WalletV5R1ExtendedAction>,
+        signing_key: &SigningKey,
+    ) -> Result<WalletV5R1SignedBody, WalletError> {
+        let signing_cell = self.build_external_signing_cell_with_extended_actions(
+            seqno,
+            valid_until,
+            messages,
+            extended_actions,
+        )?;
         let signing_hash = signing_cell.hash();
         let signature = signing_key.sign(&signing_hash).to_bytes();
 
@@ -1063,7 +1441,34 @@ impl WalletV5R1 {
         signing_key: &SigningKey,
         include_state_init: bool,
     ) -> Result<Vec<u8>, WalletError> {
-        let signed = self.build_signed_external_body(seqno, valid_until, messages, signing_key)?;
+        self.build_external_message_boc_with_extended_actions(
+            seqno,
+            valid_until,
+            messages,
+            Vec::new(),
+            signing_key,
+            include_state_init,
+        )
+    }
+
+    /// Builds an external inbound message BoC with optional Wallet V5R1
+    /// extended management actions.
+    pub fn build_external_message_boc_with_extended_actions(
+        &self,
+        seqno: u32,
+        valid_until: u32,
+        messages: Vec<WalletMessage>,
+        extended_actions: Vec<WalletV5R1ExtendedAction>,
+        signing_key: &SigningKey,
+        include_state_init: bool,
+    ) -> Result<Vec<u8>, WalletError> {
+        let signed = self.build_signed_external_body_with_extended_actions(
+            seqno,
+            valid_until,
+            messages,
+            extended_actions,
+            signing_key,
+        )?;
         let state_init = if include_state_init {
             Some(Either::Right(self.state_init()?))
         } else {
@@ -1136,6 +1541,28 @@ impl WalletV5R1 {
     ) -> Result<Arc<Cell>, WalletGetMethodError<P::Error>> {
         let stack = self.run_v5r1_get_method(provider, "get_extensions").await?;
         wallet_stack_cell("get_extensions", &stack, 0)
+    }
+
+    /// Reads and decodes the deployed extension dictionary through
+    /// `get_extensions`.
+    #[cfg(feature = "liteclient")]
+    pub async fn extensions_onchain<P: crate::contracts::ContractProvider + ?Sized>(
+        &self,
+        provider: &mut P,
+    ) -> Result<WalletV5R1Extensions, WalletGetMethodError<P::Error>> {
+        let raw = self.extensions_raw_onchain(provider).await?;
+        let mut slice = Slice::new(raw);
+        let extensions = WalletV5R1Extensions::load_tlb(&mut slice).map_err(|error| {
+            WalletGetMethodError::InvalidCell {
+                method: "get_extensions",
+                error: error.to_string(),
+            }
+        })?;
+        ensure_empty(&slice).map_err(|error| WalletGetMethodError::InvalidCell {
+            method: "get_extensions",
+            error: error.to_string(),
+        })?;
+        Ok(extensions)
     }
 
     #[cfg(feature = "liteclient")]
@@ -1228,6 +1655,8 @@ pub struct WalletV5R1ExternalBody {
     pub seqno: u32,
     /// Standard outgoing actions, when present.
     pub out_list: Option<OutList>,
+    /// Wallet management actions, when present.
+    pub extended_actions: Option<WalletV5R1ExtendedActionList>,
     /// Ed25519 signature bytes.
     pub signature: [u8; 64],
 }
@@ -1253,7 +1682,7 @@ impl WalletV5R1ExternalBody {
         let wallet_id = slice.load_u32()?;
         let valid_until = slice.load_u32()?;
         let seqno = slice.load_u32()?;
-        let out_list = load_v5_inner_request(&mut slice)?;
+        let (out_list, extended_actions) = load_v5_inner_request(&mut slice)?;
         let mut signature = [0u8; 64];
         signature.copy_from_slice(&slice.load_bytes(64)?);
         ensure_empty(&slice)?;
@@ -1262,6 +1691,7 @@ impl WalletV5R1ExternalBody {
             valid_until,
             seqno,
             out_list,
+            extended_actions,
             signature,
         })
     }
@@ -1280,6 +1710,7 @@ fn validate_action_count(count: usize) -> Result<(), WalletError> {
 fn store_v5_inner_request(
     builder: &mut Builder,
     out_list: Option<&OutList>,
+    extended_actions: Option<&WalletV5R1ExtendedActionList>,
 ) -> crate::tlb::Result<()> {
     match out_list {
         Some(list) => {
@@ -1290,11 +1721,21 @@ fn store_v5_inner_request(
             builder.store_bit(false)?;
         }
     }
-    builder.store_bit(false)?;
+    match extended_actions {
+        Some(list) => {
+            builder.store_bit(true)?;
+            list.store_tlb(builder)?;
+        }
+        None => {
+            builder.store_bit(false)?;
+        }
+    }
     Ok(())
 }
 
-fn load_v5_inner_request(slice: &mut Slice) -> crate::tlb::Result<Option<OutList>> {
+fn load_v5_inner_request(
+    slice: &mut Slice,
+) -> crate::tlb::Result<(Option<OutList>, Option<WalletV5R1ExtendedActionList>)> {
     let out_list = if slice.load_bit()? {
         Some(crate::tlb::load_ref_tlb(
             slice,
@@ -1303,14 +1744,12 @@ fn load_v5_inner_request(slice: &mut Slice) -> crate::tlb::Result<Option<OutList
     } else {
         None
     };
-    if slice.load_bit()? {
-        return Err(TlbError::CustomSchema {
-            schema: "WalletV5R1ExternalBody.extended_actions",
-            message: "extended actions are not decoded by the initial Wallet V5R1 helper"
-                .to_string(),
-        });
-    }
-    Ok(out_list)
+    let extended_actions = if slice.load_bit()? {
+        Some(WalletV5R1ExtendedActionList::load_tlb(slice)?)
+    } else {
+        None
+    };
+    Ok((out_list, extended_actions))
 }
 
 #[cfg(feature = "liteclient")]
@@ -1457,6 +1896,7 @@ mod tests {
     use crate::tlb::{TlbDeserialize, TlbSerialize};
     use crate::tvm::deserialize_boc;
     use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use serde::Deserialize;
 
     #[cfg(feature = "liteclient")]
     use {
@@ -1638,8 +2078,74 @@ mod tests {
         SigningKey::from_bytes(&[7u8; 32])
     }
 
+    fn extensions_cell(extensions: &WalletV5R1Extensions) -> Arc<Cell> {
+        extensions.to_cell().unwrap()
+    }
+
     fn fixture_mnemonic() -> &'static str {
         "open price dish charge law skirt alien churn fire swap number brass outdoor diamond lesson april remain puzzle title elbow valley grant champion staff"
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct WalletFixtureSet {
+        schema_revision: String,
+        fixtures: Vec<WalletFixture>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct WalletFixture {
+        name: String,
+        source: String,
+        capture_date: String,
+        upstream_reference: String,
+        wallet_version: String,
+        network: String,
+        public_key: String,
+        workchain: i8,
+        wallet_id: String,
+        code_hash: String,
+        data_hash: String,
+        state_init_hash: String,
+        raw_address: String,
+        user_friendly_address: String,
+    }
+
+    fn wallet_fixture_set() -> WalletFixtureSet {
+        let set: WalletFixtureSet = serde_json::from_str(include_str!(
+            "../fixtures/wallets/state_init_addresses.json"
+        ))
+        .unwrap();
+        assert!(
+            set.schema_revision
+                .contains("TON wallet state-init/address fixtures")
+        );
+        assert_eq!(set.fixtures.len(), 3);
+        set
+    }
+
+    fn hex_32(value: &str) -> [u8; 32] {
+        let bytes = hex::decode(value).unwrap();
+        bytes.try_into().unwrap()
+    }
+
+    fn wallet_id_hex(value: &str) -> u32 {
+        u32::from_str_radix(value.strip_prefix("0x").unwrap(), 16).unwrap()
+    }
+
+    fn assert_fixture_metadata(fixture: &WalletFixture) {
+        assert_eq!(fixture.capture_date, "2026-05-12");
+        assert!(fixture.source.contains("deterministic offline fixture"));
+        assert!(
+            fixture
+                .upstream_reference
+                .contains("docs.ton.org/standard/wallets/history")
+        );
+        assert!(
+            fixture
+                .upstream_reference
+                .contains("docs.ton.org/standard/wallets/interact")
+        );
+        assert!(!fixture.network.is_empty());
     }
 
     #[cfg(feature = "liteclient")]
@@ -1894,6 +2400,71 @@ mod tests {
 
     #[cfg(feature = "liteclient")]
     #[tokio::test]
+    async fn v5r1_get_extensions_decodes_typed_dictionary() {
+        let wallet = wallet_get_wallet();
+        let mut extensions = WalletV5R1Extensions::empty();
+        extensions.insert_hash([0x11; 32]);
+        extensions.insert_hash([0x22; 32]);
+        let raw = extensions_cell(&extensions);
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::Cell(raw)]));
+
+        let decoded = wallet.extensions_onchain(&mut provider).await.unwrap();
+        assert_eq!(decoded.len(), 2);
+        assert!(decoded.contains_hash([0x11; 32]));
+        assert!(decoded.contains_hash([0x22; 32]));
+        assert_eq!(
+            provider.method_calls,
+            vec![crate::utils::method_name_to_id("get_extensions")]
+        );
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v5r1_get_extensions_decodes_empty_dictionary() {
+        let wallet = wallet_get_wallet();
+        let raw = extensions_cell(&WalletV5R1Extensions::empty());
+        let mut provider = wallet_get_mock(&wallet, TvmStack::new(vec![TvmStackEntry::Cell(raw)]));
+
+        let decoded = wallet.extensions_onchain(&mut provider).await.unwrap();
+        assert!(decoded.is_empty());
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
+    async fn v5r1_get_extensions_rejects_malformed_dictionary() {
+        let wallet = wallet_get_wallet();
+        let mut builder = Builder::new();
+        builder.store_bit(true).unwrap();
+        let malformed = builder.build().unwrap();
+        let mut provider = wallet_get_mock(
+            &wallet,
+            TvmStack::new(vec![TvmStackEntry::Cell(malformed.clone())]),
+        );
+
+        assert!(matches!(
+            wallet.extensions_onchain(&mut provider).await.unwrap_err(),
+            WalletGetMethodError::InvalidCell {
+                method: "get_extensions",
+                ..
+            }
+        ));
+
+        let mut provider = wallet_get_mock(
+            &wallet,
+            TvmStack::new(vec![TvmStackEntry::Cell(malformed.clone())]),
+        );
+        assert_eq!(
+            wallet
+                .extensions_raw_onchain(&mut provider)
+                .await
+                .unwrap()
+                .hash(),
+            malformed.hash()
+        );
+    }
+
+    #[cfg(feature = "liteclient")]
+    #[tokio::test]
     async fn v5r1_get_method_helpers_report_stack_failures() {
         let wallet = wallet_get_wallet();
 
@@ -2072,6 +2643,7 @@ mod tests {
             WalletSendError::Provider(_)
         ));
         assert_eq!(provider.bodies.len(), 1);
+        assert_external_send_boc(&provider.bodies[0], v5.address().unwrap(), true);
 
         let v4 = WalletV4R2::new(public_key, WALLET_V4R2_DEFAULT_ID, test_code(), 0);
         let mut provider = wallet_send_mock(Err(MockProviderError));
@@ -2082,6 +2654,7 @@ mod tests {
             WalletSendError::Provider(_)
         ));
         assert_eq!(provider.bodies.len(), 1);
+        assert_external_send_boc(&provider.bodies[0], v4.address().unwrap(), true);
     }
 
     #[cfg(feature = "liteclient")]
@@ -2208,6 +2781,49 @@ mod tests {
     }
 
     #[test]
+    fn v5r1_extensions_insert_lookup_remove_and_roundtrip() {
+        let first = [0x11; 32];
+        let second = [0x22; 32];
+        let first_address = Address::new(-1, first);
+        let mut extensions = WalletV5R1Extensions::empty();
+
+        assert!(extensions.is_empty());
+        assert!(!extensions.insert_hash(first));
+        assert!(extensions.contains_hash(first));
+        assert!(extensions.contains_address(&first_address));
+        assert!(extensions.insert_hash(first));
+        assert_eq!(extensions.len(), 1);
+        assert!(!extensions.insert_address(&Address::new(0, second)));
+        assert_eq!(
+            extensions.iter_hashes().collect::<Vec<_>>(),
+            vec![first, second]
+        );
+        assert!(extensions.remove_address(&Address::new(42, first)));
+        assert!(!extensions.contains_hash(first));
+        assert!(!extensions.remove_hash(first));
+
+        let cell = extensions.to_cell().unwrap();
+        let decoded = WalletV5R1Extensions::from_cell(cell).unwrap();
+        assert_eq!(decoded, extensions);
+    }
+
+    #[test]
+    fn v5r1_extensions_reject_invalid_key_width() {
+        let mut wrong = HashmapE::new(255);
+        wrong
+            .insert_bit_key(BitKey::from_bits(vec![0x55; 32], 255).unwrap(), true)
+            .unwrap();
+
+        assert!(matches!(
+            WalletV5R1Extensions::from_hashmap(wrong).unwrap_err(),
+            WalletError::InvalidExtensionKeyWidth {
+                actual: 255,
+                expected: 256
+            }
+        ));
+    }
+
+    #[test]
     fn v4r2_data_cell_roundtrips_with_empty_plugins() {
         let data = WalletV4R2Data::new(WALLET_V4R2_DEFAULT_ID, [0x11; 32]);
         let cell = data.to_cell().unwrap();
@@ -2230,6 +2846,89 @@ mod tests {
         assert!(Arc::ptr_eq(&v5_first, &v5_second));
         assert_eq!(v5_first.hash(), WALLET_V5R1_CODE_HASH);
         assert_eq!(v5_second.hash(), WALLET_V5R1_CODE_HASH);
+    }
+
+    #[test]
+    fn wallet_state_init_address_fixtures_match_embedded_code() {
+        let set = wallet_fixture_set();
+
+        for fixture in set.fixtures {
+            assert_fixture_metadata(&fixture);
+            let public_key = hex_32(&fixture.public_key);
+            let wallet_id = wallet_id_hex(&fixture.wallet_id);
+
+            match fixture.wallet_version.as_str() {
+                "V5R1" => {
+                    let wallet = WalletV5R1::new(
+                        public_key,
+                        wallet_id,
+                        wallet_v5r1_code().unwrap(),
+                        fixture.workchain,
+                    );
+                    assert_eq!(
+                        wallet.code.hash(),
+                        hex_32(&fixture.code_hash),
+                        "{}",
+                        fixture.name
+                    );
+                    assert_eq!(
+                        wallet.data().to_cell().unwrap().hash(),
+                        hex_32(&fixture.data_hash),
+                        "{}",
+                        fixture.name
+                    );
+                    assert_eq!(
+                        wallet.state_init().unwrap().to_cell().unwrap().hash(),
+                        hex_32(&fixture.state_init_hash),
+                        "{}",
+                        fixture.name
+                    );
+                    let address = wallet.address().unwrap();
+                    assert_eq!(address.to_raw(), fixture.raw_address, "{}", fixture.name);
+                    assert_eq!(
+                        address.to_non_bounceable(true),
+                        fixture.user_friendly_address,
+                        "{}",
+                        fixture.name
+                    );
+                }
+                "V4R2" => {
+                    let wallet = WalletV4R2::new(
+                        public_key,
+                        wallet_id,
+                        wallet_v4r2_code().unwrap(),
+                        fixture.workchain,
+                    );
+                    assert_eq!(
+                        wallet.code.hash(),
+                        hex_32(&fixture.code_hash),
+                        "{}",
+                        fixture.name
+                    );
+                    assert_eq!(
+                        wallet.data().to_cell().unwrap().hash(),
+                        hex_32(&fixture.data_hash),
+                        "{}",
+                        fixture.name
+                    );
+                    assert_eq!(
+                        wallet.state_init().unwrap().to_cell().unwrap().hash(),
+                        hex_32(&fixture.state_init_hash),
+                        "{}",
+                        fixture.name
+                    );
+                    let address = wallet.address().unwrap();
+                    assert_eq!(address.to_raw(), fixture.raw_address, "{}", fixture.name);
+                    assert_eq!(
+                        address.to_non_bounceable(true),
+                        fixture.user_friendly_address,
+                        "{}",
+                        fixture.name
+                    );
+                }
+                version => panic!("unexpected wallet fixture version {version}"),
+            }
+        }
     }
 
     #[test]
@@ -2278,7 +2977,62 @@ mod tests {
         assert_eq!(decoded.valid_until, 1_700_000_000);
         assert_eq!(decoded.seqno, 5);
         assert_eq!(decoded.out_list.unwrap().len(), 1);
+        assert!(decoded.extended_actions.is_none());
         assert_eq!(decoded.signature, signed.signature);
+    }
+
+    #[test]
+    fn v5r1_extended_actions_roundtrip_each_tag() {
+        let address = Address::new(0, [0x33; 32]);
+        let actions = vec![
+            WalletV5R1ExtendedAction::add_extension(address.clone()),
+            WalletV5R1ExtendedAction::delete_extension(address),
+            WalletV5R1ExtendedAction::set_signature_auth_allowed(false),
+        ];
+        let list = WalletV5R1ExtendedActionList::new(actions.clone()).unwrap();
+        let cell = list.to_cell().unwrap();
+        assert_eq!(cell.references().len(), 1);
+
+        let decoded = WalletV5R1ExtendedActionList::from_cell(cell).unwrap();
+        assert_eq!(decoded.actions, actions);
+    }
+
+    #[test]
+    fn v5r1_signed_body_decodes_mixed_ordinary_and_extended_actions() {
+        let key = signing_key();
+        let public_key = VerifyingKey::from(&key);
+        let wallet = WalletV5R1::new(
+            public_key.to_bytes(),
+            WALLET_V5R1_MAINNET_DEFAULT_ID,
+            test_code(),
+            0,
+        );
+        let destination = Address::new(0, [0x44; 32]);
+        let message = WalletMessage::internal(destination.clone(), 10);
+        let extended = vec![
+            WalletV5R1ExtendedAction::add_extension(destination),
+            WalletV5R1ExtendedAction::set_signature_auth_allowed(true),
+        ];
+
+        let signed = wallet
+            .build_signed_external_body_with_extended_actions(
+                9,
+                1_700_000_009,
+                vec![message],
+                extended.clone(),
+                &key,
+            )
+            .unwrap();
+        public_key
+            .verify(
+                &signed.signing_hash,
+                &Signature::from_bytes(&signed.signature),
+            )
+            .unwrap();
+
+        let decoded = WalletV5R1ExternalBody::from_cell(signed.body).unwrap();
+        assert_eq!(decoded.out_list.unwrap().len(), 1);
+        assert_eq!(decoded.extended_actions.unwrap().actions, extended);
     }
 
     #[test]
@@ -2324,6 +3078,24 @@ mod tests {
         let messages = vec![WalletMessage::internal(Address::new(0, [1; 32]), 1); 256];
         let err = wallet
             .build_external_signing_cell(0, 1, messages)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            WalletError::TooManyActions {
+                count: 256,
+                max: 255
+            }
+        ));
+    }
+
+    #[test]
+    fn v5r1_rejects_more_than_255_total_actions() {
+        let public_key = VerifyingKey::from(&signing_key()).to_bytes();
+        let wallet = WalletV5R1::new(public_key, WALLET_V5R1_MAINNET_DEFAULT_ID, test_code(), 0);
+        let messages = vec![WalletMessage::internal(Address::new(0, [1; 32]), 1); 255];
+        let extended = vec![WalletV5R1ExtendedAction::set_signature_auth_allowed(true)];
+        let err = wallet
+            .build_external_signing_cell_with_extended_actions(0, 1, messages, extended)
             .unwrap_err();
         assert!(matches!(
             err,

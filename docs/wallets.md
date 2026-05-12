@@ -1,9 +1,9 @@
 # Wallets
 
 `tonutils::wallet` provides offline helpers for Wallet V5R1 and V4R2. The
-helpers derive `StateInit` addresses, build signed external message bodies, and
-serialize external-in message BoCs. Network submission is still a LiteClient or
-LiteBalancer operation; a submitted BoC is not proof of transaction inclusion.
+helpers derive `StateInit` addresses, build signed external message bodies,
+serialize external-in message BoCs, and, with `liteclient`, submit those BoCs
+through a provider. A submitted BoC is not proof of transaction inclusion.
 
 ## Mnemonics
 
@@ -38,6 +38,14 @@ let address = wallet.address()?;
 protection and must match the current wallet contract state. Include `StateInit`
 only for deployment or first-message workflows.
 
+With the `liteclient` feature, `WalletV5R1::send_external_message` and
+`WalletV4R2::send_external_message` are accepted LiteAPI submission adapters.
+They build and sign an external-in message, optionally include `StateInit` when
+`include_state_init` is true, call `ContractProvider::send_external_message_boc`
+once, and return the opaque `liteServer.SendMsgStatus.status` value. Provider
+errors are surfaced as provider errors, build errors do not call the provider,
+and the returned status must not be interpreted as transaction inclusion.
+
 With the `liteclient` feature, `WalletV5R1` also exposes typed get-method
 helpers over any `ContractProvider`. The helpers read the latest masterchain
 block from the provider, call the deployed wallet address derived from
@@ -45,5 +53,14 @@ block from the provider, call the deployed wallet address derived from
 `get_wallet_id`, `get_public_key`, `is_signature_allowed`, and
 `get_extensions`.
 
-`get_extensions` is intentionally raw-preserving: it returns the cell or slice
-payload as `Arc<Cell>` and does not decode extension address dictionaries yet.
+`extensions_raw_onchain` preserves the exact `get_extensions` cell or slice
+payload as `Arc<Cell>`. `extensions_onchain` decodes that payload as
+`WalletV5R1Extensions`, a `HashmapE 256 int1` wrapper keyed by 256-bit account
+hash. Hash APIs are canonical; address helpers use only `Address::hash_part` and
+do not include the workchain in dictionary keys.
+
+Wallet V5R1 extended management actions are available through
+`WalletV5R1ExtendedAction` and the explicit `*_with_extended_actions` body/BoC
+builders. The ordinary transfer builders still work unchanged and serialize no
+extended actions. The V5R1 limit is 255 total ordinary plus extended actions in a
+single request.

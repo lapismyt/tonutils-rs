@@ -29,6 +29,22 @@ The first metadata layer should be common and raw-preserving:
 - Surface malformed content as structured errors with enough context for users
   to inspect the original cell.
 
+`src/metadata.rs` implements this common layer as `parse_tep64_content`:
+
+- top-level `0x01` is decoded as off-chain URI content using snake bytes;
+- top-level `0x00` is decoded as on-chain `HashmapE 256 ^Cell` content keyed
+  by SHA-256 field-name hashes;
+- on-chain values with in-value `0x00` decode as snake bytes;
+- on-chain values with in-value `0x01` decode as chunked `HashmapE 32 ^Cell`
+  content and concatenate chunks in ascending chunk-index order;
+- unsupported top-level tags and unknown dictionary keys preserve the raw cell;
+- malformed on-chain field values are preserved as field diagnostics instead of
+  dropping the entire dictionary.
+
+The recognized key set currently covers common TEP-64 fields used by jettons and
+NFTs: `uri`, `name`, `description`, `image`, `image_data`, `symbol`,
+`decimals`, `amount_style`, `render_type`, `content_url`, and `video`.
+
 Jetton and NFT wrappers should build on that common layer instead of duplicating
 metadata parsing.
 
@@ -63,6 +79,12 @@ Required fixture coverage:
 
 ## Current Limits
 
-No metadata parser is implemented yet. The Phase 2 roadmap and `TODO.md` now
-track the work so wallet implementation and ABI work do not hide jetton and NFT
-metadata requirements.
+The common parser does not yet fetch off-chain JSON, merge semi-chain content,
+or decode jetton/NFT get-method stacks. Those wrapper integrations remain
+tracked in `TODO.md`.
+
+## Sources
+
+- Official TON token metadata documentation for TEP-64 content markers, snake
+  encoding, chunked encoding, and common jetton/NFT metadata keys:
+  <https://docs.ton.org/standard/tokens/metadata>.

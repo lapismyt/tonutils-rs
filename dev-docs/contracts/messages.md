@@ -26,12 +26,22 @@ Message construction needs:
 1. Build message cell.
 2. Serialize as BoC.
 3. Send `liteServer.sendMessage`.
-4. Track inclusion by message hash.
-5. Locate transaction in account history.
+4. Return the opaque `liteServer.SendMsgStatus.status` submission status.
+
+Wallet V5R1 and V4R2 helpers are accepted submission adapters for this flow:
+they build and sign an external-in message, optionally include `StateInit` for
+deploy or first-message workflows, submit exactly one BoC through
+`ContractProvider::send_external_message_boc`, and surface the provider's
+status or error. They do not prove transaction inclusion.
+
+Post-submit confirmation remains a separate flow:
+
+1. Track inclusion by message hash.
+2. Locate transaction in account history.
+3. Verify execution status and fees against the expected wallet/account state.
 
 ## Missing Work
 
-- TLB message models.
-- Wallet signing helpers.
 - Fee estimation helpers.
 - Message tracking API.
+- Post-send transaction lookup and inclusion verification.

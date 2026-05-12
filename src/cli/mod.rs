@@ -3570,6 +3570,48 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
 
+    fn fixture_mnemonic() -> TonMnemonic {
+        TonMnemonic::from_phrase(
+            "open price dish charge law skirt alien churn fire swap number brass outdoor diamond lesson april remain puzzle title elbow valley grant champion staff",
+            None,
+        )
+        .unwrap()
+    }
+
+    fn transfer_args(version: WalletVersionArg, deploy: bool) -> WalletTransferArgs {
+        WalletTransferArgs {
+            version,
+            to: "0:1111111111111111111111111111111111111111111111111111111111111111".to_owned(),
+            amount: 1_000,
+            comment: None,
+            mode: 3,
+            timeout: 60,
+            seqno: Some(7),
+            wallet_id: None,
+            workchain: 0,
+            deploy,
+            mnemonic_file: None,
+            mnemonic_env: None,
+            mnemonic_password_env: None,
+        }
+    }
+
+    fn assert_prepared_transfer_destination(
+        boc: &[u8],
+        expected_destination: Address,
+        expect_init: bool,
+    ) {
+        let decoded =
+            crate::tlb::Message::from_cell(crate::tvm::deserialize_boc(boc).unwrap()).unwrap();
+        match decoded.info {
+            crate::tlb::CommonMsgInfo::ExternalIn { dest, .. } => {
+                assert_eq!(dest, crate::tlb::MsgAddressInt::std(expected_destination));
+            }
+            _ => panic!("expected external inbound message"),
+        }
+        assert_eq!(decoded.init.is_some(), expect_init);
+    }
+
     #[test]
     fn cli_debug_asserts() {
         Cli::command().debug_assert();
@@ -4220,5 +4262,86 @@ mod tests {
             0
         );
         assert!(seqno_from_stack_or_deploy_zero(result, false).is_err());
+    }
+
+    #[test]
+    fn wallet_send_deploy_seqno_fallback_is_missing_stack_only() {
+        let block = BlockIdExt {
+            workchain: -1,
+            shard: i64::MIN,
+            seqno: 1,
+            root_hash: crate::tl::Int256([1; 32]),
+            file_hash: crate::tl::Int256([2; 32]),
+        };
+        let result = crate::tl::response::RunMethodResult {
+            mode: (),
+            id: block.clone(),
+            shardblk: block,
+            shard_proof: None,
+            proof: None,
+            state_proof: None,
+            init_c7: None,
+            lib_extras: None,
+            exit_code: 0,
+            result: Some(TvmStack::new(vec![TvmStackEntry::Null]).to_boc().unwrap()),
+        };
+
+        assert!(seqno_from_stack_or_deploy_zero(result, true).is_err());
+    }
+
+    #[test]
+    fn wallet_cli_preserves_default_wallet_ids_for_networks() {
+        assert_eq!(
+            wallet_id_for_cli(WalletVersionArg::V4R2, Network::Mainnet, 0, None).unwrap(),
+            WALLET_V4R2_DEFAULT_ID
+        );
+        assert_eq!(
+            wallet_id_for_cli(WalletVersionArg::V4R2, Network::Testnet, 0, None).unwrap(),
+            WALLET_V4R2_DEFAULT_ID
+        );
+        assert_eq!(
+            wallet_id_for_cli(WalletVersionArg::V5R1, Network::Mainnet, 0, None).unwrap(),
+            WalletV5R1WalletId::client(MAINNET_GLOBAL_ID, 0, 0, 0)
+                .pack()
+                .unwrap()
+        );
+        assert_eq!(
+            wallet_id_for_cli(WalletVersionArg::V5R1, Network::Testnet, 0, None).unwrap(),
+            WalletV5R1WalletId::client(TESTNET_GLOBAL_ID, 0, 0, 0)
+                .pack()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn wallet_cli_prepared_transfers_decode_to_derived_wallet_address() {
+        let mnemonic = fixture_mnemonic();
+
+        for (network, version) in [
+            (Network::Mainnet, WalletVersionArg::V5R1),
+            (Network::Testnet, WalletVersionArg::V5R1),
+            (Network::Mainnet, WalletVersionArg::V4R2),
+            (Network::Testnet, WalletVersionArg::V4R2),
+        ] {
+            for deploy in [false, true] {
+                let args = transfer_args(version, deploy);
+                let wallet_id =
+                    wallet_id_for_cli(version, network, args.workchain, args.wallet_id).unwrap();
+                let expected =
+                    wallet_address_view(version, args.workchain, wallet_id, mnemonic.public_key())
+                        .unwrap();
+
+                let (boc, view) = build_wallet_transfer(network, &args, &mnemonic, 7).unwrap();
+
+                assert_eq!(view.address.wallet_id, wallet_id);
+                assert_eq!(view.address.address, expected.address);
+                assert_eq!(view.deploy, deploy);
+                assert_prepared_transfer_destination(
+                    &boc,
+                    Address::from_str(&expected.address).unwrap(),
+                    deploy,
+                );
+            }
+        }
     }
 }

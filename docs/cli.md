@@ -109,7 +109,13 @@ Transfer options are `--to <address>`, `--amount <nanotons>`,
 defaulting to `60`, optional `--seqno <u32>`, optional `--wallet-id <u32>`,
 `--workchain <i8>` defaulting to `0`, and `--deploy` to include `StateInit`.
 `prepare-transfer` is offline and requires `--seqno`; `send` fetches `seqno`
-unless it is supplied.
+unless it is supplied. For `wallet send --deploy`, a missing seqno stack is
+treated as seqno `0`; other seqno decoding errors remain errors.
+
+`wallet send` submits one serialized external-in message BoC through
+`liteServer.sendMessage` and prints the opaque `SendMsgStatus.status` returned
+by the liteserver. That status confirms LiteAPI submission only; it does not
+prove transaction inclusion or final execution.
 
 ## Advanced Balancer Commands
 

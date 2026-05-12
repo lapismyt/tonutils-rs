@@ -179,6 +179,18 @@ impl<V> HashmapE<V> {
         Ok(self.map.get(key))
     }
 
+    /// Removes a value by fixed-width bit key.
+    pub fn remove_bit_key(&mut self, key: &BitKey) -> Result<Option<V>> {
+        if key.bit_len() != self.key_bits {
+            bail!(
+                "Dictionary key length {} does not match {}",
+                key.bit_len(),
+                self.key_bits
+            );
+        }
+        Ok(self.map.remove(key))
+    }
+
     /// Number of entries.
     pub fn len(&self) -> usize {
         self.map.len()

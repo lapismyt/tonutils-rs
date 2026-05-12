@@ -31,6 +31,8 @@ pub use tonutils_tlb_derive::Contract;
 pub mod crc;
 #[cfg(feature = "liteclient")]
 pub mod liteclient;
+#[cfg(feature = "tvm")]
+pub mod metadata;
 #[cfg(feature = "network-config")]
 pub mod network_config;
 #[cfg(feature = "tl")]
