@@ -11,6 +11,25 @@ pub mod message;
 pub mod schema;
 pub mod transaction;
 
-include!("mod_parts/part1.rs");
-include!("mod_parts/part2.rs");
-include!("mod_parts/part3.rs");
+mod bits;
+mod core;
+#[cfg(test)]
+mod fixtures;
+mod refs;
+#[cfg(test)]
+mod tests;
+mod varuint;
+
+use bits::*;
+use core::*;
+#[cfg(test)]
+use fixtures::*;
+use refs::*;
+#[cfg(test)]
+use tests::*;
+use varuint::*;
+
+pub use bits::*;
+pub use core::*;
+pub use refs::*;
+pub use varuint::*;

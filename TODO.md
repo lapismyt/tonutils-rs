@@ -98,21 +98,27 @@ postponed work moves to `# BACKLOG`.
 - [ ] Implement ABI encoding and decoding engine #abi #contracts #tvm #tests
   - [-] Encode ABI inputs into TVM stack and message-body representations #abi #tvm
     - [x] Add value-level scalar TVM stack encode/decode helpers for integers, booleans, bytes, strings, addresses, cells, slices, tuples, arrays, and optionals #abi #tvm #tests
-    - [ ] Add ABI message-body encoding policy and implementation #abi #tvm #contracts #tests
-  - [ ] Decode get-method outputs and external message payload components from ABI definitions #abi #tvm
-  - [ ] Add edge-case coverage for tuples, nested arrays, optional values, and dictionary-like payloads #abi #tests
-- [ ] Implement JSON ABI parser and loader #abi #contracts #tests
-  - [ ] Parse and validate ABI JSON schema with precise diagnostics #abi #tests
-  - [ ] Support loading ABI definitions for contract wrappers and CLI workflows #abi #contracts #cli
-  - [ ] Add schema validation tests for malformed or ambiguous ABI documents #abi #tests
+    - [x] Add ABI message-body encoding policy and implementation #abi #tvm #contracts #tests
+  - [-] Decode get-method outputs and external message payload components from ABI definitions #abi #tvm
+    - [x] Add ABI get-method input encoding and output decoding helpers over TVM stack entries #abi #tvm #tests
+    - [ ] Add ABI event/external payload component helpers beyond full message-body decode #abi #tvm #tests
+  - [-] Add edge-case coverage for tuples, nested arrays, optional values, and dictionary-like payloads #abi #tests
+    - [x] Cover nested tuple, array, optional, and JSON loader cases for stack and schema paths #abi #tests
+    - [ ] Define and test dictionary-like payload policy before enabling map codecs #abi #tests
+- [-] Implement JSON ABI parser and loader #abi #contracts #tests
+  - [x] Parse and validate ABI JSON schema with precise diagnostics #abi #tests
+  - [x] Support loading ABI definitions for contract wrappers and CLI workflows #abi #contracts #cli
+  - [-] Add schema validation tests for malformed or ambiguous ABI documents #abi #tests
+    - [x] Add malformed missing-field and invalid integer-width coverage #abi #tests
+    - [x] Add ambiguous selector and unsupported compatibility-shape coverage #abi #tests
 - [ ] Integrate ABI with contract workflows #abi #contracts #liteclient #cli #tests
-  - [ ] Add ABI-driven get-method argument encoding for contract wrappers #abi #contracts
-  - [ ] Add ABI-driven external message body construction #abi #contracts
-  - [ ] Add ABI-driven CLI input/output paths where contract commands expose typed data #abi #cli #contracts
+  - [x] Add ABI-driven get-method argument encoding for contract wrappers #abi #contracts
+  - [x] Add ABI-driven external message body construction #abi #contracts
+  - [x] Add ABI-driven CLI input/output paths where contract commands expose typed data #abi #cli #contracts
 - [ ] Add golden fixtures and cross-reference validation cases #abi #tests #docs
   - [ ] Add fixture-backed encode/decode vectors for representative contracts #abi #tests
   - [ ] Cross-check behavior against tongo-compatible expectations and TON protocol definitions #abi #tests #docs
-  - [ ] Define and document ABI map/dictionary stack and message codec policy before enabling map conversion #abi #tvm #docs
+  - [ ] Define and document ABI array/map/dictionary stack and message codec policy before enabling array/map conversion #abi #tvm #docs
   - [ ] Document known unsupported ABI patterns and planned follow-up tasks #abi #docs
 
 ## Subsequent Phases (Post-ABI)
@@ -237,12 +243,12 @@ postponed work moves to `# BACKLOG`.
   - [ ] Add full loopback client/server handshake integration test #network #tests
     - [ ] Verify server decrypts client handshake and returns encrypted empty proof packet #network #tests
     - [ ] Verify client rejects invalid server proof or EOF #network #tests
-  - [ ] Add codec tests for boundary sizes #network #tests
-    - [ ] Test 64-byte minimum encrypted frame #network #tests
+  - [-] Add codec tests for boundary sizes #network #tests
+    - [x] Test 64-byte minimum encrypted frame #network #tests
     - [ ] Test maximum accepted payload and too-large payload rejection #network #tests
-    - [ ] Test multiple frames in one buffer #network #tests
-  - [ ] Document and verify AES-CTR key and nonce directionality #network #crypto
-    - [ ] Ensure client rx/tx maps to server tx/rx exactly #network #crypto #tests
+    - [x] Test multiple frames in one buffer #network #tests
+  - [x] Document and verify AES-CTR key and nonce directionality #network #crypto
+    - [x] Ensure client rx/tx maps to server tx/rx exactly #network #crypto #tests
   - [ ] Add connection timeout and graceful close APIs #network
     - [ ] Expose configurable TCP connect timeout #network
     - [ ] Expose request timeout at LiteClient layer #network #liteclient
@@ -424,6 +430,7 @@ postponed work moves to `# BACKLOG`.
     - [ ] `address parse` and `address format` #cli #tvm
     - [ ] `contract state` for account state loading #cli #contracts
     - [-] `contract run-get-method` with typed stack argument input #cli #contracts
+    - [x] `contract run-abi-get-method` with ABI JSON argument input and output decoding #cli #contracts #abi
     - [ ] `contract run-get-method` with JSON stack argument input for shell scripts #cli #contracts
   - [-] Add high-level default-balancer commands for common workflows #cli #balancer #liteclient
     - [x] Add `status`, `account`, `call`, `transactions`, `block`, and `config` commands #cli
@@ -445,10 +452,11 @@ postponed work moves to `# BACKLOG`.
 
 ## Performance
 
-- [ ] Add benchmarks #perf
-  - [ ] ADNL encode/decode throughput #perf #network
-  - [ ] TL serialize/deserialize throughput #perf #tl
-  - [ ] Cell hash and BoC serialization throughput #perf #tvm
+- [-] Add benchmarks #perf
+  - [x] ADNL encode/decode throughput #perf #network
+  - [x] TL serialize/deserialize throughput #perf #tl
+  - [x] Cell hash and BoC serialization throughput #perf #tvm
+  - [x] Builder, slice, and TVM stack codec throughput #perf #tvm
   - [ ] Balancer request selection overhead #perf #balancer
 - [ ] Reduce allocations in hot paths #perf
   - [ ] Audit ADNL codec buffer copies #perf #network

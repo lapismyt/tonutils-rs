@@ -8,7 +8,74 @@
 //! - Best-effort synchronization filtering based on observed masterchain seqnos
 //! - Archival node detection
 
-include!("balancer_parts/part1.rs");
-include!("balancer_parts/part2.rs");
-include!("balancer_parts/part3.rs");
-include!("balancer_parts/part4.rs");
+pub(super) use crate::liteclient::{
+    boc::{
+        DecodedAccountState, DecodedAllShardsInfo, DecodedBlockData, DecodedBlockHeader,
+        DecodedBlockTransactionsExt, DecodedConfigInfo, DecodedLibrariesWithProof,
+        DecodedShardInfo, SimpleAccount,
+    },
+    client::LiteClient,
+    rate_limit::RateLimiter,
+    rate_limit::RequestRateLimit,
+    types::LiteError,
+};
+pub(super) use crate::tl::common::*;
+pub(super) use crate::tl::response::*;
+pub(super) use crate::tvm::{Address, TvmStack, TvmStackEntry};
+pub(super) use std::collections::{HashMap, HashSet};
+pub(super) use std::sync::Arc;
+pub(super) use std::time::{Duration, Instant};
+pub(super) use tokio::sync::RwLock;
+pub(super) use tokio::task::JoinHandle;
+pub(super) type Result<T> = std::result::Result<T, BalancerError>;
+
+macro_rules! balanced_call {
+    ($self:ident, $response:ty, $only_archive:expr, |$client:ident| $call:expr) => {{
+        for _attempt in 0..$self.max_retries {
+            let (peer_idx, start) = $self.execute_request::<$response>($only_archive).await?;
+            let result = {
+                let $client = &mut $self.peers[peer_idx];
+                $call.await
+            };
+            match result {
+                Ok(response) => {
+                    $self.complete_request(peer_idx, start, true).await;
+                    return Ok(response);
+                }
+                Err(e) => {
+                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
+                    $self.complete_request(peer_idx, start, false).await;
+                    if !is_connection_error {
+                        return Err(BalancerError::LiteError(e));
+                    }
+                }
+            }
+        }
+        Err(BalancerError::Timeout)
+    }};
+}
+
+mod archive;
+mod execute;
+mod helpers;
+mod selection;
+mod state;
+#[cfg(test)]
+mod tests;
+mod types;
+
+use archive::*;
+use execute::*;
+use helpers::*;
+use selection::*;
+use state::*;
+#[cfg(test)]
+use tests::*;
+use types::*;
+
+pub use archive::*;
+pub use execute::*;
+pub use helpers::*;
+pub use selection::*;
+pub use state::*;
+pub use types::*;

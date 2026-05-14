@@ -38,9 +38,11 @@ async fn example(addr: &str, public_key: [u8; 32]) -> anyhow::Result<()> {
 }
 ```
 
-Transport tests cover codec roundtrips, partial frames, multi-frame buffers,
-too-large payload rejection, tamper handling, and loopback handshake behavior.
-Timeout configuration and graceful close APIs are still being hardened.
+Transport tests cover codec roundtrips, empty minimum-size payload frames,
+client/server key and nonce directionality, partial frames, multi-frame
+buffers, too-large payload rejection, tamper handling, and loopback handshake
+behavior. Timeout configuration and graceful close APIs are still being
+hardened.
 
 ## Network Config
 

@@ -151,6 +151,52 @@ compatibility with all liteserver return shapes is still being expanded. Get
 method inputs currently use typed `TvmStack` values; the CLI only exposes
 empty-stack get-method calls.
 
+## ABI Helpers
+
+The `tvm` feature exposes `tonutils::abi` for ABI-driven local encoding and
+decoding. `encode_get_method_inputs` converts ABI input values to TVM stack
+entries, and `decode_get_method_outputs` converts returned stack entries back
+to ABI values according to a `GetMethod` definition. Message helpers
+`encode_message_body` and `decode_message_body` support internal and external
+message bodies with optional 32-bit opcode prefixes.
+
+`Contract::run_abi_get_method` and `run_abi_get_method_latest` combine those
+local codecs with normal get-method execution. `MethodId` selectors are used
+directly; functions without a selector use the standard TON method-name id
+mapping. `build_abi_external_message_body` and
+`build_abi_internal_message_body` build the body cell for ABI message
+functions; they do not construct, sign, serialize, or send a full external
+message BoC.
+
+Enable `abi-json` to parse ABI documents:
+
+```rust
+use tonutils::abi::{AbiSelector, parse_abi_json_str};
+
+fn example(json: &str) -> anyhow::Result<()> {
+    let abi = parse_abi_json_str(json)?;
+    let method = &abi.contracts[0].methods[0];
+    assert!(matches!(method.selector, AbiSelector::MethodId(_)));
+    Ok(())
+}
+```
+
+The `cli` feature includes `abi-json` and exposes ABI get-method invocation:
+
+```bash
+tonutils --output json contract run-abi-get-method \
+  --address '<addr>' \
+  --abi-file contract.abi.json \
+  --contract Wallet \
+  --method seqno \
+  --arg 'owner="0:1111111111111111111111111111111111111111111111111111111111111111"'
+```
+
+If `--contract` is omitted, the ABI file must contain exactly one contract. If
+`--method` is omitted, the selected contract must contain exactly one
+get-method. CLI ABI arguments use `name=json`; map/dictionary values remain
+unsupported.
+
 ## External Messages And Transactions
 
 `send_external_message_boc(body)` submits an already serialized external

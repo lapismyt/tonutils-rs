@@ -22,6 +22,7 @@ rustc-ice-*.txt
 # Codex
 .codex
 .agents
+.agent-work
 
 # Claude Code
 .claude

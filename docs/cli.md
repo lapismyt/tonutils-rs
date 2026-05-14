@@ -80,12 +80,18 @@ block reported by the selected liteserver.
 tonutils --output json contract state --ls-index 0 --address '<addr>'
 tonutils --output json contract run-get-method --ls-index 0 --address '<addr>' --method seqno
 tonutils --output json contract run-get-method --ls-index 0 --address '<addr>' --method-id 85143
+tonutils --output json contract run-abi-get-method --ls-index 0 --address '<addr>' --abi-file contract.abi.json --contract Wallet --method seqno --arg 'owner="<addr>"'
 ```
 
 JSON state output includes the masterchain block id, shard block id, proof byte
 lengths, and raw state bytes as hex and base64. JSON get-method output includes
 the execution block ids, exit code, proof byte lengths, raw result BoC, and a
 decoded stack when the current stack decoder supports the returned shape.
+`run-abi-get-method` loads ABI JSON, encodes `--arg name=json` inputs through
+the ABI metadata, and renders named decoded outputs. It accepts JSON integer
+numbers or decimal/hex integer strings, booleans, strings, hex bytes, address
+strings, tuple objects, arrays supported by the stack codec, and cell/slice BoC
+hex strings. ABI maps and dictionaries are intentionally rejected.
 
 ## Wallet Commands
 

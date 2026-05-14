@@ -6,5 +6,21 @@
 //! fetching, transfers, royalty helpers, and indexer integration are
 //! intentionally outside this layer.
 
-include!("nft_parts/part1.rs");
-include!("nft_parts/part2.rs");
+mod decode;
+mod metadata;
+mod provider;
+#[cfg(test)]
+mod tests;
+mod types;
+
+use decode::*;
+use metadata::*;
+use provider::*;
+#[cfg(test)]
+use tests::*;
+use types::*;
+
+pub use decode::*;
+pub use metadata::*;
+pub use provider::*;
+pub use types::*;

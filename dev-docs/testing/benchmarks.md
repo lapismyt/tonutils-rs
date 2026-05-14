@@ -49,6 +49,19 @@ cargo bench --bench wallet
 All benchmarks in `benches/wallet.rs` are offline and use fixed mnemonics,
 seeded RNGs, fixed addresses, and embedded wallet code cells.
 
+Run deterministic protocol primitive benchmarks with:
+
+```sh
+cargo bench --bench protocol
+```
+
+`benches/protocol.rs` is offline and currently covers ADNL frame
+encode/decode, TL request serialization/deserialization, cell hashing, BoC
+serialization/deserialization, builder and slice bit operations, and nested TVM
+stack BoC conversion. It uses fixed in-memory fixtures only. Balancer selection
+benchmarks remain a separate follow-up because they need deterministic mock peer
+state and request routing inputs.
+
 When measuring CLI wallet commands, build and run the release binary. Timing
 `cargo run` includes Cargo compilation and process setup noise:
 

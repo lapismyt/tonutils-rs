@@ -28,6 +28,20 @@ Feature-gated work should add the matching checks, such as
 `cargo check --no-default-features`, `cargo check --all-features`, or targeted
 feature combinations.
 
+Benchmark harnesses are compile-checked without running measurements with:
+
+```bash
+cargo bench --no-run
+```
+
+The deterministic offline harnesses can be run directly when measuring a local
+change:
+
+```bash
+cargo bench --bench wallet
+cargo bench --bench protocol
+```
+
 ## Examples
 
 Examples are written so they compile without live inputs. Runtime examples read

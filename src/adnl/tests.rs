@@ -35,6 +35,45 @@ fn test_adnl_codec_roundtrip() {
 }
 
 #[test]
+fn test_adnl_codec_empty_payload_uses_minimum_frame_body() {
+    let params = AdnlAesParams::default();
+    let mut encoder = AdnlCodec::client(&params);
+    let mut decoder = AdnlCodec::server(&params);
+    let mut frame = BytesMut::new();
+
+    encoder.encode(Bytes::new(), &mut frame).unwrap();
+
+    assert_eq!(frame.len(), 68);
+    assert_eq!(decoder.decode(&mut frame).unwrap().unwrap(), Bytes::new());
+    assert!(frame.is_empty());
+}
+
+#[test]
+fn test_adnl_codec_directionality_matches_client_and_server_params() {
+    let params = AdnlAesParams::default();
+    let mut client_codec = AdnlCodec::client(&params);
+    let mut server_codec = AdnlCodec::server(&params);
+    let mut frame = BytesMut::new();
+
+    client_codec
+        .encode(Bytes::from_static(b"client to server"), &mut frame)
+        .unwrap();
+    assert_eq!(
+        server_codec.decode(&mut frame).unwrap().unwrap(),
+        Bytes::from_static(b"client to server")
+    );
+
+    server_codec
+        .encode(Bytes::from_static(b"server to client"), &mut frame)
+        .unwrap();
+    assert_eq!(
+        client_codec.decode(&mut frame).unwrap().unwrap(),
+        Bytes::from_static(b"server to client")
+    );
+    assert!(frame.is_empty());
+}
+
+#[test]
 fn test_adnl_codec_waits_for_partial_frame() {
     let params = AdnlAesParams::default();
     let mut encoder = AdnlCodec::client(&params);

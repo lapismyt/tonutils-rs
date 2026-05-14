@@ -26,6 +26,9 @@ Follow these rules in order when instructions conflict:
 10. Keep protocol facts in `dev-docs/` before or alongside implementation.
 11. Keep `TODO.md` current and todo-md compliant when adding, completing, or
    deferring known gaps.
+12. Keep repo-tracked files at or below 1000 lines. When a file approaches the
+   limit, split by existing module, test, example, or documentation boundaries
+   before adding more behavior.
 
 ## Safe Development Workflow
 
@@ -40,11 +43,14 @@ Follow these rules in order when instructions conflict:
 5. Add or update `TODO.md` entries for known gaps before implementation when
    the gap affects follow-up work.
 6. Implement narrowly using existing module patterns and helper APIs.
-7. Add focused tests for every protocol, wire-format, serialization, or public
+7. Do not make new or modified repo-tracked files exceed 1000 lines; if a file
+   is already close to the limit, extract a submodule, test module, benchmark,
+   example, or docs page first.
+8. Add focused tests for every protocol, wire-format, serialization, or public
    behavior change.
-8. Run at least `cargo check` and `cargo test --lib`. Run broader checks when
+9. Run at least `cargo check` and `cargo test --lib`. Run broader checks when
    examples, features, CLI behavior, or doctests are affected.
-9. Reconcile trackers after implementation: mark completed TODO items, keep
+10. Reconcile trackers after implementation: mark completed TODO items, keep
    deferred work visible, and update `ROADMAP.md` only for phase or direction
    changes.
 

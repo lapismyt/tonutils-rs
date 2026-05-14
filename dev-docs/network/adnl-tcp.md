@@ -29,6 +29,10 @@ After handshake, every frame has encrypted:
 - SHA-256 hash over nonce and payload.
 
 The length excludes the 4-byte length field and includes nonce and hash.
+Client codecs encrypt with `tx_key`/`tx_nonce` and decrypt with
+`rx_key`/`rx_nonce`; server codecs intentionally reverse those directions so a
+client frame decodes with the server codec and a server frame decodes with the
+client codec for the same session parameters.
 
 ## Limits
 
@@ -51,6 +55,8 @@ ADNL TCP gives encryption and integrity for the session. It does not verify bloc
 - handshake success,
 - handshake unknown receiver,
 - codec roundtrip,
+- empty payload/minimum frame body,
+- client-to-server and server-to-client key/nonce directionality,
 - partial frame,
 - multi-frame buffer,
 - too short frame,

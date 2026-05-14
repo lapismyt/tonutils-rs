@@ -11,6 +11,7 @@ default = ["std", "adnl-tcp", "liteclient"]
 std = []
 tl = []
 tvm = ["tl"]
+abi-json = ["tvm", "dep:serde_json"]
 tlb-derive = ["tvm", "dep:tonutils-tlb-derive"]
 contract-derive = ["liteclient", "dep:tonutils-tlb-derive"]
 adnl = ["tl"]
@@ -20,6 +21,7 @@ network-config = ["dep:serde_json", "dep:serde_with"]
 cli = [
     "liteclient",
     "network-config",
+    "abi-json",
     "dep:clap",
     "dep:pretty_env_logger",
     "dep:ureq",
@@ -28,6 +30,7 @@ full = [
     "std",
     "tl",
     "tvm",
+    "abi-json",
     "tlb-derive",
     "contract-derive",
     "adnl",
@@ -190,3 +193,8 @@ required-features = ["tvm"]
 [[bench]]
 name = "wallet"
 harness = false
+
+[[bench]]
+name = "protocol"
+harness = false
+required-features = ["adnl-tcp", "tvm", "tl"]
