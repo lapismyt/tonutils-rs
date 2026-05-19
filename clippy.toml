@@ -1,0 +1,3 @@
+# Keep wildcard imports disallowed by policy except test modules that use
+# `use super::*` to pull the unit-under-test surface into scope.
+allowed-wildcard-imports = ["super"]
