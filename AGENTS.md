@@ -54,6 +54,32 @@ Follow these rules in order when instructions conflict:
    deferred work visible, and update `ROADMAP.md` only for phase or direction
    changes.
 
+## Planning Gate
+
+- For large changes, including public API changes, new features, cross-module
+  refactors, protocol behavior changes, or broad documentation rewrites, the
+  agent must ask the user for a plan before editing.
+- The user may either provide a manually written plan or, when the agent
+  supports it, enable planning mode so the agent can draft and confirm the
+  plan before implementation.
+- Do not start large edits until the plan is available and accepted. If the
+  scope becomes large during implementation, pause and request the plan then.
+
+## Branch Workflow
+
+- New features, bug fixes, documentation changes, refactors, tests, and other
+  repo changes must start from a dedicated local branch.
+- The orchestrating agent creates a new branch from the branch that was active
+  before the task began, then treats that new branch as the primary branch for
+  the task and any subagent integration.
+- If multiple subagents are used, their worktree branches remain intermediate
+  local branches and are merged or ported into the orchestrator's task branch.
+- After implementation, review, tracker reconciliation, and required checks,
+  commit the accepted changes on the task branch.
+- After committing the task branch, switch back to the branch that was active
+  before the task began and offer to push the completed task branch. Do not
+  push without explicit user approval.
+
 ## Commit Message Style
 
 - Write commit messages in English.
