@@ -73,6 +73,9 @@ pub struct Cli {
     /// Number of liteservers used by high-level balancer commands.
     #[arg(long, global = true, default_value = "3")]
     pub num_servers: usize,
+    /// Exclude liteservers from balancer paths by config index or public key id.
+    #[arg(long = "exclude-ls", global = true, value_delimiter = ',')]
+    pub exclude_ls: Vec<String>,
     /// Use one selected liteserver for high-level commands.
     #[arg(long, global = true)]
     pub single: bool,
@@ -145,9 +148,12 @@ pub struct HighLevelCallArgs {
     pub address: String,
     /// Method name or numeric method id.
     pub method: String,
-    /// Stack argument: int:<decimal>, null, cell:<boc-hex>, or slice:<boc-hex>.
-    #[arg(long = "arg")]
+    /// Stack argument: null, int:<decimal>, cell:<boc-hex>, slice:<boc-hex>, unsupported:<hex>, tuple:<json-array>, or list:<json-array>.
+    #[arg(long = "arg", conflicts_with = "stack_json")]
     pub args: Vec<String>,
+    /// Inline JSON stack array for scriptable nested input.
+    #[arg(long, conflicts_with = "args")]
+    pub stack_json: Option<String>,
     /// Block id as wc:shard:seqno:root_hash:file_hash. Defaults to latest masterchain block.
     #[arg(long)]
     pub block: Option<String>,
@@ -701,7 +707,7 @@ pub enum ContractCommand {
         #[arg(short = 'a', long)]
         address: String,
     },
-    /// Run a get-method at the latest masterchain block with an empty stack.
+    /// Run a get-method at the latest masterchain block.
     RunGetMethod {
         /// LiteServer index in the global config.
         #[arg(short = 'l', long, default_value = "0")]
@@ -720,6 +726,12 @@ pub enum ContractCommand {
         /// Numeric method id.
         #[arg(long, conflicts_with = "method", required_unless_present = "method")]
         method_id: Option<u64>,
+        /// Stack argument: null, int:<decimal>, cell:<boc-hex>, slice:<boc-hex>, unsupported:<hex>, tuple:<json-array>, or list:<json-array>.
+        #[arg(long = "arg", conflicts_with = "stack_json")]
+        args: Vec<String>,
+        /// Inline JSON stack array for scriptable nested input.
+        #[arg(long, conflicts_with = "args")]
+        stack_json: Option<String>,
     },
     /// Run a get-method using ABI JSON input and output metadata.
     RunAbiGetMethod(ContractAbiRunGetMethodArgs),

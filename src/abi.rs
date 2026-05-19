@@ -8,8 +8,11 @@
 
 mod codec;
 mod errors;
+#[cfg(all(test, feature = "abi-json"))]
+mod fixtures;
 #[cfg(feature = "abi-json")]
 mod json;
+mod map;
 mod model;
 #[cfg(test)]
 mod tests;
@@ -18,6 +21,7 @@ use codec::*;
 use errors::*;
 #[cfg(feature = "abi-json")]
 use json::*;
+use map::*;
 use model::*;
 #[cfg(test)]
 use tests::*;

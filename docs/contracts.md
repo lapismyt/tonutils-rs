@@ -115,26 +115,50 @@ use std::str::FromStr;
 use tonutils::contracts::Contract;
 use tonutils::liteclient::client::LiteClient;
 use tonutils::network_config::ConfigGlobal;
-use tonutils::tvm::{Address, TvmStack};
+use tonutils::tvm::Address;
 
 async fn example(config_json: &str, address: &str) -> anyhow::Result<()> {
     let config = ConfigGlobal::from_str(config_json)?;
     let mut client = LiteClient::connect_config(&config, 0).await?;
     let address = Address::from_str(address)?;
     let mut contract = Contract::new(&mut client, address);
-    let entries = contract
-        .run_get_method_by_name_typed_latest("seqno", TvmStack::empty())
+    let seqno: u32 = contract
+        .run_get_method_by_name_latest_as("seqno", ())
         .await?;
-    println!("decoded_stack_entries={}", entries.len());
+    println!("seqno={seqno}");
     Ok(())
 }
 ```
 
 Method names use the standard TON mapping:
 `(crc16(method_name) & 0xffff) | 0x10000`. Numeric ids can be passed directly
-with `run_get_method` or `run_get_method_latest`. Typed helpers return decoded
-stack entries and turn non-zero get-method exit codes into
+with `run_get_method` or `run_get_method_latest`. Raw typed helpers return
+decoded stack entries and turn non-zero get-method exit codes into
 `ContractError::NonZeroExitCode`.
+
+For wrapper code, prefer the conversion-trait helpers:
+
+```rust
+use tonutils::contracts::Contract;
+use tonutils::tvm::Address;
+
+async fn wallet_address<P: tonutils::contracts::ContractProvider>(
+    contract: &mut Contract<'_, P>,
+    owner: Address,
+) -> Result<Address, tonutils::contracts::ContractError<P::Error>> {
+    contract
+        .run_get_method_by_name_latest_as("get_wallet_address", owner)
+        .await
+}
+```
+
+`ToTvmStack`, `FromTvmStack`, `ToTvmStackEntry`, and `FromTvmStackEntry`
+cover `()`, raw `TvmStack`, raw entry vectors, stack entries, signed and
+unsigned Rust integers, `BigInt`, `BigUint`, `bool`, `Address`, `Arc<Cell>`,
+`Option<T>`, and tuples up to eight fields. `Address` values are encoded as
+standard internal-address stack slices. `bool` follows the TVM convention:
+`-1` is true and `0` is false. Conversion failures are reported as
+`ContractError::StackConversion`.
 
 ## Result Decoding
 
@@ -147,9 +171,9 @@ stack entries and turn non-zero get-method exit codes into
 
 The current stack codec supports nulls, integers, cells, slices, tuples, lists,
 and explicit unsupported payloads in this crate's internal representation. Stack
-compatibility with all liteserver return shapes is still being expanded. Get
-method inputs currently use typed `TvmStack` values; the CLI only exposes
-empty-stack get-method calls.
+compatibility with all liteserver return shapes is still being expanded. The
+CLI also exposes ABI get-method argument decoding; generic JSON stack input is
+tracked separately.
 
 ## ABI Helpers
 
@@ -194,8 +218,9 @@ tonutils --output json contract run-abi-get-method \
 
 If `--contract` is omitted, the ABI file must contain exactly one contract. If
 `--method` is omitted, the selected contract must contain exactly one
-get-method. CLI ABI arguments use `name=json`; map/dictionary values remain
-unsupported.
+get-method. CLI ABI arguments use `name=json`; map/dictionary values use arrays
+of `{ "key": ..., "value": ... }` entries and are limited to fixed-width
+integer ABI keys.
 
 ## External Messages And Transactions
 

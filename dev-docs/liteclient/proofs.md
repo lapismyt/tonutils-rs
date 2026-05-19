@@ -44,11 +44,19 @@ construct TL-B proof objects and is not proof verification. Live LiteServer
 `getAccountState` responses have been smoke-tested for multi-root proof BoC
 structural inspection in the CLI account command.
 
+`liteclient::boc::extract_verified_shard_account` is the current checked
+extraction boundary for high-level transaction unblocking. It accepts proof
+material whose root has already been anchored to a verified shard-account path,
+decodes `ShardAccount`, verifies the requested standard account hash, rejects
+state/proof mismatches, and can check an independently verified shard root hash.
+It is not yet a full `ShardAccounts` dictionary traversal or Merkle proof
+verifier.
+
 ## Missing Work
 
 - Validator set TLB decoding.
 - Signature set verification.
 - Block proof path validation.
 - Account proof validation.
-- Extract `ShardAccount` entries and last transaction hashes from verified
-  `ShardAccounts` proof paths.
+- Traverse `ShardAccounts` dictionaries from live account proofs after shard
+  and Merkle proof roots are verified.

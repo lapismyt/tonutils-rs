@@ -158,6 +158,9 @@ pub enum AbiType {
         key: Box<AbiType>,
         /// Value type.
         value: Box<AbiType>,
+        /// Explicit dictionary key width. Integer key widths are used when
+        /// this is omitted.
+        key_bits: Option<u16>,
     },
     /// Optional nested value.
     Optional(Box<AbiType>),
@@ -181,7 +184,7 @@ impl AbiType {
                 Ok(())
             }
             Self::Array(item) | Self::Optional(item) => item.validate(),
-            Self::Map { key, value } => {
+            Self::Map { key, value, .. } => {
                 key.validate()?;
                 value.validate()
             }
@@ -213,6 +216,8 @@ pub enum AbiValue {
     Tuple(Vec<AbiValue>),
     /// Homogeneous array values.
     Array(Vec<AbiValue>),
+    /// Dictionary entries in ABI key/value form.
+    Map(Vec<(AbiValue, AbiValue)>),
     /// Optional nested value.
     Optional(Option<Box<AbiValue>>),
 }
@@ -290,7 +295,16 @@ pub fn abi_value_to_stack_entry(
         (AbiType::Optional(item_ty), AbiValue::Optional(Some(value))) => {
             abi_value_to_stack_entry(value, item_ty)
         }
-        (AbiType::Map { .. }, _) => Err(AbiCodecError::UnsupportedType { ty: "map" }),
+        (
+            AbiType::Map {
+                key,
+                value,
+                key_bits,
+            },
+            AbiValue::Map(entries),
+        ) => Ok(TvmStackEntry::Cell(encode_map_cell(
+            key, value, *key_bits, entries,
+        )?)),
         (AbiType::Unknown(_), _) => Err(AbiCodecError::UnsupportedType { ty: "unknown" }),
         (ty, value) => Err(AbiCodecError::TypeMismatch {
             expected: abi_type_name(ty),
@@ -418,7 +432,14 @@ pub fn abi_value_from_stack_entry(
                 abi_value_from_stack_entry(item_ty, entry)?,
             )))),
         },
-        AbiType::Map { .. } => Err(AbiCodecError::UnsupportedType { ty: "map" }),
+        AbiType::Map {
+            key,
+            value,
+            key_bits,
+        } => {
+            let cell = stack_cell(entry, "map")?;
+            decode_map_cell(key, value, *key_bits, cell.clone()).map(AbiValue::Map)
+        }
         AbiType::Unknown(_) => Err(AbiCodecError::UnsupportedType { ty: "unknown" }),
     }
 }
@@ -493,6 +514,28 @@ pub enum AbiCodecError {
     UnsupportedType {
         /// ABI type family.
         ty: &'static str,
+    },
+    /// ABI map keys are limited to fixed-width integer types.
+    #[error("ABI map key type {ty} is unsupported")]
+    UnsupportedMapKey {
+        /// Rejected key type.
+        ty: &'static str,
+    },
+    /// ABI map key bit width is not compatible with the key type.
+    #[error("ABI map key width must be {expected} bits for {kind}{expected}, got {actual}")]
+    InvalidMapKeyBits {
+        /// Integer family.
+        kind: &'static str,
+        /// Width required by the ABI key type.
+        expected: u16,
+        /// Explicit key width.
+        actual: u16,
+    },
+    /// Two ABI map entries encode to the same dictionary key.
+    #[error("ABI map contains duplicate encoded key {key_hex}")]
+    DuplicateMapKey {
+        /// Canonical encoded key bytes, hex encoded.
+        key_hex: String,
     },
     /// Message body construction was requested for a non-message function or
     /// with a selector that is not valid for message bodies.
@@ -802,6 +845,7 @@ pub(super) fn abi_value_name(value: &AbiValue) -> &'static str {
         AbiValue::Slice(_) => "slice",
         AbiValue::Tuple(_) => "tuple",
         AbiValue::Array(_) => "array",
+        AbiValue::Map(_) => "map",
         AbiValue::Optional(_) => "optional",
     }
 }

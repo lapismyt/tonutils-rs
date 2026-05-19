@@ -17,8 +17,9 @@ mod tests {
     };
     use crate::tvm::{Address, Builder, TvmStack, TvmStackEntry};
     use async_trait::async_trait;
-    use num_bigint::BigUint;
+    use num_bigint::{BigInt, BigUint};
     use std::borrow::Cow;
+    use std::sync::Arc;
 
     #[derive(Debug, thiserror::Error)]
     #[error("mock provider error")]
@@ -218,6 +219,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn contract_forwards_non_empty_get_method_stack() {
+        let address = Address::new(0, [8; 32]);
+        let latest = block(43);
+        let mut provider = mock_provider(address.clone(), latest, crate::tlb::Account::None);
+        let stack = TvmStack::new(vec![TvmStackEntry::int(1), TvmStackEntry::Null]);
+
+        let mut contract = Contract::new(&mut provider, address);
+        contract
+            .run_get_method_latest(85143, stack.clone())
+            .await
+            .unwrap();
+
+        assert_eq!(provider.method_calls, vec![85143]);
+        assert_eq!(provider.method_stacks, vec![stack]);
+    }
+
+    #[tokio::test]
     async fn decoded_and_simple_state_helpers_preserve_account_data() {
         let address = Address::new(0, [7; 32]);
         let latest = block(44);
@@ -314,6 +332,111 @@ mod tests {
                 .await,
             Err(ContractError::NonZeroExitCode { exit_code: 13 })
         ));
+    }
+
+    #[test]
+    fn stack_conversion_scalars_and_options_roundtrip() {
+        assert_eq!(true.to_tvm_stack_entry().unwrap(), TvmStackEntry::int(-1));
+        assert_eq!(false.to_tvm_stack_entry().unwrap(), TvmStackEntry::int(0));
+        assert!(bool::from_tvm_stack(TvmStack::new(vec![TvmStackEntry::int(-1)])).unwrap());
+        assert!(!bool::from_tvm_stack(TvmStack::new(vec![TvmStackEntry::int(0)])).unwrap());
+        assert!(matches!(
+            bool::from_tvm_stack_entry(TvmStackEntry::int(1)).unwrap_err(),
+            TvmStackConversionError::InvalidBool { .. }
+        ));
+
+        let some = Some(5u32).to_tvm_stack().unwrap();
+        assert_eq!(some.entries(), &[TvmStackEntry::int(5)]);
+        assert_eq!(Option::<u32>::from_tvm_stack(some).unwrap(), Some(5));
+
+        let none = Option::<u32>::None.to_tvm_stack().unwrap();
+        assert_eq!(none.entries(), &[TvmStackEntry::Null]);
+        assert_eq!(Option::<u32>::from_tvm_stack(none).unwrap(), None);
+
+        assert_eq!(
+            BigInt::from_tvm_stack(TvmStack::new(vec![TvmStackEntry::int(-9)])).unwrap(),
+            BigInt::from(-9)
+        );
+        assert_eq!(
+            BigUint::from_tvm_stack(TvmStack::new(vec![TvmStackEntry::int(9)])).unwrap(),
+            BigUint::from(9u8)
+        );
+    }
+
+    #[test]
+    fn stack_conversion_reports_arity_and_integer_range_errors() {
+        assert!(matches!(
+            <(u8, u8)>::from_tvm_stack(TvmStack::new(vec![TvmStackEntry::int(1)])).unwrap_err(),
+            TvmStackConversionError::StackArityMismatch {
+                expected: 2,
+                actual: 1
+            }
+        ));
+        assert!(matches!(
+            u8::from_tvm_stack_entry(TvmStackEntry::int(256)).unwrap_err(),
+            TvmStackConversionError::IntegerOutOfRange { target: "u8", .. }
+        ));
+        assert!(matches!(
+            u8::from_tvm_stack_entry(TvmStackEntry::int(-1)).unwrap_err(),
+            TvmStackConversionError::IntegerOutOfRange { target: "u8", .. }
+        ));
+    }
+
+    #[test]
+    fn stack_conversion_addresses_cells_and_tuples_roundtrip() {
+        let address = Address::new(0, [0x44; 32]);
+        let address_entry = address.clone().to_tvm_stack_entry().unwrap();
+        assert_eq!(
+            Address::from_tvm_stack_entry(address_entry).unwrap(),
+            address
+        );
+
+        let cell = Builder::new().build().unwrap();
+        let cell_entry = cell.clone().to_tvm_stack_entry().unwrap();
+        assert_eq!(
+            Arc::<crate::tvm::Cell>::from_tvm_stack_entry(cell_entry)
+                .unwrap()
+                .hash(),
+            cell.hash()
+        );
+
+        let tuple = (7u32, true, Option::<u8>::None).to_tvm_stack().unwrap();
+        assert_eq!(
+            <(u32, bool, Option<u8>)>::from_tvm_stack(tuple).unwrap(),
+            (7, true, None)
+        );
+
+        let tuple_entry = (1u8, false).to_tvm_stack_entry().unwrap();
+        assert_eq!(
+            <(u8, bool)>::from_tvm_stack_entry(tuple_entry).unwrap(),
+            (1, false)
+        );
+    }
+
+    #[tokio::test]
+    async fn typed_as_helpers_convert_arguments_and_results() {
+        let address = Address::new(0, [0x33; 32]);
+        let latest = block(57);
+        let mut provider = mock_provider(address.clone(), latest, crate::tlb::Account::None);
+
+        let mut contract = Contract::new(&mut provider, address);
+        let seqno: u32 = contract
+            .run_get_method_by_name_latest_as("seqno", (true, 9u32))
+            .await
+            .unwrap();
+
+        assert_eq!(seqno, 7);
+        assert_eq!(
+            provider.method_calls,
+            vec![crate::utils::method_name_to_id("seqno")]
+        );
+        assert_eq!(
+            provider.method_stacks,
+            vec![TvmStack::new(vec![
+                TvmStackEntry::int(-1),
+                TvmStackEntry::int(9)
+            ])]
+        );
     }
 
     fn abi_parameter(name: &str, ty: AbiType) -> AbiParameter {
@@ -618,5 +741,174 @@ mod tests {
             .await?;
         assert!(result.exit_code >= 0);
         Ok(())
+    }
+
+    #[cfg(feature = "network-config")]
+    #[ignore = "requires TON_GLOBAL_CONFIG_JSON, TON_STACK_TEST_CONTRACT_ADDRESS, TON_STACK_TEST_JSON, and live network access"]
+    #[tokio::test]
+    async fn live_non_empty_stack_run_get_method_smoke() -> anyhow::Result<()> {
+        use crate::contracts::RunMethodResultExt;
+        use crate::tvm::TvmStackEntry;
+        use anyhow::Context as _;
+        use serde_json::Value;
+        use std::str::FromStr;
+
+        fn parse_entry(value: &Value) -> anyhow::Result<TvmStackEntry> {
+            let object = value
+                .as_object()
+                .context("TON_STACK_TEST_JSON entry must be an object")?;
+            let kind = object
+                .get("type")
+                .and_then(Value::as_str)
+                .context("TON_STACK_TEST_JSON entry must include string field \"type\"")?;
+            match kind {
+                "null" => Ok(TvmStackEntry::Null),
+                "int" => {
+                    let value = object
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .context("int entry must include string field \"value\"")?;
+                    Ok(TvmStackEntry::Int(
+                        BigInt::parse_bytes(value.as_bytes(), 10)
+                            .context("invalid decimal int entry")?,
+                    ))
+                }
+                "cell" | "slice" => {
+                    let boc = object
+                        .get("boc")
+                        .and_then(Value::as_str)
+                        .context("cell/slice entry must include string field \"boc\"")?;
+                    let cell = crate::tvm::deserialize_boc(&hex::decode(boc.trim())?)?;
+                    if kind == "cell" {
+                        Ok(TvmStackEntry::Cell(cell))
+                    } else {
+                        Ok(TvmStackEntry::Slice(cell))
+                    }
+                }
+                "tuple" | "list" => {
+                    let entries = object
+                        .get("entries")
+                        .and_then(Value::as_array)
+                        .context("tuple/list entry must include array field \"entries\"")?
+                        .iter()
+                        .map(parse_entry)
+                        .collect::<anyhow::Result<Vec<_>>>()?;
+                    if kind == "tuple" {
+                        Ok(TvmStackEntry::Tuple(entries))
+                    } else {
+                        Ok(TvmStackEntry::List(entries))
+                    }
+                }
+                "unsupported" => {
+                    let raw = object
+                        .get("raw")
+                        .and_then(Value::as_str)
+                        .context("unsupported entry must include string field \"raw\"")?;
+                    Ok(TvmStackEntry::Unsupported(hex::decode(raw.trim())?))
+                }
+                _ => anyhow::bail!("unsupported stack entry type {kind}"),
+            }
+        }
+
+        let config_json = std::env::var("TON_GLOBAL_CONFIG_JSON")?;
+        let address = std::env::var("TON_STACK_TEST_CONTRACT_ADDRESS")?;
+        let method = std::env::var("TON_STACK_TEST_METHOD").unwrap_or_else(|_| "seqno".to_owned());
+        let stack_json = std::env::var("TON_STACK_TEST_JSON")?;
+        let stack_value: Value = serde_json::from_str(&stack_json)?;
+        let stack_entries = stack_value
+            .as_array()
+            .context("TON_STACK_TEST_JSON root must be an array")?
+            .iter()
+            .map(parse_entry)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        anyhow::ensure!(
+            !stack_entries.is_empty(),
+            "TON_STACK_TEST_JSON must describe a non-empty stack"
+        );
+
+        let config = crate::network_config::ConfigGlobal::from_str(&config_json)?;
+        let mut client = LiteClient::connect_config(&config, 0).await?;
+        let address = Address::from_str(&address)?;
+        let address_raw = address.to_raw();
+        let mut contract = Contract::new(&mut client, address);
+        let params_stack = TvmStack::new(stack_entries);
+        let params_boc = params_stack.to_boc()?;
+        let params_root_hash = hex::encode(params_stack.to_cell()?.hash());
+        let result = contract
+            .run_get_method_by_name_latest(&method, params_stack)
+            .await?;
+
+        if result.exit_code != 0 {
+            let accepted = std::env::var("TON_STACK_TEST_ACCEPT_EXIT_CODE")
+                .ok()
+                .and_then(|value| value.parse::<i32>().ok());
+            assert_eq!(accepted, Some(result.exit_code));
+            return Ok(());
+        }
+
+        match result.result_stack_lossless() {
+            DecodedRunMethodResult::Decoded(stack) => {
+                let result_boc = stack.to_boc()?;
+                let fixture = serde_json::json!({
+                    "schema_revision": 1,
+                    "evidence_kind": "captured_or_opt_in",
+                    "source_sdk_or_tool": "tonutils-rs live ignored test",
+                    "source_version_or_commit": env!("CARGO_PKG_VERSION"),
+                    "network": std::env::var("TON_STACK_TEST_NETWORK").unwrap_or_else(|_| "live".to_owned()),
+                    "endpoint": "TON_GLOBAL_CONFIG_JSON peer index 0",
+                    "block_id": {
+                        "workchain": result.id.workchain,
+                        "shard": result.id.shard,
+                        "seqno": result.id.seqno,
+                        "root_hash": hex::encode(result.id.root_hash.0),
+                        "file_hash": hex::encode(result.id.file_hash.0)
+                    },
+                    "account": address_raw,
+                    "method": method,
+                    "input_stack_json": stack_value,
+                    "params_boc_hex": hex::encode(params_boc),
+                    "params_root_hash": params_root_hash,
+                    "exit_code": result.exit_code,
+                    "result_boc_hex": hex::encode(result_boc),
+                    "result_root_hash": hex::encode(stack.to_cell()?.hash()),
+                    "decoded_result": stack_entries_value(stack.entries()),
+                    "compat_reference": "compare params_boc_hex with tonutils-go when raw params BoC is available; compare decoded_result structurally with tonlib otherwise"
+                });
+                println!("{}", serde_json::to_string_pretty(&fixture)?);
+            }
+            DecodedRunMethodResult::Undecodable { raw, .. } => assert!(!raw.is_empty()),
+            DecodedRunMethodResult::Missing => anyhow::bail!("live get-method returned no stack"),
+        }
+        Ok(())
+    }
+
+    fn stack_entries_value(entries: &[TvmStackEntry]) -> serde_json::Value {
+        serde_json::Value::Array(entries.iter().map(stack_entry_value).collect())
+    }
+
+    fn stack_entry_value(entry: &TvmStackEntry) -> serde_json::Value {
+        match entry {
+            TvmStackEntry::Null => serde_json::json!({ "type": "null" }),
+            TvmStackEntry::Int(value) => {
+                serde_json::json!({ "type": "int", "value": value.to_str_radix(10) })
+            }
+            TvmStackEntry::Cell(cell) => serde_json::json!({
+                "type": "cell",
+                "boc": hex::encode(crate::tvm::serialize_boc(cell, false).unwrap())
+            }),
+            TvmStackEntry::Slice(cell) => serde_json::json!({
+                "type": "slice",
+                "boc": hex::encode(crate::tvm::serialize_boc(cell, false).unwrap())
+            }),
+            TvmStackEntry::Tuple(entries) => {
+                serde_json::json!({ "type": "tuple", "entries": stack_entries_value(entries) })
+            }
+            TvmStackEntry::List(entries) => {
+                serde_json::json!({ "type": "list", "entries": stack_entries_value(entries) })
+            }
+            TvmStackEntry::Unsupported(bytes) => {
+                serde_json::json!({ "type": "unsupported", "raw": hex::encode(bytes) })
+            }
+        }
     }
 }

@@ -100,6 +100,115 @@ mod tests {
     }
 
     #[test]
+    fn parses_global_liteserver_excludes() {
+        let cli = Cli::try_parse_from([
+            "tonutils",
+            "--exclude-ls",
+            "0,4",
+            "--exclude-ls",
+            "id:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+            "status",
+        ])
+        .unwrap();
+
+        assert_eq!(
+            cli.exclude_ls,
+            vec![
+                "0".to_owned(),
+                "4".to_owned(),
+                "id:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=".to_owned()
+            ]
+        );
+        assert!(matches!(cli.command, Commands::Status));
+    }
+
+    #[test]
+    fn parses_balancer_command_with_liteserver_excludes() {
+        let cli = Cli::try_parse_from([
+            "tonutils",
+            "--exclude-ls",
+            "index:0",
+            "balancer",
+            "status",
+            "--num-servers",
+            "2",
+        ])
+        .unwrap();
+
+        assert_eq!(cli.exclude_ls, vec!["index:0"]);
+        match cli.command {
+            Commands::Balancer {
+                command: BalancerCommand::Status { num_servers },
+            } => assert_eq!(num_servers, 2),
+            _ => panic!("unexpected command"),
+        }
+    }
+
+    #[test]
+    fn select_balancer_liteservers_applies_excludes_after_global_indexes() {
+        let cli = Cli::try_parse_from([
+            "tonutils",
+            "--num-servers",
+            "2",
+            "--exclude-ls",
+            "0",
+            "status",
+        ])
+        .unwrap();
+        let config: ConfigGlobal = r#"{
+            "liteservers": [
+                { "ip": 2130706433, "port": 8001, "id": { "@type": "pub.ed25519", "key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" } },
+                { "ip": 2130706434, "port": 8002, "id": { "@type": "pub.ed25519", "key": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=" } },
+                { "ip": 2130706435, "port": 8003, "id": { "@type": "pub.ed25519", "key": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=" } }
+            ]
+        }"#
+        .parse()
+        .unwrap();
+
+        let selected = cli
+            .select_balancer_liteservers(&config, cli.num_servers)
+            .unwrap();
+
+        assert_eq!(
+            selected
+                .iter()
+                .map(|(index, server)| (*index, server.port))
+                .collect::<Vec<_>>(),
+            vec![(1, 8002), (2, 8003)]
+        );
+    }
+
+    #[test]
+    fn select_balancer_liteservers_reports_all_excluded() {
+        let cli = Cli::try_parse_from([
+            "tonutils",
+            "--exclude-ls",
+            "0,1",
+            "balancer",
+            "status",
+            "--num-servers",
+            "2",
+        ])
+        .unwrap();
+        let config: ConfigGlobal = r#"{
+            "liteservers": [
+                { "ip": 2130706433, "port": 8001, "id": { "@type": "pub.ed25519", "key": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" } },
+                { "ip": 2130706434, "port": 8002, "id": { "@type": "pub.ed25519", "key": "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=" } }
+            ]
+        }"#
+        .parse()
+        .unwrap();
+
+        let error = cli.select_balancer_liteservers(&config, 2).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("no liteservers left after applying --exclude-ls")
+        );
+    }
+
+    #[test]
     fn parses_high_level_commands() {
         let block = "0:0x8000000000000000:1:1111111111111111111111111111111111111111111111111111111111111111:2222222222222222222222222222222222222222222222222222222222222222";
         let address = "0:3333333333333333333333333333333333333333333333333333333333333333";
@@ -770,6 +879,7 @@ mod tests {
                 &AbiType::Map {
                     key: Box::new(AbiType::Uint { bits: 8 }),
                     value: Box::new(AbiType::Uint { bits: 8 }),
+                    key_bits: None,
                 },
                 &json!({})
             )

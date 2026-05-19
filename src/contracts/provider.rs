@@ -18,6 +18,8 @@ use crate::tvm::{Address, Cell, TvmStack, TvmStackEntry, deserialize_boc};
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use super::{FromTvmStack, ToTvmStack, TvmStackConversionError};
+
 /// Errors returned by high-level contract helpers that decode account state or
 /// get-method stack values.
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +33,8 @@ where
     NonZeroExitCode { exit_code: i32 },
     #[error("failed to decode contract data: {0}")]
     Decode(#[source] anyhow::Error),
+    #[error("failed to convert TVM stack value: {0}")]
+    StackConversion(#[source] TvmStackConversionError),
     #[error("ABI contract call failed: {0}")]
     Abi(#[source] AbiCodecError),
     #[error("account is not active")]
@@ -69,6 +73,10 @@ where
 
     fn abi(error: AbiCodecError) -> Self {
         Self::Abi(error)
+    }
+
+    fn stack_conversion(error: TvmStackConversionError) -> Self {
+        Self::StackConversion(error)
     }
 }
 
@@ -460,6 +468,68 @@ impl<'a, P: ContractProvider + ?Sized> Contract<'a, P> {
         stack: TvmStack,
     ) -> Result<Vec<TvmStackEntry>, ContractError<P::Error>> {
         self.run_get_method_typed_latest(crate::utils::method_name_to_id(method_name), stack)
+            .await
+    }
+
+    pub async fn run_get_method_as<A, R>(
+        &mut self,
+        block: BlockIdExt,
+        method_id: u64,
+        args: A,
+    ) -> Result<R, ContractError<P::Error>>
+    where
+        A: ToTvmStack,
+        R: FromTvmStack,
+    {
+        let stack = args
+            .to_tvm_stack()
+            .map_err(ContractError::stack_conversion)?;
+        let entries = self.run_get_method_typed(block, method_id, stack).await?;
+        R::from_tvm_stack(TvmStack::new(entries)).map_err(ContractError::stack_conversion)
+    }
+
+    pub async fn run_get_method_by_name_as<A, R>(
+        &mut self,
+        block: BlockIdExt,
+        method_name: &str,
+        args: A,
+    ) -> Result<R, ContractError<P::Error>>
+    where
+        A: ToTvmStack,
+        R: FromTvmStack,
+    {
+        self.run_get_method_as(block, crate::utils::method_name_to_id(method_name), args)
+            .await
+    }
+
+    pub async fn run_get_method_latest_as<A, R>(
+        &mut self,
+        method_id: u64,
+        args: A,
+    ) -> Result<R, ContractError<P::Error>>
+    where
+        A: ToTvmStack,
+        R: FromTvmStack,
+    {
+        let block = self
+            .provider
+            .get_masterchain_info()
+            .await
+            .map_err(ContractError::provider)?
+            .last;
+        self.run_get_method_as(block, method_id, args).await
+    }
+
+    pub async fn run_get_method_by_name_latest_as<A, R>(
+        &mut self,
+        method_name: &str,
+        args: A,
+    ) -> Result<R, ContractError<P::Error>>
+    where
+        A: ToTvmStack,
+        R: FromTvmStack,
+    {
+        self.run_get_method_latest_as(crate::utils::method_name_to_id(method_name), args)
             .await
     }
 

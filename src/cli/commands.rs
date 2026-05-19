@@ -196,22 +196,53 @@ pub(super) fn best_effort_account_state_view(
     let proof_root_hash = proof_root_hashes.first().cloned();
     let state_root_hash = decode_root_hash(&raw.state, "state", &mut decode_errors);
 
-    let account = if raw.state.is_empty() {
-        None
-    } else {
-        match crate::liteclient::boc::decode_account_state_boc(&raw.state) {
-            Ok(value) => Some(value.account),
-            Err(error) => {
-                decode_errors.push(format!("state TL-B decode failed: {error}"));
-                None
-            }
+    let decoded = match crate::tvm::Address::from_str(address) {
+        Ok(address) => match crate::liteclient::boc::DecodedAccountState::from_raw_verified(
+            raw.clone(),
+            &address,
+        ) {
+            Ok(decoded) => Some(decoded),
+            Err(_error) => None,
+        },
+        Err(error) => {
+            decode_errors.push(format!(
+                "address parse failed for proof extraction: {error}"
+            ));
+            None
         }
     };
+    let account = decoded
+        .as_ref()
+        .and_then(|decoded| decoded.account.clone())
+        .or_else(|| {
+            if raw.state.is_empty() {
+                None
+            } else {
+                match crate::liteclient::boc::decode_account_state_boc(&raw.state) {
+                    Ok(value) => Some(value.account),
+                    Err(error) => {
+                        decode_errors.push(format!("state TL-B decode failed: {error}"));
+                        None
+                    }
+                }
+            }
+        });
+    let shard_account = decoded
+        .as_ref()
+        .and_then(|decoded| decoded.shard_account.clone());
     let (state, balance) = account_summary(account.as_ref());
-    let last_transaction_lt = account.as_ref().and_then(|account| match account {
-        crate::tlb::Account::None => None,
-        crate::tlb::Account::Full { storage, .. } => Some(storage.last_trans_lt),
-    });
+    let last_transaction_lt = shard_account
+        .as_ref()
+        .map(|account| account.last_trans_lt)
+        .or_else(|| {
+            account.as_ref().and_then(|account| match account {
+                crate::tlb::Account::None => None,
+                crate::tlb::Account::Full { storage, .. } => Some(storage.last_trans_lt),
+            })
+        });
+    let last_transaction_hash = shard_account
+        .as_ref()
+        .map(|account| hex::encode(account.last_trans_hash));
 
     BestEffortAccountStateView {
         address: address.to_owned(),
@@ -220,7 +251,7 @@ pub(super) fn best_effort_account_state_view(
         state,
         balance,
         last_transaction_lt,
-        last_transaction_hash: None,
+        last_transaction_hash,
         shard_proof_len: raw.shard_proof.len(),
         proof_len: raw.proof.len(),
         state_len: raw.state.len(),
@@ -232,7 +263,7 @@ pub(super) fn best_effort_account_state_view(
         proof_root_hashes,
         state_root_hash,
         account: account.as_ref().map(account_value),
-        shard_account: None,
+        shard_account: shard_account.as_ref().map(shard_account_value),
         decode_errors,
     }
 }

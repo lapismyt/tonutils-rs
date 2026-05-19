@@ -17,7 +17,13 @@ access; `tvm` commands are offline.
 - `--rps <N>`: throttle each selected liteserver to `N` requests per second.
 - `--global-rps <N>`: throttle total LiteBalancer request attempts to `N`
   requests per second.
-- `--num-servers <N>`: number of liteservers for high-level balancer commands.
+- `--num-servers <N>`: number of allowed liteservers for high-level balancer
+  commands after `--exclude-ls` filtering.
+- `--exclude-ls <index-or-id>`: exclude liteservers from LiteBalancer paths.
+  Repeat the flag or pass comma-separated values. Accepted forms are a decimal
+  global-config index (`3`), an explicit index (`index:3`), an explicit
+  public-key id (`id:<hex|base64|base64url>`), a bare 64-character hex
+  Ed25519 public key, or a bare base64/base64url 32-byte Ed25519 public key.
 - `--single --ls-index <N>`: use one reproducible liteserver instead of the
   default high-level balancer.
 
@@ -33,10 +39,15 @@ config when no config is supplied, and print compact human output. Use
 
 ```bash
 tonutils status
+tonutils --exclude-ls 0 status
+tonutils --exclude-ls index:0 --exclude-ls id:<public-key> status
 tonutils account UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP
 tonutils --output json account UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP
 tonutils call '<addr>' seqno
 tonutils call '<addr>' 85143 --arg int:1 --arg null
+tonutils call '<addr>' balance --stack-json '[{"type":"int","value":"0"}]'
+tonutils call '<addr>' nested --arg 'tuple:[{"type":"int","value":"1"}]'
+tonutils call '<addr>' raw --arg unsupported:0a0b
 tonutils transactions '<addr>' --count 20
 tonutils block latest
 tonutils block get '<wc:shard:seqno:root_hash:file_hash>'
@@ -44,8 +55,12 @@ tonutils config get
 tonutils config get --params 0,17,34
 ```
 
-`call` accepts stack arguments as `int:<decimal>`, `null`, `cell:<boc-hex>`,
-and `slice:<boc-hex>`. Without `--arg`, it sends an empty stack.
+`call` accepts typed stack arguments as `null`, `int:<decimal>`,
+`cell:<boc-hex>`, `slice:<boc-hex>`, `unsupported:<hex>`,
+`tuple:<json-array>`, and `list:<json-array>`, or one inline `--stack-json`
+array. Tuple and list typed arguments use the same JSON stack entry objects as
+`--stack-json`. `--arg` and `--stack-json` are mutually exclusive. Without
+either option, it sends an empty stack.
 
 `account` is best-effort after the strict LiteAPI response parse. If account
 state TL-B decoding is incomplete, the command still prints byte lengths, root
@@ -80,6 +95,8 @@ block reported by the selected liteserver.
 tonutils --output json contract state --ls-index 0 --address '<addr>'
 tonutils --output json contract run-get-method --ls-index 0 --address '<addr>' --method seqno
 tonutils --output json contract run-get-method --ls-index 0 --address '<addr>' --method-id 85143
+tonutils --output json contract run-get-method --ls-index 0 --address '<addr>' --method balance --arg int:0 --arg null
+tonutils --output json contract run-get-method --ls-index 0 --address '<addr>' --method balance --stack-json '[{"type":"int","value":"0"}]'
 tonutils --output json contract run-abi-get-method --ls-index 0 --address '<addr>' --abi-file contract.abi.json --contract Wallet --method seqno --arg 'owner="<addr>"'
 ```
 
@@ -87,11 +104,16 @@ JSON state output includes the masterchain block id, shard block id, proof byte
 lengths, and raw state bytes as hex and base64. JSON get-method output includes
 the execution block ids, exit code, proof byte lengths, raw result BoC, and a
 decoded stack when the current stack decoder supports the returned shape.
+`contract run-get-method` accepts the same typed `--arg` and `--stack-json`
+stack inputs as high-level `call`. JSON stack entries use objects with `type`
+set to `null`, `int`, `cell`, `slice`, `tuple`, `list`, or `unsupported`;
+integer values are decimal strings and BoC or raw byte payloads are hex strings.
 `run-abi-get-method` loads ABI JSON, encodes `--arg name=json` inputs through
 the ABI metadata, and renders named decoded outputs. It accepts JSON integer
 numbers or decimal/hex integer strings, booleans, strings, hex bytes, address
 strings, tuple objects, arrays supported by the stack codec, and cell/slice BoC
-hex strings. ABI maps and dictionaries are intentionally rejected.
+hex strings. ABI maps and dictionaries use arrays of `{ "key": ..., "value":
+... }` entries and are limited to fixed-width integer keys.
 
 ## Wallet Commands
 
@@ -128,6 +150,7 @@ prove transaction inclusion or final execution.
 ```bash
 tonutils --output json balancer status --num-servers 3
 tonutils --rps 5 --global-rps 12 --output json balancer masterchain-info --num-servers 3
+tonutils --exclude-ls 0,4,<public-key> --output json balancer status --num-servers 3
 ```
 
 Balancer commands construct multiple LiteClient peers from the selected config.
@@ -136,6 +159,10 @@ They inherit the prototype balancer limits described in
 
 `--rps` applies to every peer. `--global-rps` applies only to balancer commands
 and counts retries and multi-peer message-send attempts as separate requests.
+`--num-servers` selects the first N liteservers left after `--exclude-ls`
+filtering. Connection warnings keep the original global-config index. Direct
+LiteClient commands and high-level `--single --ls-index` commands are explicit
+selections and are not blocked by `--exclude-ls`.
 
 ## Offline TVM Commands
 

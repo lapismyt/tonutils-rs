@@ -114,6 +114,7 @@ mod tests {
                 AbiType::Map {
                     key: Box::new(AbiType::Uint { bits: 32 }),
                     value: Box::new(AbiType::Optional(Box::new(AbiType::Cell))),
+                    key_bits: None,
                 },
             ),
         ])))));
@@ -123,6 +124,7 @@ mod tests {
         let invalid = AbiType::Array(Box::new(AbiType::Map {
             key: Box::new(AbiType::Uint { bits: 0 }),
             value: Box::new(AbiType::Bool),
+            key_bits: None,
         }));
         assert_eq!(
             invalid.validate(),
@@ -368,16 +370,64 @@ mod tests {
     }
 
     #[test]
-    fn map_and_unknown_stack_conversions_are_unsupported() {
+    fn map_stack_conversion_roundtrips_in_canonical_key_order() {
         let map = AbiType::Map {
             key: Box::new(AbiType::Uint { bits: 32 }),
-            value: Box::new(AbiType::Cell),
+            value: Box::new(AbiType::String),
+            key_bits: None,
+        };
+        let value = AbiValue::Map(vec![
+            (
+                AbiValue::Uint(BigUint::from(2u8)),
+                AbiValue::String("b".to_string()),
+            ),
+            (
+                AbiValue::Uint(BigUint::from(1u8)),
+                AbiValue::String("a".to_string()),
+            ),
+        ]);
+        let entry = value.to_stack_entry(&map).unwrap();
+        assert!(matches!(entry, TvmStackEntry::Cell(_)));
+        assert_eq!(
+            abi_value_from_stack_entry(&map, &entry).unwrap(),
+            AbiValue::Map(vec![
+                (
+                    AbiValue::Uint(BigUint::from(1u8)),
+                    AbiValue::String("a".to_string())
+                ),
+                (
+                    AbiValue::Uint(BigUint::from(2u8)),
+                    AbiValue::String("b".to_string())
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn map_conversion_rejects_duplicate_encoded_keys_and_unsupported_keys() {
+        let map = AbiType::Map {
+            key: Box::new(AbiType::Int { bits: 8 }),
+            value: Box::new(AbiType::Bool),
+            key_bits: None,
+        };
+        assert!(matches!(
+            AbiValue::Map(vec![
+                (AbiValue::Int(BigInt::from(-1)), AbiValue::Bool(true)),
+                (AbiValue::Int(BigInt::from(-1)), AbiValue::Bool(false)),
+            ])
+            .to_stack_entry(&map)
+            .unwrap_err(),
+            AbiCodecError::DuplicateMapKey { .. }
+        ));
+
+        let map = AbiType::Map {
+            key: Box::new(AbiType::Address),
+            value: Box::new(AbiType::Bool),
+            key_bits: None,
         };
         assert_eq!(
-            AbiValue::Array(Vec::new())
-                .to_stack_entry(&map)
-                .unwrap_err(),
-            AbiCodecError::UnsupportedType { ty: "map" }
+            AbiValue::Map(Vec::new()).to_stack_entry(&map).unwrap_err(),
+            AbiCodecError::UnsupportedMapKey { ty: "address" }
         );
         assert_eq!(
             abi_value_from_stack_entry(

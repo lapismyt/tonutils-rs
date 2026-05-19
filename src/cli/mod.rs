@@ -2,7 +2,7 @@ pub(super) use crate::contracts::{Contract, DecodedRunMethodResult, RunMethodRes
 pub(super) use crate::liteclient::{
     balancer::LiteBalancer, client::LiteClient, rate_limit::RequestRateLimit,
 };
-pub(super) use crate::network_config::ConfigGlobal;
+pub(super) use crate::network_config::{ConfigGlobal, ConfigLiteServer, LiteServerBlacklist};
 pub(super) use crate::tl::{AccountId, BlockIdExt, Int256, common::TransactionId3};
 pub(super) use crate::tlb::TlbDeserialize;
 pub(super) use crate::tvm::{Builder, Cell, TvmStack, TvmStackEntry, address::Address};

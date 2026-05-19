@@ -25,7 +25,7 @@ block/shard/config/proof roundtrips remain active TODO items.
 | `ValueFlow` | `tlb::ValueFlow` | constructor-checked raw payload | block unit tests |
 | `BlockExtra`, `McBlockExtra` | `tlb::BlockExtra`, `tlb::McBlockExtra` | raw-preserving wrappers | schema summary check |
 | `ShardState`, `ShardStateUnsplit` | `tlb::ShardState`, `tlb::ShardStateUnsplit` | constructor-checked raw payload | block unit tests |
-| `ConfigParams` | `tlb::ConfigParams` | typed address plus raw dictionary root | `tlb_config_params_wrapper` |
+| `ConfigParams` | `tlb::ConfigParams` | typed address, decoded `Hashmap 32 ^Cell` entries, raw-preserving wrappers for common param ids | `tlb_config_params_wrapper`, block unit tests |
 | `HASH_UPDATE` | `tlb::HashUpdate` | typed | block unit tests |
 | `MERKLE_PROOF`, `MERKLE_UPDATE` | `tlb::MerkleProof`, `tlb::MerkleUpdate` | exotic-cell wrappers with virtual hash checks | `proof_verify` |
 

@@ -29,13 +29,28 @@ impl Cli {
         Ok(client)
     }
 
+    pub(super) fn select_balancer_liteservers<'a>(
+        &self,
+        config: &'a ConfigGlobal,
+        num_servers: usize,
+    ) -> Result<Vec<(usize, &'a ConfigLiteServer)>> {
+        let blacklist =
+            LiteServerBlacklist::parse_tokens(self.exclude_ls.iter().map(String::as_str))
+                .context("failed to parse --exclude-ls")?;
+        let selected = config.select_liteservers(num_servers, &blacklist);
+        if selected.is_empty() && !config.liteservers.is_empty() && !blacklist.is_empty() {
+            anyhow::bail!("no liteservers left after applying --exclude-ls");
+        }
+        Ok(selected)
+    }
+
     pub(super) async fn create_balancer(&self, num_servers: usize) -> Result<LiteBalancer> {
         let config = self.load_config().await?;
         let mut clients = Vec::new();
-        let limit = num_servers.min(config.liteservers.len());
+        let selected = self.select_balancer_liteservers(&config, num_servers)?;
 
-        for index in 0..limit {
-            match LiteClient::connect_liteserver(&config.liteservers[index]).await {
+        for (index, liteserver) in selected {
+            match LiteClient::connect_liteserver(liteserver).await {
                 Ok(mut client) => {
                     if let Some(rps) = self.rps {
                         client.set_rate_limit(RequestRateLimit::per_second(rps.get())?);
@@ -45,7 +60,7 @@ impl Cli {
                 Err(error) => {
                     eprintln!(
                         "failed to connect liteserver #{index} ({}): {error}",
-                        config.liteservers[index].socket_addr()
+                        liteserver.socket_addr()
                     );
                 }
             }
@@ -150,7 +165,7 @@ impl Cli {
             .last;
         let block = latest_or_explicit_block(args.block.as_ref(), latest)?;
         let (method, method_id) = parse_method_ref(&args.method)?;
-        let stack = parse_stack_args(&args.args)?;
+        let stack = parse_stack_input(&args.args, args.stack_json.as_deref())?;
         let result = backend
             .run_get_method(block, address, method_id, stack)
             .await
@@ -689,16 +704,17 @@ impl Cli {
                 address,
                 method,
                 method_id,
+                args,
+                stack_json,
             } => {
                 let mut client = self.create_client(*ls_index).await?;
                 let address = Address::from_str(address)?;
                 let method_id = method_id
                     .or_else(|| method.as_deref().map(crate::utils::method_name_to_id))
                     .context("run-get-method requires --method or --method-id")?;
+                let stack = parse_stack_input(args, stack_json.as_deref())?;
                 let mut contract = Contract::new(&mut client, address);
-                let result = contract
-                    .run_get_method_latest(method_id, TvmStack::empty())
-                    .await?;
+                let result = contract.run_get_method_latest(method_id, stack).await?;
                 self.print_structured(&run_get_method_view(result, method.clone(), method_id)?)
             }
             ContractCommand::RunAbiGetMethod(args) => {

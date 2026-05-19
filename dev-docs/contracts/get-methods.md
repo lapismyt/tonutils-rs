@@ -18,7 +18,38 @@ Common tooling maps names to ids:
 
 ## Input Stack
 
-`params` must encode TVM stack values in the format expected by liteserver. This must be verified with real fixtures.
+`params` must encode TVM stack values in the format expected by liteserver.
+The internal stack codec preserves nulls, integers, cells, slices, tuples,
+lists, and explicit unsupported payload bytes. The checked offline fixture
+`fixtures/tvm/stack.json` records deterministic non-empty input stack BoCs,
+root hashes, decoded entry shapes, and canonical reserialization checks for
+scalar, deep stack-chain, nested tuple/list, huge integer, cell/slice, and
+unsupported payload cases. This confirms the crate's own offline format is
+reproducible; successful live captures and cross-SDK comparisons are still
+needed before claiming full TON node compatibility for every non-empty shape.
+
+For opt-in live evidence, run the ignored
+`live_non_empty_stack_run_get_method_smoke` test with
+`TON_GLOBAL_CONFIG_JSON`, `TON_STACK_TEST_CONTRACT_ADDRESS`,
+`TON_STACK_TEST_METHOD` defaulting to `seqno`, and `TON_STACK_TEST_JSON`.
+`TON_STACK_TEST_ACCEPT_EXIT_CODE` may be set when the selected method is
+expected to reject the supplied non-empty stack.
+Successful `exit_code == 0` runs print fixture JSON with params/result BoCs and
+decoded stack output. Non-zero accepted runs remain smoke tests only and should
+not be promoted to captured compatibility fixtures.
+
+The public conversion layer is:
+
+- `ToTvmStack` and `FromTvmStack` for full get-method argument and result
+  stacks,
+- `ToTvmStackEntry` and `FromTvmStackEntry` for one stack item,
+- `TvmStackConversionError` for arity, type, integer range, bool, and address
+  failures.
+
+Built-in conversions cover `()`, `TvmStack`, `Vec<TvmStackEntry>`,
+`TvmStackEntry`, signed and unsigned Rust integers, `BigInt`, `BigUint`,
+`bool`, standard internal `Address` stack slices, `Arc<Cell>` cells,
+`Option<T>` as `Null` or the inner entry, and tuples up to eight fields.
 
 ## Result
 
@@ -62,6 +93,9 @@ The wrapper provides:
 - get-method execution by method name,
 - typed result helpers through `RunMethodResultExt`,
 - high-level typed get-method helpers that fail on non-zero `exit_code`,
+- conversion-trait helpers `run_get_method_as`,
+  `run_get_method_by_name_as`, `run_get_method_latest_as`, and
+  `run_get_method_by_name_latest_as`,
 - raw external message BoC submission,
 - account transaction-history lookup,
 - `StateInit` address derivation from the serialized cell hash,
@@ -77,6 +111,7 @@ High-level helpers return `ContractError<P::Error>`:
 - provider failures preserve the original LiteClient or LiteBalancer error,
 - non-zero get-method exit codes are `NonZeroExitCode`,
 - TVM stack or TL-B decode failures are `Decode`,
+- Rust value and TVM stack conversion failures are `StackConversion`,
 - active-state helpers return missing-state variants for none, uninit, frozen,
   or absent code/data.
 
@@ -92,7 +127,8 @@ in `RunMethodResult` without treating them as transport errors.
   account field extraction, missing-state errors, method-name mapping, stack
   decoding, non-zero exit handling, raw external BoC preservation, transaction
   routing, state-init address derivation, blueprint state/address/bind
-  semantics, and address-bound typed-client delegation.
+  semantics, conversion trait arity/range/type errors, latest-block typed
+  helper routing, and address-bound typed-client delegation.
 - Derive macro tests must cover supported code source attributes, default and
   explicit workchains, and rejected ambiguous struct shapes.
 - Live-network tests remain ignored until checked fixtures or opt-in network
@@ -100,7 +136,8 @@ in `RunMethodResult` without treating them as transport errors.
 
 ## Missing Work
 
-- Verify stack serialization.
+- Capture successful live non-empty stack fixtures.
+- Compare non-empty stack serialization with tonutils-go and tonlib behavior.
 - Expand result stack decoding against live liteserver fixtures.
 - Add known contract fixtures.
 - Add proof verification.

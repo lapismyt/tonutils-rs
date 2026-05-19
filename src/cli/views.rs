@@ -339,7 +339,9 @@ pub(super) fn parse_stack_arg(value: &str) -> Result<TvmStackEntry> {
         return Ok(TvmStackEntry::Null);
     }
     let Some((kind, payload)) = value.split_once(':') else {
-        anyhow::bail!("stack arg must be null, int:<decimal>, cell:<boc-hex>, or slice:<boc-hex>");
+        anyhow::bail!(
+            "stack arg must be null, int:<decimal>, cell:<boc-hex>, slice:<boc-hex>, unsupported:<hex>, tuple:<json-array>, or list:<json-array>"
+        );
     };
     match kind {
         "int" => Ok(TvmStackEntry::Int(
@@ -347,6 +349,15 @@ pub(super) fn parse_stack_arg(value: &str) -> Result<TvmStackEntry> {
         )),
         "cell" => Ok(TvmStackEntry::Cell(parse_boc_hex_cell(payload)?)),
         "slice" => Ok(TvmStackEntry::Slice(parse_boc_hex_cell(payload)?)),
+        "unsupported" => Ok(TvmStackEntry::Unsupported(
+            hex::decode(payload.trim()).context("failed to decode unsupported stack arg hex")?,
+        )),
+        "tuple" => Ok(TvmStackEntry::Tuple(parse_stack_arg_json_entries(
+            payload, "tuple",
+        )?)),
+        "list" => Ok(TvmStackEntry::List(parse_stack_arg_json_entries(
+            payload, "list",
+        )?)),
         _ => anyhow::bail!("unsupported stack arg kind {kind}"),
     }
 }
@@ -357,6 +368,101 @@ pub(super) fn parse_stack_args(values: &[String]) -> Result<TvmStack> {
         .map(|value| parse_stack_arg(value))
         .collect::<Result<Vec<_>>>()
         .map(TvmStack::new)
+}
+
+pub(super) fn parse_stack_input(args: &[String], stack_json: Option<&str>) -> Result<TvmStack> {
+    match stack_json {
+        Some(json) if args.is_empty() => parse_stack_json(json),
+        Some(_) => anyhow::bail!("--arg cannot be used with --stack-json"),
+        None => parse_stack_args(args),
+    }
+}
+
+pub(super) fn parse_stack_json(value: &str) -> Result<TvmStack> {
+    let value: Value = serde_json::from_str(value).context("failed to parse stack JSON")?;
+    let entries = value
+        .as_array()
+        .context("stack JSON root must be an array")?
+        .iter()
+        .map(parse_stack_json_entry)
+        .collect::<Result<Vec<_>>>()?;
+    Ok(TvmStack::new(entries))
+}
+
+fn parse_stack_json_entry(value: &Value) -> Result<TvmStackEntry> {
+    let object = value
+        .as_object()
+        .context("stack JSON entry must be an object")?;
+    let kind = object
+        .get("type")
+        .and_then(Value::as_str)
+        .context("stack JSON entry must include string field \"type\"")?;
+    match kind {
+        "null" => Ok(TvmStackEntry::Null),
+        "int" => {
+            let decimal = object
+                .get("value")
+                .and_then(Value::as_str)
+                .context("int stack JSON entry must include string field \"value\"")?;
+            Ok(TvmStackEntry::Int(
+                BigInt::parse_bytes(decimal.as_bytes(), 10)
+                    .context("invalid decimal stack JSON int")?,
+            ))
+        }
+        "cell" => Ok(TvmStackEntry::Cell(parse_stack_json_boc(object, "cell")?)),
+        "slice" => Ok(TvmStackEntry::Slice(parse_stack_json_boc(object, "slice")?)),
+        "tuple" => Ok(TvmStackEntry::Tuple(parse_stack_json_entries(
+            object, "tuple",
+        )?)),
+        "list" => Ok(TvmStackEntry::List(parse_stack_json_entries(
+            object, "list",
+        )?)),
+        "unsupported" => {
+            let raw = object
+                .get("raw")
+                .and_then(Value::as_str)
+                .context("unsupported stack JSON entry must include string field \"raw\"")?;
+            Ok(TvmStackEntry::Unsupported(
+                hex::decode(raw.trim()).context("failed to decode unsupported raw hex")?,
+            ))
+        }
+        _ => anyhow::bail!("unsupported stack JSON entry type {kind}"),
+    }
+}
+
+fn parse_stack_arg_json_entries(value: &str, kind: &'static str) -> Result<Vec<TvmStackEntry>> {
+    let value: Value = serde_json::from_str(value)
+        .with_context(|| format!("failed to parse {kind} stack arg JSON"))?;
+    value
+        .as_array()
+        .with_context(|| format!("{kind} stack arg JSON root must be an array"))?
+        .iter()
+        .map(parse_stack_json_entry)
+        .collect()
+}
+
+fn parse_stack_json_boc(
+    object: &serde_json::Map<String, Value>,
+    kind: &'static str,
+) -> Result<std::sync::Arc<Cell>> {
+    let boc = object
+        .get("boc")
+        .and_then(Value::as_str)
+        .with_context(|| format!("{kind} stack JSON entry must include string field \"boc\""))?;
+    parse_boc_hex_cell(boc)
+}
+
+fn parse_stack_json_entries(
+    object: &serde_json::Map<String, Value>,
+    kind: &'static str,
+) -> Result<Vec<TvmStackEntry>> {
+    object
+        .get("entries")
+        .and_then(Value::as_array)
+        .with_context(|| format!("{kind} stack JSON entry must include array field \"entries\""))?
+        .iter()
+        .map(parse_stack_json_entry)
+        .collect()
 }
 
 pub(super) fn parse_boc_hex_cell(value: &str) -> Result<std::sync::Arc<Cell>> {
@@ -848,3 +954,6 @@ pub(super) fn account_state_view(state: crate::tl::response::AccountState) -> Ac
         state: raw_bytes_view(&state.state),
     }
 }
+
+#[cfg(test)]
+mod stack_input_tests;

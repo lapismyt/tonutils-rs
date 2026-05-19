@@ -39,6 +39,12 @@ LiteBalancer, contract, wallet, and ABI capabilities:
 7. Add custom smart-contract client support with idiomatic Rust wrappers.
 8. Add built-in smart-contract wrappers for wallets and jettons.
 9. Add an ABI module organized by protocol, version, and contract family.
+10. Keep reusable get-method argument/result abstractions complete enough for
+   wrapper work: the public conversion traits now cover common scalar, address,
+   cell, option, and tuple cases, with fixture and live-network expansion still
+   tracked in `TODO.md`.
+11. Expand typed metadata parsing for Jettons, NFTs, and future TEP-compatible
+   contract families while preserving unsupported raw content.
 
 Hardening, productionization, and broad protocol expansion remain important but
 are intentionally deferred until these foundation, contract, and ABI milestones
@@ -174,6 +180,16 @@ foundation:
   include a common raw-preserving metadata cell parser, TEP-64 on-chain and
   off-chain content handling, jetton metadata for TEP-74 wrappers, and NFT item
   and collection metadata for TEP-62 wrappers.
+- Grow metadata parsing into a reusable contract metadata layer. It should cover
+  Jetton, NFT item, NFT collection, and future TEP-compatible metadata formats;
+  expose typed fields for common keys; keep unknown, malformed, or unsupported
+  content raw-preserved; and stay usable independently of concrete wrapper
+  implementations.
+- Add get-method conversion traits similar in role to ton-rs `ToTVMStack` and
+  `FromTVMStack`, but shaped idiomatically for this crate. They should support
+  composing typed Rust arguments into TVM stack values, decoding stack results
+  into typed Rust values, surfacing precise conversion errors, and reusing the
+  same conversions from contract wrappers, ABI helpers, and CLI input/output.
 - Add an `abi` module split by protocol and then by version or contract family.
   Initial ABI coverage must include wallets V4, V5, Highload, and jettons
   TEP-74 and TEP-89.
@@ -196,6 +212,10 @@ Exit criteria for Phase 2:
   starting with Wallet V5R1.
 - Jetton and NFT wrappers can decode supported TEP-64 metadata content while
   preserving unsupported raw content for follow-up parsing.
+- Contract metadata parsing is available as a reusable raw-preserving layer for
+  Jettons, NFTs, and later TEP-compatible contract families.
+- Contract wrappers can express get-method arguments and results through typed
+  TVM stack conversion traits instead of ad hoc stack assembly and decoding.
 - ABI definitions can be used independently from concrete code hashes when the
   method and message interfaces are compatible.
 - LiteClient and LiteBalancer expose the contract data retrieval methods needed

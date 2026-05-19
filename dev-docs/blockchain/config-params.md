@@ -29,19 +29,21 @@ Commonly referenced config params include:
 - `34`: current validator set,
 - `36`: next validator set.
 
-Exact TLB schemas must be verified before implementation.
+`tlb::ConfigParams` decodes the top-level `config:^(Hashmap 32 ^Cell)` into
+raw parameter cells and exposes raw-preserving wrappers for the ids above.
+Exact deep TL-B schemas for each parameter still require upstream source and
+fixture evidence before replacing raw cells with semantic fields.
 
 ## SDK Requirements
 
 - Fetch config params by id.
 - Decode config dictionary.
-- Decode common params into typed structs.
+- Preserve common params behind typed ids while exact deep schemas are pending.
 - Verify config proof against masterchain state.
 - Keep unknown params as raw cells.
 
 ## Missing Work
 
-- Config dictionary decoder.
-- Typed config param models.
+- Deep typed config param models.
 - Validator set decoder.
 - Config proof verifier.

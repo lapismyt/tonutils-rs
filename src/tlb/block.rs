@@ -7,7 +7,7 @@
 //! verification.
 
 use crate::tlb::{Result, TlbDeserialize, TlbError, TlbSerialize, expect_tag, store_tag};
-use crate::tvm::{Builder, Cell, Slice};
+use crate::tvm::{BitKey, Builder, Cell, HashmapE, Slice};
 use std::sync::Arc;
 
 const BLOCK_TAG: u32 = 0x11ef55aa;
@@ -387,6 +387,51 @@ pub struct ConfigParams {
     pub config: Arc<Cell>,
 }
 
+/// Raw-preserving typed view over a config parameter dictionary entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigParam {
+    /// Config parameter id.
+    pub id: u32,
+    /// Typed family currently recognized by this crate.
+    pub value: ConfigParamValue,
+}
+
+/// Config parameter families needed by block/config/proof-adjacent APIs.
+///
+/// Exact deep schemas remain intentionally raw-preserving until fixture-backed
+/// upstream evidence is checked in for each family.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigParamValue {
+    /// Config parameter 0.
+    Param0(Arc<Cell>),
+    /// Config parameter 1.
+    Param1(Arc<Cell>),
+    /// Config parameter 2.
+    Param2(Arc<Cell>),
+    /// Config parameter 15.
+    Param15(Arc<Cell>),
+    /// Config parameter 17.
+    Param17(Arc<Cell>),
+    /// Config parameter 18.
+    Param18(Arc<Cell>),
+    /// Config parameter 20.
+    Param20(Arc<Cell>),
+    /// Config parameter 21.
+    Param21(Arc<Cell>),
+    /// Config parameter 24.
+    Param24(Arc<Cell>),
+    /// Config parameter 25.
+    Param25(Arc<Cell>),
+    /// Config parameter 32.
+    Param32(Arc<Cell>),
+    /// Config parameter 34.
+    Param34(Arc<Cell>),
+    /// Config parameter 36.
+    Param36(Arc<Cell>),
+    /// Unknown config parameter preserved as raw cell.
+    Unknown { id: u32, raw: Arc<Cell> },
+}
+
 /// TL-B `update_hashes#72 old_hash:bits256 new_hash:bits256 = HASH_UPDATE X`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HashUpdate {
@@ -430,6 +475,75 @@ impl TlbDeserialize for ConfigParams {
             config_addr: load_hash(slice)?,
             config: slice.load_reference()?,
         })
+    }
+}
+
+impl ConfigParams {
+    /// Decodes `config:^(Hashmap 32 ^Cell)` while preserving each parameter
+    /// cell unchanged.
+    pub fn config_entries(&self) -> Result<HashmapE<Arc<Cell>>> {
+        let mut slice = Slice::new(self.config.clone());
+        slice
+            .load_hashmap_e_with(CONFIG_PARAMS_KEY_BITS, |slice| slice.load_reference())
+            .map_err(|error| TlbError::CustomSchema {
+                schema: "ConfigParams.config",
+                message: error.to_string(),
+            })
+    }
+
+    /// Returns raw-preserving typed wrappers for known config parameter ids.
+    pub fn typed_params(&self) -> Result<Vec<ConfigParam>> {
+        self.config_entries()?
+            .iter()
+            .map(|(key, raw)| {
+                let id = key.to_u64().map_err(|error| TlbError::CustomSchema {
+                    schema: "ConfigParams.config.key",
+                    message: error.to_string(),
+                })? as u32;
+                Ok(ConfigParam {
+                    id,
+                    value: ConfigParamValue::from_raw(id, raw.clone()),
+                })
+            })
+            .collect()
+    }
+
+    /// Looks up one raw config parameter by id.
+    pub fn raw_param(&self, id: u32) -> Result<Option<Arc<Cell>>> {
+        let key = BitKey::from_u64(id as u64, CONFIG_PARAMS_KEY_BITS).map_err(|error| {
+            TlbError::CustomSchema {
+                schema: "ConfigParams.config.key",
+                message: error.to_string(),
+            }
+        })?;
+        self.config_entries()?
+            .get_bit_key(&key)
+            .map(|value| value.cloned())
+            .map_err(|error| TlbError::CustomSchema {
+                schema: "ConfigParams.config",
+                message: error.to_string(),
+            })
+    }
+}
+
+impl ConfigParamValue {
+    fn from_raw(id: u32, raw: Arc<Cell>) -> Self {
+        match id {
+            0 => Self::Param0(raw),
+            1 => Self::Param1(raw),
+            2 => Self::Param2(raw),
+            15 => Self::Param15(raw),
+            17 => Self::Param17(raw),
+            18 => Self::Param18(raw),
+            20 => Self::Param20(raw),
+            21 => Self::Param21(raw),
+            24 => Self::Param24(raw),
+            25 => Self::Param25(raw),
+            32 => Self::Param32(raw),
+            34 => Self::Param34(raw),
+            36 => Self::Param36(raw),
+            _ => Self::Unknown { id, raw },
+        }
     }
 }
 

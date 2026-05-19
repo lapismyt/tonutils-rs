@@ -1,4 +1,6 @@
+use base64::Engine;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
@@ -9,6 +11,16 @@ pub enum ConfigError {
     EmptyLiteServers,
     #[error("liteserver index {index} is out of bounds for {len} configured liteservers")]
     LiteServerIndexOutOfBounds { index: usize, len: usize },
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum LiteServerBlacklistParseError {
+    #[error("invalid liteserver index `{value}`")]
+    InvalidIndex { value: String },
+    #[error("invalid liteserver id encoding `{value}`")]
+    InvalidIdEncoding { value: String },
+    #[error("invalid liteserver id length for `{value}`: expected 32 bytes, got {len}")]
+    InvalidIdLength { value: String, len: usize },
 }
 
 #[serde_with::serde_as]
@@ -37,6 +49,12 @@ pub struct ConfigLiteServer {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConfigGlobal {
     pub liteservers: Vec<ConfigLiteServer>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LiteServerBlacklist {
+    indexes: BTreeSet<usize>,
+    ids: BTreeSet<[u8; 32]>,
 }
 
 impl FromStr for ConfigGlobal {
@@ -118,6 +136,117 @@ impl ConfigGlobal {
             .first()
             .ok_or(ConfigError::EmptyLiteServers)
     }
+
+    pub fn select_liteservers(
+        &self,
+        limit: usize,
+        blacklist: &LiteServerBlacklist,
+    ) -> Vec<(usize, &ConfigLiteServer)> {
+        self.liteservers
+            .iter()
+            .enumerate()
+            .filter(|(index, liteserver)| !blacklist.contains(*index, liteserver))
+            .take(limit)
+            .collect()
+    }
+}
+
+impl LiteServerBlacklist {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn parse_tokens<'a>(
+        tokens: impl IntoIterator<Item = &'a str>,
+    ) -> Result<Self, LiteServerBlacklistParseError> {
+        let mut blacklist = Self::new();
+        for token in tokens {
+            let token = token.trim();
+            if token.is_empty() {
+                continue;
+            }
+            blacklist.insert_token(token)?;
+        }
+        Ok(blacklist)
+    }
+
+    pub fn contains(&self, index: usize, liteserver: &ConfigLiteServer) -> bool {
+        self.indexes.contains(&index) || self.ids.contains(&liteserver.public_key())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.indexes.is_empty() && self.ids.is_empty()
+    }
+
+    fn insert_token(&mut self, token: &str) -> Result<(), LiteServerBlacklistParseError> {
+        if let Some(index) = token.strip_prefix("index:") {
+            self.insert_index(index)
+        } else if let Some(id) = token.strip_prefix("id:") {
+            self.insert_id(id)
+        } else if token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            self.insert_id(token)
+        } else if token.bytes().all(|byte| byte.is_ascii_digit()) {
+            self.insert_index(token)
+        } else {
+            self.insert_id(token)
+        }
+    }
+
+    fn insert_index(&mut self, value: &str) -> Result<(), LiteServerBlacklistParseError> {
+        let index =
+            value
+                .parse::<usize>()
+                .map_err(|_| LiteServerBlacklistParseError::InvalidIndex {
+                    value: value.to_owned(),
+                })?;
+        self.indexes.insert(index);
+        Ok(())
+    }
+
+    fn insert_id(&mut self, value: &str) -> Result<(), LiteServerBlacklistParseError> {
+        let bytes = decode_liteserver_id(value)?;
+        if bytes.len() != 32 {
+            return Err(LiteServerBlacklistParseError::InvalidIdLength {
+                value: value.to_owned(),
+                len: bytes.len(),
+            });
+        }
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&bytes);
+        self.ids.insert(id);
+        Ok(())
+    }
+}
+
+impl FromStr for LiteServerBlacklist {
+    type Err = LiteServerBlacklistParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse_tokens(s.split(','))
+    }
+}
+
+fn decode_liteserver_id(value: &str) -> Result<Vec<u8>, LiteServerBlacklistParseError> {
+    if value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return hex::decode(value).map_err(|_| LiteServerBlacklistParseError::InvalidIdEncoding {
+            value: value.to_owned(),
+        });
+    }
+
+    for engine in [
+        &base64::engine::general_purpose::STANDARD,
+        &base64::engine::general_purpose::STANDARD_NO_PAD,
+        &base64::engine::general_purpose::URL_SAFE,
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+    ] {
+        if let Ok(bytes) = engine.decode(value) {
+            return Ok(bytes);
+        }
+    }
+
+    Err(LiteServerBlacklistParseError::InvalidIdEncoding {
+        value: value.to_owned(),
+    })
 }
 
 #[cfg(test)]

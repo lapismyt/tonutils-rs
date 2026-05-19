@@ -73,11 +73,16 @@ Current stack mappings:
 - `Slice` maps to `TvmStackEntry::Slice`.
 - `Tuple` maps to `TvmStackEntry::Tuple` and follows declared field order.
 - `Array` maps to `TvmStackEntry::List`.
+- `Map` maps to `TvmStackEntry::Cell` containing a local
+  `HashmapE key_bits ^AbiValueCell` dictionary. Keys must be fixed-width
+  `uintN` or `intN`; `key_bits` is inferred from `N` when omitted. Duplicate
+  encoded keys are rejected, and decoded entries are returned in canonical
+  dictionary key order.
 - `Optional(None)` maps to `TvmStackEntry::Null`; present optional values map
   as their nested type.
 
-`Map` and `Unknown` return explicit unsupported conversion errors. Dictionary
-ABI layout policy is still open and should not be inferred from these helpers.
+`Unknown` returns an explicit unsupported conversion error. Map support is a
+deterministic local ABI policy and is not yet upstream compatibility evidence.
 
 `encode_get_method_inputs` validates that a function is a `GetMethod` with
 either no selector or a `MethodId`, checks input arity, and converts each input
@@ -104,11 +109,13 @@ Current body mappings:
 - `Bytes` and `String` encode as referenced byte-aligned snake cells.
 - `Cell` and `Slice` encode as referenced cells.
 - `Tuple` encodes fields inline in declared order.
+- `Map` stores a reference to the same local `HashmapE key_bits ^AbiValueCell`
+  dictionary root used by stack conversion.
 - `Optional` encodes a `Maybe` bit followed by the nested value when present.
 
 Decoding is exact and rejects opcode mismatches or trailing bits/references.
-`Array`, `Map`, and `Unknown` are intentionally unsupported for message bodies
-until a dictionary and sequence layout policy is documented.
+`Array` and `Unknown` are intentionally unsupported for message bodies until a
+sequence layout policy is documented.
 
 ## JSON Loader
 
@@ -135,8 +142,11 @@ object forms are also accepted:
 - `{ "tuple": [parameter, ...] }`,
 - `{ "array": type }`,
 - `{ "optional": type }`,
-- `{ "map": { "key": type, "value": type } }`,
+- `{ "map": { "key": type, "value": type, "key_bits": optional_integer } }`,
 - `{ "unknown": "raw-spelling" }`.
+
+Map key types must be `uintN` or `intN`. When `key_bits` is omitted, it is
+inferred from `N`; when provided, it must match the integer key width.
 
 Diagnostics include JSON paths for missing fields, invalid JSON kinds,
 ambiguous selectors, and known compatibility shapes that are not implemented
@@ -158,14 +168,46 @@ CLI argument parsing accepts JSON integer numbers or decimal/hex integer
 strings for ints and uints, JSON booleans and strings, hex strings for bytes,
 TON address strings, tuple objects keyed by ABI field name, arrays for stack
 types where the ABI stack codec already supports arrays, optional `null`, and
-BoC hex strings for cells and slices. Map and dictionary arguments are rejected
-until the ABI payload policy is documented and tested.
+BoC hex strings for cells and slices. Map arguments use arrays of
+`{ "key": ..., "value": ... }` entries and are encoded with the local fixed
+integer-key dictionary policy.
+
+## Golden Fixtures
+
+Checked ABI fixture metadata lives in `fixtures/abi/contracts.json`. The file
+uses schema revision `1` with a top-level synthetic source note, capture date,
+and a `fixtures` array. Each fixture stores evidence metadata
+(`evidence_kind`, `source_url`, `source_commit`, `network`, `account`,
+`block_id`, `method_id`, `capture_command`, and `compat_reference`), a local
+ABI JSON document, input values in fixture-only JSON form, and the expected
+offline wire artifacts:
+
+- get-method fixtures store `input_stack_boc_hex`, `input_stack_root_hash`,
+  returned `output_stack_boc_hex`, `output_stack_root_hash`, and expected
+  decoded ABI outputs;
+- message-body fixtures store `message_body_boc_hex`, the body root
+  representation hash, and expected decoded inputs;
+- map fixtures store ABI JSON with fixed integer keys and fixture-only
+  `{ "key": ..., "value": ... }` entries for stack and message-body roundtrips.
+
+The message-body BoCs are body-cell BoCs only. They are not full internal or
+external message BoCs and do not include `CommonMsgInfo`, state init, fees, or
+envelope metadata.
+
+The current fixture set includes synthetic offline coverage generated from the
+local ABI policy documented above and opt-in live capture templates for wallet
+`seqno` and TEP-74 `get_wallet_address(owner)`. The synthetic entries lock
+deterministic behavior for already implemented JSON loading, get-method stack
+conversion, message-body encode/decode, and local map/dictionary conversion.
+The opt-in entries are templates only until stack/result bytes from the capture
+command are checked in, so independent compatibility validation remains open.
 
 ## Non-Goals
 
 This step does not implement:
 
-- golden ABI fixtures.
+- ABI event payload helpers beyond full message-body decode,
+- independent upstream or live-captured ABI compatibility vectors.
 
 The module should therefore not be described as ABI execution support. It is a
 stable Rust vocabulary and scalar stack conversion foundation for follow-up
@@ -175,6 +217,6 @@ work.
 
 Planned follow-up work:
 
-- define dictionary/map ABI codec policy,
-- add golden fixtures and cross-checks against accepted TON protocol evidence
-  and compatibility references.
+- add event/external payload component helpers beyond full body decode,
+- cross-check checked ABI fixtures against accepted TON protocol evidence and
+  compatibility references.

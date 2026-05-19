@@ -161,7 +161,7 @@ fn load_message_selector(slice: &mut Slice, function: &AbiFunction) -> Result<()
     Ok(())
 }
 
-fn store_body_value(
+pub(super) fn store_body_value(
     builder: &mut Builder,
     ty: &AbiType,
     value: &AbiValue,
@@ -237,7 +237,14 @@ fn store_body_value(
             store_body_value(builder, item_ty, value)
         }
         (AbiType::Array(_), _) => Err(AbiCodecError::UnsupportedType { ty: "array" }),
-        (AbiType::Map { .. }, _) => Err(AbiCodecError::UnsupportedType { ty: "map" }),
+        (
+            AbiType::Map {
+                key,
+                value: value_ty,
+                key_bits,
+            },
+            AbiValue::Map(entries),
+        ) => store_body_ref(builder, encode_map_cell(key, value_ty, *key_bits, entries)?),
         (AbiType::Unknown(_), _) => Err(AbiCodecError::UnsupportedType { ty: "unknown" }),
         (ty, value) => Err(AbiCodecError::TypeMismatch {
             expected: abi_type_name(ty),
@@ -255,7 +262,7 @@ fn store_body_ref(builder: &mut Builder, cell: Arc<Cell>) -> Result<(), AbiCodec
     Ok(())
 }
 
-fn load_body_value(slice: &mut Slice, ty: &AbiType) -> Result<AbiValue, AbiCodecError> {
+pub(super) fn load_body_value(slice: &mut Slice, ty: &AbiType) -> Result<AbiValue, AbiCodecError> {
     match ty {
         AbiType::Int { bits } => {
             validate_integer_width_codec("int", *bits)?;
@@ -341,7 +348,14 @@ fn load_body_value(slice: &mut Slice, ty: &AbiType) -> Result<AbiValue, AbiCodec
             }
         }
         AbiType::Array(_) => Err(AbiCodecError::UnsupportedType { ty: "array" }),
-        AbiType::Map { .. } => Err(AbiCodecError::UnsupportedType { ty: "map" }),
+        AbiType::Map {
+            key,
+            value,
+            key_bits,
+        } => {
+            let cell = load_body_ref(slice)?;
+            decode_map_cell(key, value, *key_bits, cell).map(AbiValue::Map)
+        }
         AbiType::Unknown(_) => Err(AbiCodecError::UnsupportedType { ty: "unknown" }),
     }
 }

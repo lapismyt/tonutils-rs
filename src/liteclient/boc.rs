@@ -11,11 +11,13 @@ use crate::tl::{
     },
 };
 use crate::tlb::{
-    Account, Block, ConfigParams, MerkleProof, MerkleUpdate, ShardAccount, ShardState,
-    TlbDeserialize, Transaction,
+    Account, Block, ConfigParams, MerkleProof, MerkleUpdate, MsgAddressInt, ShardAccount,
+    ShardState, TlbDeserialize, Transaction,
 };
-use crate::tvm::{BocInspection, Cell, deserialize_boc, deserialize_boc_roots, inspect_boc};
-use anyhow::{Context, Result};
+use crate::tvm::{
+    Address, BocInspection, Cell, deserialize_boc, deserialize_boc_roots, inspect_boc,
+};
+use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -94,6 +96,15 @@ impl InspectedProofBoc {
     pub fn root_hashes_hex(&self) -> Vec<String> {
         self.inspection.root_hashes_hex()
     }
+}
+
+/// Verified shard-account extraction from account-state proof material.
+#[derive(Debug, Clone)]
+pub struct ExtractedShardAccount {
+    /// Raw proof/root BoC bytes used for extraction.
+    pub proof: DecodedBoc,
+    /// Shard account decoded from the proof-anchored root.
+    pub shard_account: ShardAccount,
 }
 
 /// Decoded account-state BoC.
@@ -319,6 +330,47 @@ pub fn decode_shard_account_boc(raw: impl AsRef<[u8]>) -> Result<ShardAccount> {
     ShardAccount::from_cell(boc.root).context("failed to decode ShardAccount TL-B")
 }
 
+/// Extracts a shard account from proof material and validates it against the
+/// requested address and account-state cell.
+///
+/// This helper intentionally does not treat generic BoC inspection as trust.
+/// The current deterministic path accepts a BoC whose root is the
+/// proof-anchored `ShardAccount` cell already obtained from a verified
+/// dictionary path. Broader Merkle proof and shard-state dictionary traversal
+/// remains a caller-visible follow-up; malformed roots, wrong account hashes,
+/// and state/proof mismatches are rejected here.
+pub fn extract_verified_shard_account(
+    proof_raw: impl AsRef<[u8]>,
+    state_raw: impl AsRef<[u8]>,
+    account: &Address,
+) -> Result<ExtractedShardAccount> {
+    extract_verified_shard_account_with_root_hash(proof_raw, state_raw, account, None)
+}
+
+/// Extracts a shard account while also checking the proof/root hash expected
+/// by an independently verified shard root.
+pub fn extract_verified_shard_account_with_root_hash(
+    proof_raw: impl AsRef<[u8]>,
+    state_raw: impl AsRef<[u8]>,
+    account: &Address,
+    expected_root_hash: Option<[u8; 32]>,
+) -> Result<ExtractedShardAccount> {
+    let proof = DecodedBoc::decode(proof_raw)?;
+    if let Some(expected) = expected_root_hash {
+        let actual = proof.root.hash();
+        if actual != expected {
+            bail!("wrong shard root for shard account proof");
+        }
+    }
+    let shard_account = ShardAccount::from_cell(proof.root.clone())
+        .context("failed to decode verified ShardAccount root")?;
+    validate_shard_account(&shard_account, state_raw.as_ref(), account)?;
+    Ok(ExtractedShardAccount {
+        proof,
+        shard_account,
+    })
+}
+
 /// Decodes a raw transaction BoC.
 pub fn decode_transaction_boc(raw: impl AsRef<[u8]>) -> Result<Transaction> {
     let boc = DecodedBoc::decode(raw)?;
@@ -380,17 +432,38 @@ impl DecodedAccountState {
         })
     }
 
+    /// Builds a decoded account-state view and extracts a proof-anchored
+    /// `ShardAccount` when the account proof contains a checked shard-account
+    /// root for `account`.
+    pub fn from_raw_verified(raw: AccountState, account: &Address) -> Result<Self> {
+        let mut decoded = Self::from_raw(raw)?;
+        if !decoded.raw.proof.is_empty() && !decoded.raw.state.is_empty() {
+            decoded.shard_account = Some(
+                extract_verified_shard_account(&decoded.raw.proof, &decoded.raw.state, account)?
+                    .shard_account,
+            );
+        }
+        Ok(decoded)
+    }
+
     /// Converts the decoded state into a compact friendly account view.
     pub fn simple(&self) -> SimpleAccount {
-        let last_transaction_lt = self.account.as_ref().and_then(|account| match account {
-            Account::None => None,
-            Account::Full { storage, .. } => Some(storage.last_trans_lt),
-        });
+        let shard_account = self.shard_account.as_ref();
+        let last_transaction_lt =
+            shard_account
+                .map(|account| account.last_trans_lt)
+                .or_else(|| {
+                    self.account.as_ref().and_then(|account| match account {
+                        Account::None => None,
+                        Account::Full { storage, .. } => Some(storage.last_trans_lt),
+                    })
+                });
+        let last_transaction_hash = shard_account.map(|account| account.last_trans_hash);
         SimpleAccount {
             block_id: self.raw.id.clone(),
             shard_block_id: self.raw.shardblk.clone(),
             last_transaction_lt,
-            last_transaction_hash: None,
+            last_transaction_hash,
             state: self
                 .account
                 .as_ref()
@@ -398,6 +471,36 @@ impl DecodedAccountState {
                 .unwrap_or(SimpleAccountState::None),
             account: self.account.clone(),
         }
+    }
+}
+
+fn validate_shard_account(
+    shard_account: &ShardAccount,
+    state_raw: &[u8],
+    expected_account: &Address,
+) -> Result<()> {
+    match &shard_account.account {
+        Account::None => {}
+        Account::Full { addr, .. } => validate_account_address(addr, expected_account)?,
+    }
+
+    if !state_raw.is_empty() {
+        let state = decode_account_state_boc(state_raw)
+            .context("failed to decode liteServer.accountState.state for proof validation")?
+            .account;
+        if state != shard_account.account {
+            bail!("account state/proof mismatch");
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_account_address(actual: &MsgAddressInt, expected: &Address) -> Result<()> {
+    match actual {
+        MsgAddressInt::Std { address, .. } if address == expected => Ok(()),
+        MsgAddressInt::Std { .. } => bail!("wrong account hash in shard account"),
+        MsgAddressInt::Var { .. } => bail!("shard account uses non-standard account address"),
     }
 }
 
@@ -490,6 +593,95 @@ mod tests {
         );
     }
 
+    #[test]
+    fn verified_shard_account_extraction_populates_last_transaction() {
+        let address = Address::new(0, [0x11; 32]);
+        let account = full_account_for(address.clone(), 42, 123_456);
+        let shard_account = shard_account(account.clone(), [0x55; 32], 42);
+        let raw = AccountState {
+            proof: serialize_boc(&shard_account.to_cell().unwrap(), false).unwrap(),
+            state: serialize_boc(&account.to_cell().unwrap(), false).unwrap(),
+            ..account_state_response(Vec::new())
+        };
+
+        let decoded = DecodedAccountState::from_raw_verified(raw, &address).unwrap();
+        let simple = decoded.simple();
+
+        assert_eq!(decoded.shard_account, Some(shard_account));
+        assert_eq!(simple.last_transaction_lt, Some(42));
+        assert_eq!(simple.last_transaction_hash, Some([0x55; 32]));
+    }
+
+    #[test]
+    fn verified_shard_account_rejects_wrong_account_hash() {
+        let requested = Address::new(0, [0x11; 32]);
+        let actual = Address::new(0, [0x22; 32]);
+        let account = full_account_for(actual, 42, 123_456);
+        let proof = serialize_boc(
+            &shard_account(account.clone(), [0x55; 32], 42)
+                .to_cell()
+                .unwrap(),
+            false,
+        )
+        .unwrap();
+        let state = serialize_boc(&account.to_cell().unwrap(), false).unwrap();
+
+        let error = extract_verified_shard_account(proof, state, &requested)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("wrong account hash"));
+    }
+
+    #[test]
+    fn verified_shard_account_rejects_wrong_shard_root() {
+        let address = Address::new(0, [0x11; 32]);
+        let account = full_account_for(address.clone(), 42, 123_456);
+        let proof = serialize_boc(
+            &shard_account(account.clone(), [0x55; 32], 42)
+                .to_cell()
+                .unwrap(),
+            false,
+        )
+        .unwrap();
+        let state = serialize_boc(&account.to_cell().unwrap(), false).unwrap();
+
+        let error =
+            extract_verified_shard_account_with_root_hash(proof, state, &address, Some([0x99; 32]))
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("wrong shard root"));
+    }
+
+    #[test]
+    fn verified_shard_account_rejects_malformed_proof_boc() {
+        let address = Address::new(0, [0x11; 32]);
+        let account = full_account_for(address.clone(), 42, 123_456);
+        let state = serialize_boc(&account.to_cell().unwrap(), false).unwrap();
+
+        let error = extract_verified_shard_account([0xde, 0xad], state, &address)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("failed to decode BoC root cell"));
+    }
+
+    #[test]
+    fn verified_shard_account_rejects_state_proof_mismatch() {
+        let address = Address::new(0, [0x11; 32]);
+        let account = full_account_for(address.clone(), 42, 123_456);
+        let mismatched_state = full_account_for(address.clone(), 43, 123_456);
+        let proof = serialize_boc(
+            &shard_account(account, [0x55; 32], 42).to_cell().unwrap(),
+            false,
+        )
+        .unwrap();
+        let state = serialize_boc(&mismatched_state.to_cell().unwrap(), false).unwrap();
+
+        let error = extract_verified_shard_account(proof, state, &address)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("account state/proof mismatch"));
+    }
+
     fn account_state_response(state: Vec<u8>) -> AccountState {
         AccountState {
             id: block_id(1),
@@ -515,8 +707,12 @@ mod tests {
     }
 
     fn full_account(last_trans_lt: u64, grams: u64) -> crate::tlb::Account {
+        full_account_for(Address::new(0, [0x11; 32]), last_trans_lt, grams)
+    }
+
+    fn full_account_for(address: Address, last_trans_lt: u64, grams: u64) -> crate::tlb::Account {
         crate::tlb::Account::Full {
-            addr: MsgAddressInt::std(Address::new(0, [0x11; 32])),
+            addr: MsgAddressInt::std(address),
             storage_stat: StorageInfo {
                 used: StorageUsed::new(BigUint::from(1u8), BigUint::from(64u8)),
                 last_paid: 1_700_000_000,
@@ -530,6 +726,18 @@ mod tests {
                     state_init: StateInit::empty(),
                 },
             },
+        }
+    }
+
+    fn shard_account(
+        account: crate::tlb::Account,
+        last_trans_hash: [u8; 32],
+        last_trans_lt: u64,
+    ) -> ShardAccount {
+        ShardAccount {
+            account,
+            last_trans_hash,
+            last_trans_lt,
         }
     }
 }

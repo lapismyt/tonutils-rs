@@ -24,14 +24,18 @@ use tonutils::liteclient::{
     client::LiteClient,
     rate_limit::RequestRateLimit,
 };
-use tonutils::network_config::ConfigGlobal;
+use tonutils::network_config::{ConfigGlobal, LiteServerBlacklist};
 
 async fn example(config_json: &str) -> anyhow::Result<()> {
     let config = ConfigGlobal::from_str(config_json)?;
+    let blacklist = LiteServerBlacklist::parse_tokens([
+        "index:0",
+        "id:AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+    ])?;
     let mut peers = Vec::new();
 
-    for index in 0..config.liteservers.len().min(3) {
-        peers.push(LiteClient::connect_config(&config, index).await?);
+    for (_index, liteserver) in config.select_liteservers(3, &blacklist) {
+        peers.push(LiteClient::connect_liteserver(liteserver).await?);
     }
 
     let mut balancer = LiteBalancer::new(peers, Duration::from_secs(10))

@@ -1,6 +1,7 @@
 //! Tests for network_config module
 
 use super::*;
+use base64::Engine;
 use std::net::Ipv4Addr;
 
 #[test]
@@ -184,6 +185,111 @@ fn test_config_global_liteserver_selection_errors() {
         config.liteserver(0),
         Err(ConfigError::LiteServerIndexOutOfBounds { index: 0, len: 0 })
     ));
+}
+
+#[test]
+fn test_liteserver_blacklist_parse_indexes() {
+    let blacklist = LiteServerBlacklist::parse_tokens(["3", "index:7"]).unwrap();
+    let server = ConfigLiteServer {
+        ip: LiteServerAddress::from(0x7F000001i32),
+        port: 8001,
+        id: ConfigPublicKey::Ed25519 { key: [1u8; 32] },
+    };
+
+    assert!(blacklist.contains(3, &server));
+    assert!(blacklist.contains(7, &server));
+    assert!(!blacklist.contains(2, &server));
+}
+
+#[test]
+fn test_liteserver_blacklist_parse_ids() {
+    let hex_id = hex::encode([1u8; 32]);
+    let base64_id = base64::engine::general_purpose::STANDARD.encode([2u8; 32]);
+    let base64url_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([3u8; 32]);
+    let blacklist = LiteServerBlacklist::parse_tokens([
+        hex_id.as_str(),
+        &format!("id:{base64_id}"),
+        &base64url_id,
+    ])
+    .unwrap();
+
+    for key in [[1u8; 32], [2u8; 32], [3u8; 32]] {
+        let server = ConfigLiteServer {
+            ip: LiteServerAddress::from(0x7F000001i32),
+            port: 8001,
+            id: ConfigPublicKey::Ed25519 { key },
+        };
+        assert!(blacklist.contains(0, &server));
+    }
+}
+
+#[test]
+fn test_liteserver_blacklist_from_str_splits_commas_and_deduplicates() {
+    let id = hex::encode([9u8; 32]);
+    let blacklist = LiteServerBlacklist::from_str(&format!("0,index:0,{id},{id}")).unwrap();
+    let server = ConfigLiteServer {
+        ip: LiteServerAddress::from(0x7F000001i32),
+        port: 8001,
+        id: ConfigPublicKey::Ed25519 { key: [9u8; 32] },
+    };
+
+    assert!(blacklist.contains(0, &server));
+    assert!(blacklist.contains(4, &server));
+}
+
+#[test]
+fn test_liteserver_blacklist_parse_errors() {
+    assert!(matches!(
+        LiteServerBlacklist::from_str("index:not-a-number"),
+        Err(LiteServerBlacklistParseError::InvalidIndex { .. })
+    ));
+    assert!(matches!(
+        LiteServerBlacklist::from_str("id:not-valid-base64!"),
+        Err(LiteServerBlacklistParseError::InvalidIdEncoding { .. })
+    ));
+    assert!(matches!(
+        LiteServerBlacklist::from_str("id:AQID"),
+        Err(LiteServerBlacklistParseError::InvalidIdLength { len: 3, .. })
+    ));
+}
+
+#[test]
+fn test_select_liteservers_preserves_indexes_and_filters_first_allowed() {
+    let config = ConfigGlobal {
+        liteservers: vec![
+            ConfigLiteServer {
+                ip: LiteServerAddress::from(0x7F000001i32),
+                port: 8001,
+                id: ConfigPublicKey::Ed25519 { key: [1u8; 32] },
+            },
+            ConfigLiteServer {
+                ip: LiteServerAddress::from(0x7F000002i32),
+                port: 8002,
+                id: ConfigPublicKey::Ed25519 { key: [2u8; 32] },
+            },
+            ConfigLiteServer {
+                ip: LiteServerAddress::from(0x7F000003i32),
+                port: 8003,
+                id: ConfigPublicKey::Ed25519 { key: [3u8; 32] },
+            },
+            ConfigLiteServer {
+                ip: LiteServerAddress::from(0x7F000004i32),
+                port: 8004,
+                id: ConfigPublicKey::Ed25519 { key: [4u8; 32] },
+            },
+        ],
+    };
+    let blacklist = LiteServerBlacklist::parse_tokens(["0", &hex::encode([2u8; 32])]).unwrap();
+
+    let selected = config.select_liteservers(2, &blacklist);
+
+    assert_eq!(
+        selected
+            .iter()
+            .map(|(index, server)| (*index, server.port))
+            .collect::<Vec<_>>(),
+        vec![(2, 8003), (3, 8004)]
+    );
 }
 
 #[test]

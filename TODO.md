@@ -42,6 +42,7 @@ postponed work moves to `# BACKLOG`.
   - [ ] Validate limiter behavior against live tonconsole-style rented liteserver credentials #network #tests
 - [ ] Track contract workflow capabilities #contracts #liteclient #tvm #tests #docs
   - [x] Define get-method argument encoding, method id/name handling, TVM stack return decoding, and error semantics for contract wrappers #contracts #tvm #docs
+  - [x] Add public get-method stack conversion traits and typed `Contract::*_as` helpers with arity, type, range, option, tuple, address, and cell tests #contracts #tvm #tests #docs
   - [-] Track state-init address derivation, data/code loading, deployment message construction, and balance access #contracts #wallet #tvm #docs
     - [x] Add state-init address derivation, active account balance/code/data helpers, and raw external message BoC submission #contracts #tvm #docs
     - [x] Add code-plus-data contract blueprint trait, derive macro, and address/bind tests #contracts #tvm #tests #features
@@ -70,6 +71,7 @@ postponed work moves to `# BACKLOG`.
   - [-] Map each ABI and wrapper gap to subsystem tags and acceptance tests #abi #contracts #docs #tests
     - [x] Add direct address-bound `Contract<'a, P>` typed-client delegation test #contracts #docs #tests
     - [x] Add derive-backed contract blueprint pattern for typed data and fixed code BoCs #contracts #docs #tests #features
+    - [x] Add reusable typed TVM stack conversion traits for wrapper get-method arguments and results #contracts #tvm #tests #docs
     - [ ] Map ABI parser/encoder gaps to typed wrapper acceptance tests #abi #contracts #docs #tests
   - [ ] Keep capability tracker entries synchronized whenever implementation work completes or defers a gap #docs #tests
 
@@ -99,12 +101,13 @@ postponed work moves to `# BACKLOG`.
   - [-] Encode ABI inputs into TVM stack and message-body representations #abi #tvm
     - [x] Add value-level scalar TVM stack encode/decode helpers for integers, booleans, bytes, strings, addresses, cells, slices, tuples, arrays, and optionals #abi #tvm #tests
     - [x] Add ABI message-body encoding policy and implementation #abi #tvm #contracts #tests
+    - [x] Add local fixed integer-key ABI map/dictionary stack and message-body codecs #abi #tvm #tests
   - [-] Decode get-method outputs and external message payload components from ABI definitions #abi #tvm
     - [x] Add ABI get-method input encoding and output decoding helpers over TVM stack entries #abi #tvm #tests
     - [ ] Add ABI event/external payload component helpers beyond full message-body decode #abi #tvm #tests
   - [-] Add edge-case coverage for tuples, nested arrays, optional values, and dictionary-like payloads #abi #tests
     - [x] Cover nested tuple, array, optional, and JSON loader cases for stack and schema paths #abi #tests
-    - [ ] Define and test dictionary-like payload policy before enabling map codecs #abi #tests
+    - [x] Define and test local dictionary-like payload policy before enabling map codecs #abi #tests
 - [-] Implement JSON ABI parser and loader #abi #contracts #tests
   - [x] Parse and validate ABI JSON schema with precise diagnostics #abi #tests
   - [x] Support loading ABI definitions for contract wrappers and CLI workflows #abi #contracts #cli
@@ -115,11 +118,13 @@ postponed work moves to `# BACKLOG`.
   - [x] Add ABI-driven get-method argument encoding for contract wrappers #abi #contracts
   - [x] Add ABI-driven external message body construction #abi #contracts
   - [x] Add ABI-driven CLI input/output paths where contract commands expose typed data #abi #cli #contracts
-- [ ] Add golden fixtures and cross-reference validation cases #abi #tests #docs
-  - [ ] Add fixture-backed encode/decode vectors for representative contracts #abi #tests
+- [-] Add golden fixtures and cross-reference validation cases #abi #tests #docs
+  - [x] Add checked synthetic fixture-backed encode/decode vectors for representative ABI JSON, get-method stack, and message-body paths #abi #tests
+  - [x] Add structured ABI evidence metadata and opt-in templates for wallet `seqno` and TEP-74 `get_wallet_address` captures #abi #tests #docs
+  - [ ] Cross-check ABI fixtures against upstream or live-captured contract evidence #abi #tests
   - [ ] Cross-check behavior against tongo-compatible expectations and TON protocol definitions #abi #tests #docs
-  - [ ] Define and document ABI array/map/dictionary stack and message codec policy before enabling array/map conversion #abi #tvm #docs
-  - [ ] Document known unsupported ABI patterns and planned follow-up tasks #abi #docs
+  - [x] Define and document local ABI map/dictionary stack and message codec policy before enabling map conversion #abi #tvm #docs
+  - [x] Document unsupported ABI map key families and upstream-validation follow-up tasks #abi #docs
 
 ## Subsequent Phases (Post-ABI)
 
@@ -342,11 +347,14 @@ postponed work moves to `# BACKLOG`.
 
 - [-] Make TVM stack encoding compatible with LiteAPI `runSmcMethod` #contracts #tvm
   - [x] Encode root `VmStack.depth` as 24 bits for empty-stack live get-method calls #contracts #tvm #tests
-  - [ ] Verify non-empty stack BoC shape against TON node expectations #contracts #tests
+  - [-] Verify non-empty stack BoC shape against TON node expectations #contracts #tests
+    - [x] Add checked synthetic offline fixtures for non-empty scalar, deep chain, tuple/list, huge integer, cell/slice, and unsupported stack BoCs #contracts #tests
+    - [x] Add ignored live smoke test for non-empty stack get-method calls #contracts #tests
+    - [x] Add captured stack fixture schema and successful-live JSON printing workflow #contracts #tests
     - [ ] Compare with tonutils-go and tonlib behavior #contracts
     - [ ] Add golden fixtures from successful live calls #contracts #tests
-  - [ ] Support arbitrary precision integers #contracts #tvm
-  - [ ] Support tuple/list nesting beyond four direct entries #contracts #tvm
+  - [x] Support arbitrary precision integers #contracts #tvm
+  - [x] Support tuple/list nesting beyond four direct entries #contracts #tvm
 - [ ] Add high-level contract API #contracts
   - [x] Add contract blueprint helpers for deriving `StateInit`, address, and provider binding from fixed code and typed data #contracts #tvm
   - [ ] Add wallet helpers only after generic contract API is stable #contracts
@@ -369,11 +377,14 @@ postponed work moves to `# BACKLOG`.
     - [ ] Expand generated models for full `BlockInfo`, `ValueFlow`, `BlockExtra`, and shard-hash families #tlb #tvm
   - [-] Config parameters #tlb
     - [x] Add `ConfigParams` wrapper with `config_addr:bits256` and raw config dictionary reference #tlb #tvm
+    - [x] Decode `ConfigParams.config` as `Hashmap 32 ^Cell` with raw-preserving wrappers for params 0, 1, 2, 15, 17, 18, 20, 21, 24, 25, 32, 34, and 36 #tlb #tvm
     - [ ] Generate typed config-param family models #tlb #tvm
 - [-] Add proof verification primitives #proofs
   - [x] Add Merkle proof/update exotic wrappers and child virtual-hash checks #proofs #tvm
   - [ ] Verify account state proof from `getAccountState` #proofs #liteclient
-  - [ ] Extract `ShardAccount` and `last_trans_hash` from verified `ShardAccounts` proof paths #proofs #liteclient #tlb
+  - [-] Extract `ShardAccount` and `last_trans_hash` from verified `ShardAccounts` proof paths #proofs #liteclient #tlb
+    - [x] Add checked shard-account extraction API for proof-anchored roots with account hash, shard root, malformed BoC, and state/proof mismatch tests #proofs #liteclient #tests
+    - [ ] Traverse full shard-state `ShardAccounts` dictionaries from live `getAccountState` proofs #proofs #liteclient #tlb
   - [ ] Verify shard inclusion proof #proofs #liteclient
   - [ ] Verify block proof links and signatures #proofs
   - [ ] Document trust assumptions for light client usage #proofs #docs
@@ -429,16 +440,16 @@ postponed work moves to `# BACKLOG`.
     - [ ] `tvm cell inspect` for bits, refs, level, depth, and hash data #cli #tvm
     - [ ] `address parse` and `address format` #cli #tvm
     - [ ] `contract state` for account state loading #cli #contracts
-    - [-] `contract run-get-method` with typed stack argument input #cli #contracts
+    - [x] `contract run-get-method` with typed stack argument input #cli #contracts
     - [x] `contract run-abi-get-method` with ABI JSON argument input and output decoding #cli #contracts #abi
-    - [ ] `contract run-get-method` with JSON stack argument input for shell scripts #cli #contracts
+    - [x] `contract run-get-method` with JSON stack argument input for shell scripts #cli #contracts
   - [-] Add high-level default-balancer commands for common workflows #cli #balancer #liteclient
     - [x] Add `status`, `account`, `call`, `transactions`, `block`, and `config` commands #cli
     - [x] Add `--num-servers`, `--single`, and `--ls-index` backend selection #cli #network
     - [x] Add best-effort account-state CLI decode reporting #cli #tlb
     - [ ] Make high-level `transactions` fetch history after verified `ShardAccounts` last-transaction hash extraction lands #cli #proofs #liteclient
-    - [ ] Add JSON stack argument input for `call` #cli #contracts
-    - [ ] Expand stack argument kinds beyond int/null/cell/slice #cli #contracts #tvm
+    - [x] Add JSON stack argument input for `call` #cli #contracts
+    - [x] Expand stack argument kinds beyond int/null/cell/slice #cli #contracts #tvm
   - [ ] Add future protocol commands as APIs land #cli
     - [ ] Add proof verification commands when proof APIs land #cli #proofs
     - [ ] Add DHT lookup commands when DHT APIs land #cli #dht
@@ -504,6 +515,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Add BoC regression tests for indexed decode, malformed index table, CRC mismatch, invalid root/reference indexes, trailing bytes, and string roundtrips #tvm #boc #tests
   - [x] Add embedded TON Docs address fixtures and schema-derived BoC compatibility fixtures #tvm #boc #address #tests
   - [x] Add checked-in Phase 1 BoC fixture metadata for account/message/transaction compatibility #tvm #boc #tests
+  - [x] Add checked-in synthetic ABI fixture metadata for JSON, get-method stack, message-body, and local map coverage #abi #tests
 - [x] Complete remaining TVM primitive compatibility before TL-B macros #tvm #tlb
   - [x] Audit ordinary cell representation hash against TON golden fixtures #tvm #tests
   - [x] Add exotic cell support for pruned branch, library reference, Merkle proof, and Merkle update #tvm #boc

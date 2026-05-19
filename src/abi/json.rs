@@ -250,6 +250,7 @@ fn parse_type_object(object: &Map<String, Value>, path: &str) -> Result<AbiType,
         let map = object_at(value, &field_path(path, "map"))?;
         let key_path = format!("{path}.map.key");
         let value_path = format!("{path}.map.value");
+        let key_bits_path = format!("{path}.map.key_bits");
         let key = map
             .get("key")
             .ok_or_else(|| AbiJsonError::MissingField {
@@ -262,9 +263,14 @@ fn parse_type_object(object: &Map<String, Value>, path: &str) -> Result<AbiType,
                 path: value_path.clone(),
             })
             .and_then(|value| parse_type(value, &value_path))?;
+        let key_bits = map
+            .get("key_bits")
+            .map(|value| parse_u16(value, &key_bits_path))
+            .transpose()?;
         return Ok(AbiType::Map {
             key: Box::new(key),
             value: Box::new(value),
+            key_bits,
         });
     }
     if let Some(value) = object.get("unknown") {
@@ -461,6 +467,15 @@ fn parse_u32(value: &Value, path: &str) -> Result<u32, AbiJsonError> {
         path: path.to_string(),
         value: parsed.to_string(),
         expected: "u32",
+    })
+}
+
+fn parse_u16(value: &Value, path: &str) -> Result<u16, AbiJsonError> {
+    let parsed = parse_u64(value, path)?;
+    u16::try_from(parsed).map_err(|_| AbiJsonError::NumberOutOfRange {
+        path: path.to_string(),
+        value: parsed.to_string(),
+        expected: "u16",
     })
 }
 

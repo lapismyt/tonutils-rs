@@ -251,6 +251,7 @@ impl LiteClient {
             None => self.get_masterchain_info().await?.last,
         };
         let raw = self.get_account_state(id, account.to_account_id()).await?;
+        let _ = account;
         DecodedAccountState::from_raw(raw).map_err(decode_error)
     }
 

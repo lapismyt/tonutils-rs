@@ -170,7 +170,25 @@ pub(super) fn parse_abi_value(ty: &AbiType, value: &Value) -> Result<AbiValue> {
         AbiType::Optional(item_ty) => Ok(AbiValue::Optional(Some(Box::new(parse_abi_value(
             item_ty, value,
         )?)))),
-        AbiType::Map { .. } => anyhow::bail!("ABI map/dictionary arguments are unsupported"),
+        AbiType::Map {
+            key,
+            value: value_ty,
+            ..
+        } => value
+            .as_array()
+            .context("expected JSON array of map entries")?
+            .iter()
+            .map(|entry| {
+                let object = entry.as_object().context("expected map entry object")?;
+                let key_json = object.get("key").context("missing map entry key")?;
+                let value_json = object.get("value").context("missing map entry value")?;
+                Ok((
+                    parse_abi_value(key, key_json)?,
+                    parse_abi_value(value_ty, value_json)?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()
+            .map(AbiValue::Map),
         AbiType::Unknown(name) => anyhow::bail!("ABI unknown type {name:?} is unsupported"),
     }
 }
@@ -309,6 +327,17 @@ fn abi_value_json(value: &AbiValue) -> Result<Value> {
                 .map(abi_value_json)
                 .collect::<Result<Vec<_>>>()?
         ),
+        AbiValue::Map(entries) => json!(
+            entries
+                .iter()
+                .map(|(key, value)| {
+                    Ok(json!({
+                        "key": abi_value_json(key)?,
+                        "value": abi_value_json(value)?,
+                    }))
+                })
+                .collect::<Result<Vec<_>>>()?
+        ),
         AbiValue::Optional(None) => Value::Null,
         AbiValue::Optional(Some(value)) => abi_value_json(value)?,
     })
@@ -333,8 +362,19 @@ fn abi_type_label(ty: &AbiType) -> String {
                 .join(",")
         ),
         AbiType::Array(item) => format!("array<{}>", abi_type_label(item)),
-        AbiType::Map { key, value } => {
-            format!("map<{},{}>", abi_type_label(key), abi_type_label(value))
+        AbiType::Map {
+            key,
+            value,
+            key_bits,
+        } => {
+            let key_bits = key_bits
+                .map(|bits| format!(",key_bits={bits}"))
+                .unwrap_or_default();
+            format!(
+                "map<{},{}{key_bits}>",
+                abi_type_label(key),
+                abi_type_label(value)
+            )
         }
         AbiType::Optional(item) => format!("optional<{}>", abi_type_label(item)),
         AbiType::Unknown(value) => format!("unknown<{value}>"),
