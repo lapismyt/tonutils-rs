@@ -128,12 +128,6 @@ postponed work moves to `# BACKLOG`.
 
 ## Subsequent Phases (Post-ABI)
 
-- [ ] Design the pure Rust emulator and local LiteServer phase #emulator #liteserver #tvm #liteclient #network #tests #docs
-  - [ ] Write `dev-docs/` design notes for emulator scope, trust assumptions, upstream TON source evidence, and unsupported execution paths #emulator #tvm #docs
-  - [ ] Define emulator execution scope for account state, config, time/logical-time context, get-method execution, inbound message execution, transaction results, and action results #emulator #tvm #tests
-  - [ ] Define the fixture strategy for comparing supported emulator paths against upstream TON or recorded live behavior #emulator #tvm #tests #docs
-  - [ ] Define local LiteServer protocol and API scope for fixture-backed account, block, config, get-method, and send-message workflows #liteserver #liteclient #network #tests #docs
-  - [ ] Plan feature gates, examples, CLI integration, and dev-test workflows for offline contract, wallet, jetton, LiteClient, and LiteBalancer tests #emulator #liteserver #liteclient #network #tests #docs
 - [ ] Complete blockchain TL-B coverage from upstream `block.tlb` #tvm #tlb #docs #tests
   - [x] Add checked local `src/tlb/schemas/block.tlb` snapshot for currently implemented constructor families #tvm #tlb
   - [x] Add deterministic constructor summary checks for typed and raw-preserving block/config/proof families #tvm #tlb #tests
@@ -409,6 +403,16 @@ postponed work moves to `# BACKLOG`.
   - [ ] Add stream API for pending messages #mempool
   - [ ] Add backpressure and filtering #mempool #perf
   - [ ] Add tests with captured fixtures before live network tests #mempool #tests
+
+## Emulator And Local LiteServer
+
+- [ ] Design the pure Rust emulator and local LiteServer phase only after ADNL UDP, DHT, and overlay are implemented #emulator #liteserver #adnl #dht #overlay #network #tests #docs
+  - [ ] Confirm ADNL UDP, DHT discovery, and overlay query transport are implemented and fixture-backed before starting emulator or local LiteServer design #emulator #liteserver #adnl #dht #overlay #tests
+  - [ ] Write `dev-docs/` design notes for emulator scope, trust assumptions, upstream TON source evidence, and unsupported execution paths #emulator #tvm #docs
+  - [ ] Define emulator execution scope for account state, config, time/logical-time context, get-method execution, inbound message execution, transaction results, and action results #emulator #tvm #tests
+  - [ ] Define the fixture strategy for comparing supported emulator paths against upstream TON or recorded live behavior #emulator #tvm #tests #docs
+  - [ ] Define local LiteServer protocol and API scope for fixture-backed account, block, config, get-method, and send-message workflows #liteserver #liteclient #network #tests #docs
+  - [ ] Plan feature gates, examples, CLI integration, and dev-test workflows for offline contract, wallet, jetton, LiteClient, and LiteBalancer tests #emulator #liteserver #liteclient #network #tests #docs
 
 ## CLI And Shell Automation
 

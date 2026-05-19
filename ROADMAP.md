@@ -244,13 +244,15 @@ After production hardening:
   hot paths.
 - Implement ADNL UDP, DHT, overlay, and mempool scanning APIs with captured
   fixtures and later live-network tests.
+- Treat ADNL UDP, DHT, and overlay as prerequisites for the pure Rust emulator
+  and local LiteServer phase.
 - Expand docs/examples coverage to match the finalized high-level APIs and
   CLI workflows.
 
 ## Phase 5: Pure Rust Emulator And Local LiteServer
 
-After the TVM, TL-B, LiteAPI, ADNL, proof, and networking foundations are mature,
-build local, embeddable infrastructure on top of this crate:
+After the TVM, TL-B, LiteAPI, proof, ADNL UDP, DHT, and overlay foundations are
+mature, build local, embeddable infrastructure on top of this crate:
 
 - Add a pure Rust TVM/account-state emulator for offline get-method execution
   and message execution. It must model account state, config parameters,
