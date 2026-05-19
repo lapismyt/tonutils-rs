@@ -54,6 +54,29 @@ Follow these rules in order when instructions conflict:
    deferred work visible, and update `ROADMAP.md` only for phase or direction
    changes.
 
+## Parallel Agent Workflow
+
+- Prefer parallel development when the orchestrating agent has the required
+  permissions and capabilities: creating `git worktree` checkouts, creating and
+  merging local Git branches, and spawning subagents.
+- When multiple agents work on the project concurrently, use separate
+  `git worktree` checkouts for subagents.
+- The orchestrating agent must either create and assign a dedicated
+  `git worktree` for each subagent before delegation, or explicitly instruct
+  each subagent to create and use its own dedicated `git worktree`.
+- Subagents must not modify the primary repository directory that new
+  worktrees are created from. Only the orchestrating agent may modify that
+  primary directory.
+- Keep each subagent's edits confined to its assigned worktree, then merge or
+  port the results back through the orchestrating agent.
+- After parallel agents finish, the orchestrating agent must inspect the
+  changes in each assigned worktree, then merge the accepted changes into the
+  primary branch managed by the orchestrator.
+- At the end of executing a plan, every agent, including orchestrators and
+  subagents, must commit its accepted local changes.
+- Subagent intermediate branches must remain local and must not be pushed to
+  the remote repository.
+
 ## Protocol Research Rules
 
 - Do not invent TON behavior. Verify constructor names, ids, flags, numeric
