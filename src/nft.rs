@@ -8,6 +8,9 @@
 
 mod decode;
 mod metadata;
+mod payload;
+#[cfg(test)]
+mod payload_tests;
 mod provider;
 #[cfg(test)]
 mod tests;
@@ -15,6 +18,7 @@ mod types;
 
 use decode::*;
 use metadata::*;
+use payload::*;
 use provider::*;
 #[cfg(test)]
 use tests::*;
@@ -22,5 +26,6 @@ use types::*;
 
 pub use decode::*;
 pub use metadata::*;
+pub use payload::*;
 pub use provider::*;
 pub use types::*;

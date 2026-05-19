@@ -80,6 +80,25 @@ the provider's latest masterchain block and decodes successful stacks.
 cover method-id routing, latest-block lookup, provider errors, and non-zero
 exit code propagation.
 
+## Jetton Message Bodies
+
+`src/jetton/payload.rs` implements typed TEP-74 message-body builders and
+decoders for:
+
+- `transfer#0f8a7ea5`;
+- `burn#595f07bc`;
+- `internal_transfer#178d4519`;
+- `transfer_notification#7362d09c`;
+- `excesses#d53276db`.
+
+The builders preserve message addresses as TL-B `MsgAddress`, encode jetton
+amounts and forwarded Toncoin values as `VarUInteger 16` through `Grams`, and
+support both inline and referenced `forward_payload` branches. Custom payloads
+are encoded as `Maybe ^Cell`, matching the standard message body shape.
+Deterministic unit tests cover roundtrips, opcode rejection, empty excess
+payloads, custom payload references, and inline versus referenced forward
+payloads.
+
 ## NFT Metadata
 
 `src/nft.rs` implements typed metadata support for TEP-62-compatible NFT
@@ -120,12 +139,34 @@ Required fixture coverage:
 - Malformed content rejection and malformed field diagnostics: covered by
   deterministic unit tests.
 
+## NFT Message Bodies
+
+`src/nft/payload.rs` implements typed TEP-62 and TEP-66 message-body builders
+and decoders for:
+
+- `transfer#5fcc3d14`;
+- `ownership_assigned#05138d91`;
+- `excesses#d53276db`;
+- `get_static_data#2fcb26a2`;
+- `report_static_data#8b771735`;
+- `get_royalty_params#693d3950`;
+- `report_royalty_params#a8cb00ad`.
+
+The transfer and ownership helpers share the same `ForwardPayload` branch type
+as jettons. `report_static_data` encodes the NFT index as `uint256` and accepts
+`addr_none` for standalone items. `report_royalty_params` preserves the TEP-66
+`uint16` numerator and denominator fields. Deterministic tests cover each
+message shape, query-only payloads, `addr_none`, forward payload branches, and
+opcode rejection.
+
 ## Current Limits
 
 The common parser, jetton metadata mapper, and NFT metadata mapper do not fetch
-off-chain JSON or merge semi-chain content locally. NFT transfers, royalty
-helpers, `get_nft_address_by_index`, SBT extensions, and indexer API
-integration remain out of scope for the current wrapper layer.
+off-chain JSON or merge semi-chain content locally. Jetton wallet-data
+get-method helpers, jetton master `get_wallet_address`, NFT
+`get_nft_address_by_index`, SBT extensions, indexer API integration, and full
+wallet-send convenience flows remain out of scope for the current wrapper
+layer.
 
 ## Sources
 
@@ -133,10 +174,11 @@ integration remain out of scope for the current wrapper layer.
   encoding, chunked encoding, and common jetton/NFT metadata keys:
   <https://docs.ton.org/standard/tokens/metadata>.
 - Official TON jetton interface documentation for `get_jetton_data()` stack
-  fields and `mintable` `-1/0` semantics:
+  fields, `mintable` `-1/0` semantics, and TEP-74 message bodies:
   <https://docs.ton.org/standard/tokens/jettons/api>.
 - Official TON NFT interface documentation for `get_collection_data()`,
-  `get_nft_data()`, and `get_nft_content()` stack fields:
+  `get_nft_data()`, `get_nft_content()` stack fields, and TEP-62/TEP-66
+  message bodies:
   <https://docs.ton.org/standard/tokens/nft/api>.
 - Official TON NFT reference documentation for contract-defined full item
   content composition:

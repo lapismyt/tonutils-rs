@@ -4,12 +4,18 @@
 //! contracts and maps the contained TEP-64 content into jetton-oriented fields.
 //! Off-chain JSON fetching is intentionally outside this layer.
 
+mod payload;
+#[cfg(test)]
+mod payload_tests;
+
 use crate::metadata::{MetadataError, Tep64Content, Tep64Field, Tep64KnownKey, Tep64Value};
 use crate::tlb::{MsgAddress, MsgAddressExt, MsgAddressInt, TlbDeserialize, ensure_empty};
 use crate::tvm::{Address, Cell, Slice, TvmStack, TvmStackEntry};
 use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
 use thiserror::Error;
+
+pub use payload::*;
 
 const JETTON_DATA_STACK_LEN: usize = 5;
 

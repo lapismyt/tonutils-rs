@@ -222,6 +222,24 @@ get-method. CLI ABI arguments use `name=json`; map/dictionary values use arrays
 of `{ "key": ..., "value": ... }` entries and are limited to fixed-width
 integer ABI keys.
 
+## Jetton And NFT Payloads
+
+The `tvm` feature exposes typed message-body builders for common token
+workflows:
+
+- `tonutils::jetton::JettonTransferPayload`,
+  `JettonBurnPayload`, and `JettonInternalTransferPayload` cover TEP-74
+  transfer, burn, and wallet-to-wallet internal transfer bodies.
+- `tonutils::nft::NftTransferPayload`,
+  `NftOwnershipAssignedPayload`, `NftReportStaticDataPayload`, and
+  `NftReportRoyaltyParamsPayload` cover TEP-62 item transfer/static-data
+  bodies and TEP-66 royalty reports.
+- `inline_forward_payload` and `referenced_forward_payload` select the TL-B
+  `Either Cell ^Cell` branch used by forwarded token payloads.
+
+These helpers build body cells only. Use wallet helpers to wrap the body in an
+internal message and sign the external wallet request.
+
 ## External Messages And Transactions
 
 `send_external_message_boc(body)` submits an already serialized external

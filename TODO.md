@@ -351,6 +351,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Support tuple/list nesting beyond four direct entries #contracts #tvm
 - [ ] Add high-level contract API #contracts
   - [x] Add contract blueprint helpers for deriving `StateInit`, address, and provider binding from fixed code and typed data #contracts #tvm
+  - [x] Add typed jetton and NFT message-body payload builders for TEP-74 transfer/burn/internal transfer, TEP-62 item transfer/static data, and TEP-66 royalty reports #contracts #jettons #nft #tvm #tests
   - [ ] Add wallet helpers only after generic contract API is stable #contracts
   - [ ] Add jetton and NFT helpers behind optional features #contracts #features
 
