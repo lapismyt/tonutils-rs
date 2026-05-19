@@ -9,7 +9,7 @@ impl LiteBalancer {
             seqno: Self::archive_probe_seqno(),
         };
 
-        match client
+        client
             .lookup_block(
                 (),
                 block_id,
@@ -23,10 +23,7 @@ impl LiteBalancer {
                 false,
             )
             .await
-        {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+            .is_ok()
     }
 
     pub(super) fn archive_probe_seqno() -> i32 {
@@ -38,10 +35,10 @@ impl LiteBalancer {
         let mut archival = HashSet::new();
 
         for i in alive_peers {
-            if let Some(client) = self.peers.get_mut(i) {
-                if Self::check_archive(client).await {
-                    archival.insert(i);
-                }
+            if let Some(client) = self.peers.get_mut(i)
+                && Self::check_archive(client).await
+            {
+                archival.insert(i);
             }
         }
 

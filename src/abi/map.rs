@@ -53,9 +53,7 @@ pub(super) fn decode_map_cell(
     let key_bits = map_key_bits(key_ty, explicit_key_bits)?;
     let mut slice = Slice::new(cell);
     let dict = slice
-        .load_hashmap_e_with(usize::from(key_bits), |slice| {
-            slice.load_reference().map_err(Into::into)
-        })
+        .load_hashmap_e_with(usize::from(key_bits), |slice| slice.load_reference())
         .map_err(|source| AbiCodecError::MalformedBody {
             reason: source.to_string(),
         })?;

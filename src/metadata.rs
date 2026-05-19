@@ -286,7 +286,7 @@ fn flatten_snake_slice(slice: &mut Slice) -> Result<Vec<u8>, MetadataError> {
     let mut bytes = Vec::new();
     loop {
         let bits = slice.remaining_bits();
-        if bits % 8 != 0 {
+        if !bits.is_multiple_of(8) {
             return Err(MetadataError::NonByteAlignedSnake { bits });
         }
         bytes.extend(

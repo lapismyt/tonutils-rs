@@ -108,7 +108,7 @@ fn parse_constructor(statement: &str) -> Result<Constructor> {
         ("_".to_string(), ConstructorTag::Implicit, lhs[1..].trim())
     } else {
         let name_end = lhs
-            .find(|ch: char| ch == '$' || ch == '#')
+            .find(['$', '#'])
             .ok_or_else(|| schema_error("missing constructor tag"))?;
         let name = lhs[..name_end].trim().to_string();
         let (tag, rest) = parse_tag(&lhs[name_end..])?;

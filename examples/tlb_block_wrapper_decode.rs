@@ -28,7 +28,7 @@ fn main() -> anyhow::Result<()> {
 fn child_cell(tag: u32) -> anyhow::Result<std::sync::Arc<Cell>> {
     let mut builder = Builder::new();
     builder.store_u32(tag)?;
-    Ok(builder.build()?)
+    builder.build()
 }
 
 fn hash_hex(cell: &Cell) -> String {

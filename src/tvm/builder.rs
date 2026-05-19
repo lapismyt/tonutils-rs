@@ -277,13 +277,9 @@ impl Builder {
             return self.store_uint_custom::<u64>(0, length_bits);
         }
 
-        let bit_len = if value < 0 {
-            64 - (value as u64).leading_zeros() as usize
-        } else {
-            64 - (value as u64).leading_zeros() as usize
-        };
+        let bit_len = 64 - (value as u64).leading_zeros() as usize;
 
-        let byte_len = (bit_len + 7) / 8;
+        let byte_len = bit_len.div_ceil(8);
         self.store_uint_custom::<u64>(byte_len as u64, length_bits)?;
         self.store_int(value, byte_len * 8)?;
         Ok(self)
@@ -291,7 +287,7 @@ impl Builder {
 
     /// Stores coins (VarUInteger 16)
     pub fn store_coins(&mut self, amount: u128) -> Result<&mut Self> {
-        let byte_len = ((128 - amount.leading_zeros()) as usize + 7) / 8;
+        let byte_len = ((128 - amount.leading_zeros()) as usize).div_ceil(8);
         if byte_len > 15 {
             bail!("Coins value too large for VarUInteger 16");
         }

@@ -1,6 +1,7 @@
 use super::*;
 
 impl LiteClient {
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_config_all_typed(
         &mut self,
         id: BlockIdExt,
@@ -35,6 +36,7 @@ impl LiteClient {
         decode_config_info(raw)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_config_params(
         &mut self,
         id: BlockIdExt,
@@ -79,6 +81,7 @@ impl LiteClient {
         Ok(response)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_config_params_typed(
         &mut self,
         id: BlockIdExt,
@@ -250,6 +253,7 @@ impl LiteClient {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_dispatch_queue_messages(
         &mut self,
         id: BlockIdExt,

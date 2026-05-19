@@ -95,11 +95,7 @@ impl fmt::Display for BlockIdExt {
         write!(
             f,
             "({},{:X},{}):{}:{}",
-            self.workchain,
-            self.shard,
-            self.seqno,
-            self.root_hash.to_string(),
-            self.file_hash.to_string()
+            self.workchain, self.shard, self.seqno, self.root_hash, self.file_hash
         )
     }
 }

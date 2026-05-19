@@ -1,8 +1,8 @@
 use super::*;
 
 use crate::tlb::{
-    Either, Result, TlbDeserialize, TlbError, TlbSerialize, ensure_empty, load_maybe, load_ref_tlb,
-    load_var_uint, store_maybe, store_ref_tlb, store_tag, store_var_uint,
+    Either, Result, TlbDeserialize, TlbError, TlbSerialize, load_var_uint, store_tag,
+    store_var_uint,
 };
 use crate::tvm::{Address, Builder, Cell, HashmapE, Slice};
 use num_bigint::BigUint;
@@ -42,7 +42,7 @@ impl TlbSerialize for Anycast {
                 message: format!("depth {} is outside 1..=30", self.depth),
             });
         }
-        builder.store_uint_custom::<u8>(self.depth as u8, 5)?;
+        builder.store_uint_custom::<u8>(self.depth, 5)?;
         builder.store_bits(&self.rewrite_pfx, self.depth as usize)?;
         Ok(())
     }
@@ -50,7 +50,7 @@ impl TlbSerialize for Anycast {
 
 impl TlbDeserialize for Anycast {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
-        let depth = slice.load_uint_custom::<u8>(5)? as u8;
+        let depth = slice.load_uint_custom::<u8>(5)?;
         if !(1..=30).contains(&depth) {
             return Err(TlbError::CustomSchema {
                 schema: "Anycast",
@@ -409,7 +409,7 @@ impl TlbSerialize for StateInit {
                     });
                 }
                 builder.store_bit(true)?;
-                builder.store_uint_custom::<u8>(value as u8, 5)?;
+                builder.store_uint_custom::<u8>(value, 5)?;
             }
             None => {
                 builder.store_bit(false)?;
@@ -426,7 +426,7 @@ impl TlbSerialize for StateInit {
 impl TlbDeserialize for StateInit {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
         let fixed_prefix_length = if slice.load_bit()? {
-            Some(slice.load_uint_custom::<u8>(5)? as u8)
+            Some(slice.load_uint_custom::<u8>(5)?)
         } else {
             None
         };

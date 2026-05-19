@@ -123,8 +123,8 @@ impl TlbSerialize for SplitMergeInfo {
     fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
         validate_u6("SplitMergeInfo.cur_shard_pfx_len", self.cur_shard_pfx_len)?;
         validate_u6("SplitMergeInfo.acc_split_depth", self.acc_split_depth)?;
-        builder.store_uint_custom::<u8>(self.cur_shard_pfx_len as u8, 6)?;
-        builder.store_uint_custom::<u8>(self.acc_split_depth as u8, 6)?;
+        builder.store_uint_custom::<u8>(self.cur_shard_pfx_len, 6)?;
+        builder.store_uint_custom::<u8>(self.acc_split_depth, 6)?;
         builder.store_bytes(&self.this_addr)?;
         builder.store_bytes(&self.sibling_addr)?;
         Ok(())
@@ -135,8 +135,8 @@ impl TlbDeserialize for SplitMergeInfo {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
         let mut this_addr = [0; 32];
         let mut sibling_addr = [0; 32];
-        let cur_shard_pfx_len = slice.load_uint_custom::<u8>(6)? as u8;
-        let acc_split_depth = slice.load_uint_custom::<u8>(6)? as u8;
+        let cur_shard_pfx_len = slice.load_uint_custom::<u8>(6)?;
+        let acc_split_depth = slice.load_uint_custom::<u8>(6)?;
         this_addr.copy_from_slice(&slice.load_bytes(32)?);
         sibling_addr.copy_from_slice(&slice.load_bytes(32)?);
         Ok(Self {

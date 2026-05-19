@@ -1,6 +1,7 @@
 use super::*;
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use super::*;
     use crate::metadata::{Tep64KnownKey, Tep64Value, tep64_key_hash};
@@ -8,7 +9,6 @@ mod tests {
     use crate::tvm::{Address, BitKey, Builder, Cell, HashmapE, Slice, TvmStack, TvmStackEntry};
     use num_bigint::{BigInt, BigUint};
     use std::sync::Arc;
-    use thiserror::Error;
 
     const ON_CHAIN_TAG: u8 = 0x00;
     const OFF_CHAIN_TAG: u8 = 0x01;

@@ -1,14 +1,15 @@
 //! Hand-written TL-B codecs for account state, transactions, descriptions, and phases.
 
-pub(super) use crate::tlb::{
-    AccStatusChange, CurrencyCollection, Grams, Message, MsgAddressInt, StateInit, StorageUsed,
-    TrActionPhase,
-};
+#[cfg(test)]
+pub(super) use crate::tlb::{AccStatusChange, CurrencyCollection, MsgAddressInt, StateInit};
+pub(super) use crate::tlb::{Grams, Message, StorageUsed, TrActionPhase};
 pub(super) use crate::tlb::{
     Result, TlbDeserialize, TlbError, TlbSerialize, ensure_empty, load_maybe, load_ref_tlb,
     load_var_uint, store_maybe, store_ref_tlb, store_tag, store_var_uint,
 };
-pub(super) use crate::tvm::{Builder, HashmapAug, HashmapAugE, HashmapE, Slice};
+#[cfg(test)]
+pub(super) use crate::tvm::HashmapE;
+pub(super) use crate::tvm::{Builder, Slice};
 pub(super) use num_bigint::BigUint;
 
 mod account;
@@ -18,20 +19,11 @@ mod phases;
 mod shard;
 #[cfg(test)]
 mod tests;
+#[allow(clippy::module_inception)]
 mod transaction;
 
 use account::*;
-use description::*;
 use helpers::*;
-use phases::*;
-use shard::*;
-#[cfg(test)]
-use tests::*;
-use transaction::*;
 
 pub use account::*;
-pub use description::*;
 pub use helpers::*;
-pub use phases::*;
-pub use shard::*;
-pub use transaction::*;

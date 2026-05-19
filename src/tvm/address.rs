@@ -54,6 +54,7 @@ impl Address {
     }
 
     /// Parses an address from string (supports both hex and base64 formats)
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(address: &str) -> Result<Self> {
         // Try hex format first (faster)
         if let Ok(addr) = Self::from_hex(address) {
@@ -240,7 +241,7 @@ impl Address {
     pub fn to_account_id(&self) -> AccountId {
         AccountId {
             workchain: self.workchain as i32,
-            id: Int256(self.hash_part.clone()),
+            id: Int256(self.hash_part),
         }
     }
 }

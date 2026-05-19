@@ -18,16 +18,12 @@ mod model;
 mod tests;
 
 use codec::*;
-use errors::*;
 #[cfg(feature = "abi-json")]
 use json::*;
 use map::*;
 use model::*;
-#[cfg(test)]
-use tests::*;
 
 pub use codec::*;
-pub use errors::*;
 #[cfg(feature = "abi-json")]
 pub use json::*;
 pub use model::*;

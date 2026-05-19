@@ -1,7 +1,5 @@
 use super::*;
 
-use super::*;
-
 impl LiteClient {
     pub async fn connect<A: ToSocketAddrs>(
         address: A,
@@ -537,6 +535,7 @@ impl LiteClient {
         Ok((transactions, raw.ids))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn lookup_block(
         &mut self,
         mode: (),
@@ -686,6 +685,7 @@ impl LiteClient {
         Ok(response)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_config_all(
         &mut self,
         id: BlockIdExt,

@@ -4,7 +4,7 @@ use tonutils::tvm::{Builder, Dict, DictValue};
 fn main() -> anyhow::Result<()> {
     let config_value = {
         let mut builder = Builder::new();
-        builder.store_u32(0x0faca_de0)?;
+        builder.store_u32(0x0fac_ade0)?;
         builder.build()?
     };
 

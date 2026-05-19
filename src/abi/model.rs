@@ -704,7 +704,7 @@ pub(super) fn read_snake_cell_into(
     bytes: &mut Vec<u8>,
 ) -> Result<(), AbiCodecError> {
     let mut slice = Slice::new(cell);
-    if slice.remaining_bits() % 8 != 0 {
+    if !slice.remaining_bits().is_multiple_of(8) {
         return Err(AbiCodecError::MalformedSnake {
             reason: format!(
                 "cell has {} trailing bits, expected byte-aligned data",

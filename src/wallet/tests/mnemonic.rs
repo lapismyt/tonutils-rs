@@ -1,11 +1,8 @@
 use super::*;
 
-use super::*;
-
-use super::*;
 use crate::tlb::{TlbDeserialize, TlbSerialize};
 use crate::tvm::deserialize_boc;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::VerifyingKey;
 use serde::Deserialize;
 
 #[cfg(feature = "liteclient")]

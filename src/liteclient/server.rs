@@ -66,10 +66,8 @@ where
                 continue;
             }
         };
-        let private_key = private_key.clone();
         tokio::spawn(async move {
-            let adnl = match AdnlPeer::handle_handshake(socket, |_| Some(private_key.clone())).await
-            {
+            let adnl = match AdnlPeer::handle_handshake(socket, |_| Some(private_key)).await {
                 Ok(x) => x,
                 Err(e) => {
                     log::error!("[{addr:?}] Handshake failed: {:?}", e);

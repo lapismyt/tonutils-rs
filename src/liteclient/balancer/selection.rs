@@ -5,7 +5,7 @@ impl LiteBalancer {
         let Some(stats) = stats else {
             return timeout_ms;
         };
-        let latency = stats.ewma_latency_ms.unwrap_or_else(|| {
+        let latency = stats.ewma_latency_ms.unwrap_or({
             if stats.avg_response_time_ms == 0 {
                 timeout_ms
             } else {

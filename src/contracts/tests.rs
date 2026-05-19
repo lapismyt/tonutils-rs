@@ -1,6 +1,7 @@
 use super::*;
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use super::*;
     use crate::abi::{
@@ -599,7 +600,7 @@ mod tests {
 
     impl TlbSerialize for BlueprintData {
         fn store_tlb(&self, builder: &mut Builder) -> crate::tlb::Result<()> {
-            builder.store_uint::<u32>(self.value as u32)?;
+            builder.store_uint::<u32>(self.value)?;
             Ok(())
         }
     }
@@ -882,10 +883,12 @@ mod tests {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn stack_entries_value(entries: &[TvmStackEntry]) -> serde_json::Value {
         serde_json::Value::Array(entries.iter().map(stack_entry_value).collect())
     }
 
+    #[allow(dead_code)]
     fn stack_entry_value(entry: &TvmStackEntry) -> serde_json::Value {
         match entry {
             TvmStackEntry::Null => serde_json::json!({ "type": "null" }),

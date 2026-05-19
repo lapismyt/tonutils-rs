@@ -1,5 +1,3 @@
-use super::*;
-
 use crate::tvm::cell::Cell;
 use anyhow::{Result, bail};
 use sha2::{Digest, Sha256};
@@ -354,7 +352,7 @@ pub(super) fn parse_raw_cells(
             bail!("Invalid cell descriptor: reference count exceeds 4");
         }
 
-        let data_size = (d2 as usize + 1) / 2;
+        let data_size = (d2 as usize).div_ceil(2);
         if pos + data_size > data.len() {
             bail!("Cell data exceeds buffer");
         }
@@ -493,7 +491,7 @@ pub(super) fn parse_cells(
         // d2 = floor(b/8) + ceil(b/8) where b is the number of bits
         // This means: for full bytes, d2 = 2*bytes; for partial bytes, d2 = 2*bytes + 1
         // So actual data size in bytes = ceil(d2/2)
-        let data_size = (d2 as usize + 1) / 2;
+        let data_size = (d2 as usize).div_ceil(2);
 
         // Read cell data
         if pos + data_size > data.len() {
@@ -556,6 +554,7 @@ pub(super) enum ParsedCellState {
     Done,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_parsed_cell(
     index: usize,
     cell_refs: &[Vec<usize>],
@@ -624,7 +623,7 @@ pub(super) fn build_parsed_cell(
 }
 
 pub(super) fn decode_cell_data(data: &[u8], d2: u8) -> Result<(Vec<u8>, usize)> {
-    let data_size = (d2 as usize + 1) / 2;
+    let data_size = (d2 as usize).div_ceil(2);
     if data.len() != data_size {
         bail!("Cell data size does not match descriptor");
     }
@@ -633,7 +632,7 @@ pub(super) fn decode_cell_data(data: &[u8], d2: u8) -> Result<(Vec<u8>, usize)> 
         return Ok((Vec::new(), 0));
     }
 
-    if d2 % 2 == 0 {
+    if d2.is_multiple_of(2) {
         return Ok((data.to_vec(), (d2 as usize / 2) * 8));
     }
 
@@ -733,7 +732,7 @@ pub(super) fn bytes_needed(value: usize) -> usize {
     }
 
     let bits = (usize::BITS - value.leading_zeros()) as usize;
-    (bits + 7) / 8
+    bits.div_ceil(8)
 }
 
 pub(super) fn write_uint(buf: &mut Vec<u8>, value: usize, size: usize) {

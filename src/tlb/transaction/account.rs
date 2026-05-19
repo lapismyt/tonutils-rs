@@ -2,11 +2,10 @@ use super::*;
 
 use crate::tlb::{
     AccStatusChange, CurrencyCollection, Grams, Message, MsgAddressInt, StateInit, StorageUsed,
-    TrActionPhase,
 };
 use crate::tlb::{
     Result, TlbDeserialize, TlbError, TlbSerialize, ensure_empty, load_maybe, load_ref_tlb,
-    load_var_uint, store_maybe, store_ref_tlb, store_tag, store_var_uint,
+    store_maybe, store_ref_tlb, store_tag,
 };
 use crate::tvm::{Builder, HashmapAug, HashmapAugE, HashmapE, Slice};
 use num_bigint::BigUint;
@@ -218,6 +217,7 @@ impl TlbDeserialize for AccountStatus {
 
 /// TL-B `Account`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Account {
     /// `account_none$0`.
     None,
@@ -317,7 +317,7 @@ impl TlbSerialize for DepthBalanceInfo {
                 message: format!("value {} exceeds 30", self.split_depth),
             });
         }
-        builder.store_uint_custom::<u8>(self.split_depth as u8, 5)?;
+        builder.store_uint_custom::<u8>(self.split_depth, 5)?;
         self.balance.store_tlb(builder)?;
         Ok(())
     }
@@ -325,7 +325,7 @@ impl TlbSerialize for DepthBalanceInfo {
 
 impl TlbDeserialize for DepthBalanceInfo {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
-        let split_depth = slice.load_uint_custom::<u8>(5)? as u8;
+        let split_depth = slice.load_uint_custom::<u8>(5)?;
         if split_depth > 30 {
             return Err(TlbError::NonCanonicalValue {
                 schema: "DepthBalanceInfo.split_depth",

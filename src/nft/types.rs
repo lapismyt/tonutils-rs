@@ -1,5 +1,3 @@
-use super::*;
-
 use crate::metadata::{MetadataError, Tep64Content, Tep64Field, Tep64KnownKey, Tep64Value};
 use crate::tlb::{MsgAddress, MsgAddressExt, MsgAddressInt, TlbDeserialize, ensure_empty};
 use crate::tvm::{Address, Cell, Slice, TvmStack, TvmStackEntry};

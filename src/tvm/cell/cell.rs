@@ -1,5 +1,3 @@
-use super::*;
-
 use crate::tvm::uint::UnsignedInteger;
 use anyhow::{Result, bail};
 use num_bigint::{BigInt, BigUint};
@@ -95,7 +93,7 @@ impl Cell {
             );
         }
 
-        let required_bytes = (bit_len + 7) / 8;
+        let required_bytes = bit_len.div_ceil(8);
         if data.len() < required_bytes {
             bail!(
                 "Data length {} is insufficient for {} bits",
@@ -105,7 +103,7 @@ impl Cell {
         }
 
         let mut data = data[..required_bytes].to_vec();
-        if bit_len % 8 != 0 {
+        if !bit_len.is_multiple_of(8) {
             let unused_bits = 8 - (bit_len % 8);
             let mask = 0xFFu8 << unused_bits;
             data[required_bytes - 1] &= mask;
@@ -192,7 +190,7 @@ impl Cell {
 
         // Second byte: floor(b/8) + ceil(b/8)
         // This represents the length of the data
-        let bits_descriptor = (self.bit_len / 8 + (self.bit_len + 7) / 8) as u8;
+        let bits_descriptor = (self.bit_len / 8 + self.bit_len.div_ceil(8)) as u8;
 
         [refs_descriptor, bits_descriptor]
     }
@@ -202,7 +200,7 @@ impl Cell {
         let mut result = self.data.clone();
 
         // If we have incomplete byte, add padding bit
-        if self.bit_len % 8 != 0 {
+        if !self.bit_len.is_multiple_of(8) {
             let last_byte_idx = self.bit_len / 8;
             if last_byte_idx < result.len() {
                 let bits_in_last_byte = self.bit_len % 8;
@@ -220,13 +218,11 @@ impl Cell {
             return d;
         }
 
-        let depth = if self.references.is_empty() {
+        if self.references.is_empty() {
             0
         } else {
             self.references.iter().map(|r| r.depth()).max().unwrap_or(0) + 1
-        };
-
-        depth
+        }
     }
 
     /// Computes the representation hash of the cell
@@ -327,7 +323,7 @@ pub(super) fn validate_cell_data(data: Vec<u8>, bit_len: usize) -> Result<(Vec<u
     }
 
     let mut data = data[..required_bytes].to_vec();
-    if bit_len % 8 != 0 {
+    if !bit_len.is_multiple_of(8) {
         let unused_bits = 8 - (bit_len % 8);
         let mask = 0xFFu8 << unused_bits;
         data[required_bytes - 1] &= mask;
@@ -575,7 +571,7 @@ impl CellBuilder {
             );
         }
 
-        let required_bytes = (bit_len + 7) / 8;
+        let required_bytes = bit_len.div_ceil(8);
         if bits.len() < required_bytes {
             bail!("Insufficient data for {} bits", bit_len);
         }
@@ -677,7 +673,7 @@ impl CellBuilder {
         }
 
         let value_bytes = value.to_bytes_be();
-        let mut temp = vec![0u8; (bits + 7) / 8];
+        let mut temp = vec![0u8; bits.div_ceil(8)];
         let start = temp.len().saturating_sub(value_bytes.len());
         temp[start..].copy_from_slice(&value_bytes);
 

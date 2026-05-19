@@ -1,6 +1,7 @@
 use super::*;
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use super::*;
 
@@ -140,7 +141,7 @@ mod tests {
                 let data = slice.load_bits(267)?;
                 let mut builder = Builder::new();
                 builder.store_bits(&data, 267)?;
-                Ok(builder.build()?)
+                builder.build()
             })
             .unwrap();
         let cell = decoded
@@ -278,7 +279,7 @@ mod tests {
         let mut builder = Builder::new();
         builder.store_bit(true).unwrap();
         builder.store_ref(root_builder.build().unwrap()).unwrap();
-        builder.store_uint::<u8>(99 as u8).unwrap();
+        builder.store_uint::<u8>(99_u8).unwrap();
 
         let mut slice = builder.to_slice().unwrap();
         assert!(

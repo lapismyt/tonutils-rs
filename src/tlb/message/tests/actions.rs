@@ -51,7 +51,7 @@ fn out_action_change_library_roundtrips_hash_and_reference_forms() {
 #[test]
 fn out_action_unknown_and_truncated_tags_are_rejected() {
     let mut builder = Builder::new();
-    builder.store_uint::<u32>(0xffff_ffff as u32).unwrap();
+    builder.store_uint::<u32>(0xffff_ffff_u32).unwrap();
     let err = OutAction::from_cell(builder.build().unwrap()).unwrap_err();
     assert!(matches!(
         err,
@@ -109,9 +109,7 @@ fn send_msg_invalid_referenced_payload_reports_reference_failure() {
     let mut invalid_message = Builder::new();
     store_tag(&mut invalid_message, "10").unwrap();
     let mut builder = Builder::new();
-    builder
-        .store_uint::<u32>(ACTION_SEND_MSG_TAG as u32)
-        .unwrap();
+    builder.store_uint::<u32>(ACTION_SEND_MSG_TAG).unwrap();
     builder.store_uint::<u8>(0).unwrap();
     builder.store_ref(invalid_message.build().unwrap()).unwrap();
 
@@ -298,7 +296,7 @@ fn out_list_non_empty_node_without_previous_ref_is_rejected() {
 fn out_list_malformed_current_action_reports_action_decode_failure() {
     let mut builder = Builder::new();
     builder.store_ref(Builder::new().build().unwrap()).unwrap();
-    builder.store_uint::<u32>(0xffff_ffff as u32).unwrap();
+    builder.store_uint::<u32>(0xffff_ffff_u32).unwrap();
 
     let err = OutList::from_cell(builder.build().unwrap()).unwrap_err();
     assert!(matches!(

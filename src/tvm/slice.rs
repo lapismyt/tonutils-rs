@@ -75,7 +75,7 @@ impl Slice {
             );
         }
 
-        let mut result = vec![0u8; (n + 7) / 8];
+        let mut result = vec![0u8; n.div_ceil(8)];
 
         for i in 0..n {
             let bit = self.load_bit()?;

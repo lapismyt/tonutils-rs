@@ -589,10 +589,8 @@ impl LiteBalancer {
         }
 
         // Return success if any peer succeeded
-        for result in results {
-            if let Ok(status) = result {
-                return Ok(status);
-            }
+        if let Some(status) = results.into_iter().flatten().next() {
+            return Ok(status);
         }
 
         Err(BalancerError::Timeout)
@@ -864,6 +862,7 @@ impl LiteBalancer {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_config_all_typed(
         &mut self,
         id: BlockIdExt,
@@ -897,6 +896,7 @@ impl LiteBalancer {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_config_params_typed(
         &mut self,
         id: BlockIdExt,

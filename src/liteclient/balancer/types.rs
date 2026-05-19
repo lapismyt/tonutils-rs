@@ -1,24 +1,10 @@
-use super::*;
-
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
-use crate::liteclient::{
-    boc::{
-        DecodedAccountState, DecodedAllShardsInfo, DecodedBlockData, DecodedBlockHeader,
-        DecodedBlockTransactionsExt, DecodedConfigInfo, DecodedLibrariesWithProof,
-        DecodedShardInfo, SimpleAccount,
-    },
-    client::LiteClient,
-    rate_limit::{RateLimiter, RequestRateLimit},
-    types::LiteError,
-};
-use crate::tl::common::*;
-use crate::tl::response::*;
-use crate::tvm::{Address, TvmStack, TvmStackEntry};
+use crate::liteclient::{client::LiteClient, rate_limit::RateLimiter, types::LiteError};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BalancerError {
@@ -50,6 +36,7 @@ pub(super) enum PeerFailureKind {
     Connection,
 }
 
+#[derive(Default)]
 pub(super) struct PeerStats {
     pub(super) mc_block_seqno: u32,
     pub(super) avg_response_time_ms: u64,
@@ -59,21 +46,6 @@ pub(super) struct PeerStats {
     pub(super) last_failure_kind: Option<PeerFailureKind>,
     pub(super) ewma_latency_ms: Option<u64>,
     pub(super) last_observed_seqno: u32,
-}
-
-impl Default for PeerStats {
-    fn default() -> Self {
-        Self {
-            mc_block_seqno: 0,
-            avg_response_time_ms: 0,
-            total_requests: 0,
-            current_requests: 0,
-            failure_count: 0,
-            last_failure_kind: None,
-            ewma_latency_ms: None,
-            last_observed_seqno: 0,
-        }
-    }
 }
 
 pub struct LiteBalancer {

@@ -105,7 +105,7 @@ impl AdnlHandshake {
     ) -> Result<Self, AdnlError> {
         let receiver = packet[..32].try_into().unwrap();
         let sender = PublicKey::from_bytes(packet[32..64].try_into().unwrap())
-            .ok_or_else(|| AdnlError::InvalidPublicKey)?;
+            .ok_or(AdnlError::InvalidPublicKey)?;
         let hash: [u8; 32] = packet[64..96].try_into().unwrap();
         let mut raw_params: [u8; 160] = packet[96..256].try_into().unwrap();
 

@@ -150,7 +150,7 @@ where
         };
         let fut = self.service.call(request);
         Box::pin(async move {
-            let answer: Response = fut.await.map_err(Into::<LiteError>::into)?.into();
+            let answer: Response = fut.await?;
             Ok(Message::Answer {
                 query_id,
                 answer: tl_proto::serialize(answer),

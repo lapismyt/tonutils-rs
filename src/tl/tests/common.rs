@@ -1,5 +1,3 @@
-use super::*;
-
 use crate::tl::common::*;
 use crate::tl::response::{
     BlockOutMsgQueueSize, BlockTransactionsExt, DispatchQueueInfo, DispatchQueueMessages,

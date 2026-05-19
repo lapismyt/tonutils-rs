@@ -37,7 +37,7 @@ impl TlbSerialize for ShardIdent {
             });
         }
         store_tag(builder, "00")?;
-        builder.store_uint_custom::<u8>(self.shard_pfx_bits as u8, 6)?;
+        builder.store_uint_custom::<u8>(self.shard_pfx_bits, 6)?;
         builder.store_int(self.workchain_id as i64, 32)?;
         builder.store_u64(self.shard_prefix)?;
         Ok(())
@@ -47,7 +47,7 @@ impl TlbSerialize for ShardIdent {
 impl TlbDeserialize for ShardIdent {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
         expect_tag(slice, "ShardIdent", "00")?;
-        let shard_pfx_bits = slice.load_uint_custom::<u8>(6)? as u8;
+        let shard_pfx_bits = slice.load_uint_custom::<u8>(6)?;
         if shard_pfx_bits > 60 {
             return Err(TlbError::CustomSchema {
                 schema: "ShardIdent",

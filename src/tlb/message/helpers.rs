@@ -49,6 +49,7 @@ impl TlbDeserialize for LibRef {
 
 /// Closed upstream TL-B `OutAction` family.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum OutAction {
     /// `action_send_msg#0ec3c86d mode:(## 8) out_msg:^(MessageRelaxed Any)`.
     SendMsg {
@@ -82,17 +83,17 @@ impl TlbSerialize for OutAction {
     fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
         match self {
             Self::SendMsg { mode, out_msg } => {
-                builder.store_uint::<u32>(ACTION_SEND_MSG_TAG as u32)?;
-                builder.store_uint::<u8>(*mode as u8)?;
+                builder.store_uint::<u32>(ACTION_SEND_MSG_TAG)?;
+                builder.store_uint::<u8>(*mode)?;
                 store_ref_tlb(builder, out_msg)?;
             }
             Self::SetCode { new_code } => {
-                builder.store_uint::<u32>(ACTION_SET_CODE_TAG as u32)?;
+                builder.store_uint::<u32>(ACTION_SET_CODE_TAG)?;
                 builder.store_ref(new_code.clone())?;
             }
             Self::ReserveCurrency { mode, currency } => {
-                builder.store_uint::<u32>(ACTION_RESERVE_CURRENCY_TAG as u32)?;
-                builder.store_uint::<u8>(*mode as u8)?;
+                builder.store_uint::<u32>(ACTION_RESERVE_CURRENCY_TAG)?;
+                builder.store_uint::<u8>(*mode)?;
                 currency.store_tlb(builder)?;
             }
             Self::ChangeLibrary { mode, libref } => {
@@ -102,8 +103,8 @@ impl TlbSerialize for OutAction {
                         message: format!("mode {mode} does not fit in seven bits"),
                     });
                 }
-                builder.store_uint::<u32>(ACTION_CHANGE_LIBRARY_TAG as u32)?;
-                builder.store_uint_custom::<u8>(*mode as u8, 7)?;
+                builder.store_uint::<u32>(ACTION_CHANGE_LIBRARY_TAG)?;
+                builder.store_uint_custom::<u8>(*mode, 7)?;
                 libref.store_tlb(builder)?;
             }
         }
@@ -115,18 +116,18 @@ impl TlbDeserialize for OutAction {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
         match load_u32_tag(slice, "OutAction", OUT_ACTION_EXPECTED_TAGS)? {
             ACTION_SEND_MSG_TAG => Ok(Self::SendMsg {
-                mode: slice.load_uint::<u8>()? as u8,
+                mode: slice.load_uint::<u8>()?,
                 out_msg: load_ref_tlb(slice, "MessageRelaxed Any")?,
             }),
             ACTION_SET_CODE_TAG => Ok(Self::SetCode {
                 new_code: slice.load_reference()?,
             }),
             ACTION_RESERVE_CURRENCY_TAG => Ok(Self::ReserveCurrency {
-                mode: slice.load_uint::<u8>()? as u8,
+                mode: slice.load_uint::<u8>()?,
                 currency: CurrencyCollection::load_tlb(slice)?,
             }),
             ACTION_CHANGE_LIBRARY_TAG => Ok(Self::ChangeLibrary {
-                mode: slice.load_uint_custom::<u8>(7)? as u8,
+                mode: slice.load_uint_custom::<u8>(7)?,
                 libref: LibRef::load_tlb(slice)?,
             }),
             _ => unreachable!("load_u32_tag only returns known OutAction tags"),
@@ -360,10 +361,10 @@ impl TlbSerialize for TrActionPhase {
         store_maybe(builder, &self.total_action_fees)?;
         builder.store_int(self.result_code as i64, 32)?;
         store_maybe_i32(builder, self.result_arg)?;
-        builder.store_uint::<u16>(self.tot_actions as u16)?;
-        builder.store_uint::<u16>(self.spec_actions as u16)?;
-        builder.store_uint::<u16>(self.skipped_actions as u16)?;
-        builder.store_uint::<u16>(self.msgs_created as u16)?;
+        builder.store_uint::<u16>(self.tot_actions)?;
+        builder.store_uint::<u16>(self.spec_actions)?;
+        builder.store_uint::<u16>(self.skipped_actions)?;
+        builder.store_uint::<u16>(self.msgs_created)?;
         builder.store_bytes(&self.action_list_hash)?;
         self.tot_msg_size.store_tlb(builder)?;
         Ok(())
@@ -380,10 +381,10 @@ impl TlbDeserialize for TrActionPhase {
         let total_action_fees = load_maybe::<Grams>(slice)?;
         let result_code = slice.load_int(32)? as i32;
         let result_arg = load_maybe_i32(slice)?;
-        let tot_actions = slice.load_uint::<u16>()? as u16;
-        let spec_actions = slice.load_uint::<u16>()? as u16;
-        let skipped_actions = slice.load_uint::<u16>()? as u16;
-        let msgs_created = slice.load_uint::<u16>()? as u16;
+        let tot_actions = slice.load_uint::<u16>()?;
+        let spec_actions = slice.load_uint::<u16>()?;
+        let skipped_actions = slice.load_uint::<u16>()?;
+        let msgs_created = slice.load_uint::<u16>()?;
         let mut action_list_hash = [0u8; 32];
         action_list_hash.copy_from_slice(&slice.load_bytes(32)?);
         let tot_msg_size = StorageUsed::load_tlb(slice)?;
@@ -423,7 +424,7 @@ pub(super) fn store_state_init_prefix(
                 });
             }
             builder.store_bit(true)?;
-            builder.store_uint_custom::<u8>(value as u8, 5)?;
+            builder.store_uint_custom::<u8>(value, 5)?;
         }
         None => {
             builder.store_bit(false)?;
@@ -435,16 +436,16 @@ pub(super) fn store_state_init_prefix(
     Ok(())
 }
 
-pub(super) fn load_state_init_prefix(
-    slice: &mut Slice,
-) -> Result<(
+type StateInitPrefix = (
     Option<u8>,
     Option<TickTock>,
     Option<Arc<Cell>>,
     Option<Arc<Cell>>,
-)> {
+);
+
+pub(super) fn load_state_init_prefix(slice: &mut Slice) -> Result<StateInitPrefix> {
     let fixed_prefix_length = if slice.load_bit()? {
-        Some(slice.load_uint_custom::<u8>(5)? as u8)
+        Some(slice.load_uint_custom::<u8>(5)?)
     } else {
         None
     };

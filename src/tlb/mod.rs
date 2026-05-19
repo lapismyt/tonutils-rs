@@ -20,16 +20,4 @@ mod refs;
 mod tests;
 mod varuint;
 
-use bits::*;
-use core::*;
-#[cfg(test)]
-use fixtures::*;
-use refs::*;
-#[cfg(test)]
-use tests::*;
-use varuint::*;
-
-pub use bits::*;
 pub use core::*;
-pub use refs::*;
-pub use varuint::*;

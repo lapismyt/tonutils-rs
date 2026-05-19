@@ -379,7 +379,7 @@ pub(super) fn canonical_label(bits: &[bool], max_len: usize) -> Result<Vec<bool>
     }
 
     let mut candidates = vec![encode_short_label(bits), encode_long_label(bits, max_len)?];
-    if bits.iter().all(|bit| *bit == false) || bits.iter().all(|bit| *bit == true) {
+    if bits.iter().all(|bit| !*bit) || bits.iter().all(|bit| *bit) {
         candidates.push(encode_same_label(bits, max_len)?);
     }
     candidates.sort_by(|left, right| left.len().cmp(&right.len()).then_with(|| left.cmp(right)));
@@ -389,7 +389,7 @@ pub(super) fn canonical_label(bits: &[bool], max_len: usize) -> Result<Vec<bool>
 pub(super) fn encode_short_label(bits: &[bool]) -> Vec<bool> {
     let mut encoded = Vec::with_capacity(2 + bits.len() * 2);
     encoded.push(false);
-    encoded.extend(std::iter::repeat(true).take(bits.len()));
+    encoded.extend(std::iter::repeat_n(true, bits.len()));
     encoded.push(false);
     encoded.extend_from_slice(bits);
     encoded
@@ -513,7 +513,7 @@ pub(super) fn set_bit(data: &mut [u8], index: usize, bit: bool) {
 }
 
 pub(super) fn bits_to_bytes(bits: usize) -> usize {
-    (bits + 7) / 8
+    bits.div_ceil(8)
 }
 
 pub(super) fn clear_unused_bits(data: &mut [u8], bit_len: usize) {

@@ -408,7 +408,7 @@ fn test_edge_cases() {
     assert_eq!(empty_cell.bit_len(), 0);
 
     // Cell with maximum bits
-    let max_data = vec![0xFF; (MAX_CELL_BITS + 7) / 8];
+    let max_data = vec![0xFF; MAX_CELL_BITS.div_ceil(8)];
     let max_cell = Cell::with_data(max_data, MAX_CELL_BITS).unwrap();
     assert_eq!(max_cell.bit_len(), MAX_CELL_BITS);
 
@@ -419,7 +419,7 @@ fn test_edge_cases() {
 
     let mut slice = Slice::new(single_bit_cell);
     assert_eq!(slice.remaining_bits(), 1);
-    assert_eq!(slice.load_bit().unwrap(), true);
+    assert!(slice.load_bit().unwrap());
     assert_eq!(slice.remaining_bits(), 0);
     assert!(slice.is_empty());
 }

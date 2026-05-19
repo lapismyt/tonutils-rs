@@ -37,7 +37,7 @@ where
         self.project()
             .inner
             .poll_ready(cx)
-            .map_err(|e| LiteError::AdnlError(e.into()))
+            .map_err(LiteError::AdnlError)
     }
 
     fn start_send(self: std::pin::Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
@@ -46,7 +46,7 @@ where
         self.project()
             .inner
             .start_send(data)
-            .map_err(|e| LiteError::AdnlError(e.into()))
+            .map_err(LiteError::AdnlError)
     }
 
     fn poll_flush(
@@ -56,7 +56,7 @@ where
         self.project()
             .inner
             .poll_flush(cx)
-            .map_err(|e| LiteError::AdnlError(e.into()))
+            .map_err(LiteError::AdnlError)
     }
 
     fn poll_close(
@@ -66,7 +66,7 @@ where
         self.project()
             .inner
             .poll_close(cx)
-            .map_err(|e| LiteError::AdnlError(e.into()))
+            .map_err(LiteError::AdnlError)
     }
 }
 
@@ -89,7 +89,7 @@ where
                     LiteError::TlError(crate::tl::TlError::ParseError(e.to_string()))
                 })))
             }
-            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(LiteError::AdnlError(e.into())))),
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(LiteError::AdnlError(e)))),
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
@@ -117,11 +117,11 @@ impl<T> TagStore<Message, Message> for LitePeer<T> {
             }
             Message::Ping { random_id } => {
                 *random_id = random();
-                LiteTag::Long(random_id.clone())
+                LiteTag::Long(*random_id)
             }
             Message::Pong { random_id } => {
                 *random_id = random();
-                LiteTag::Long(random_id.clone())
+                LiteTag::Long(*random_id)
             }
         }
     }
@@ -130,8 +130,8 @@ impl<T> TagStore<Message, Message> for LitePeer<T> {
         match r {
             Message::Answer { query_id, .. } => LiteTag::Int256(query_id.clone()),
             Message::Query { query_id, .. } => LiteTag::Int256(query_id.clone()),
-            Message::Ping { random_id } => LiteTag::Long(random_id.clone()),
-            Message::Pong { random_id } => LiteTag::Long(random_id.clone()),
+            Message::Ping { random_id } => LiteTag::Long(*random_id),
+            Message::Pong { random_id } => LiteTag::Long(*random_id),
         }
     }
 }

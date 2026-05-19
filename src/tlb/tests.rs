@@ -1,6 +1,7 @@
 use super::*;
 
 #[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
     use super::*;
     use crate::tvm::{Builder, Slice};
@@ -14,7 +15,7 @@ mod tests {
     impl TlbSerialize for Tiny {
         fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
             store_tag(builder, "101")?;
-            builder.store_uint_custom::<u8>(self.value as u8, 5)?;
+            builder.store_uint_custom::<u8>(self.value, 5)?;
             Ok(())
         }
     }
@@ -22,7 +23,7 @@ mod tests {
     impl TlbDeserialize for Tiny {
         fn load_tlb(slice: &mut Slice) -> Result<Self> {
             expect_tag(slice, "tiny$101", "101")?;
-            let value = slice.load_uint_custom::<u8>(5)? as u8;
+            let value = slice.load_uint_custom::<u8>(5)?;
             Ok(Self { value })
         }
     }

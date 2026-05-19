@@ -1,7 +1,5 @@
 use super::*;
 use crate::tl::common::*;
-use crate::tl::request::*;
-use crate::tl::response::*;
 use tl_proto::{deserialize, serialize};
 
 #[test]
