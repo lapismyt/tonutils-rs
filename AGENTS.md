@@ -54,6 +54,17 @@ Follow these rules in order when instructions conflict:
    deferred work visible, and update `ROADMAP.md` only for phase or direction
    changes.
 
+## Commit Message Style
+
+- Write commit messages in English.
+- Use a short, specific summary that describes the accepted change, not the
+  agent process. Avoid placeholders such as `.`, `update`, `fix`, or `wip`.
+- Prefer an imperative verb phrase, optionally with a narrow conventional type
+  prefix when it improves scanability, for example `docs: update agent workflow
+  rules` or `fix: reject invalid cell descriptors`.
+- Keep subagent and worktree coordination details out of commit messages unless
+  they are directly relevant to the committed project behavior.
+
 ## Parallel Agent Workflow
 
 - Prefer parallel development when the orchestrating agent has the required
