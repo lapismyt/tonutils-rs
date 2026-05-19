@@ -29,7 +29,7 @@ pub mod cli;
 #[cfg(feature = "liteclient")]
 pub mod contracts;
 #[cfg(feature = "contract-derive")]
-pub use tonutils_tlb_derive::Contract;
+pub use tonutils_macros::Contract;
 pub mod crc;
 #[cfg(feature = "tvm")]
 pub mod jetton;

@@ -31,7 +31,7 @@ block/shard/config/proof roundtrips remain active TODO items.
 
 ## Derive And Adapter Surface
 
-The optional `tlb-derive` feature enables the `tonutils-tlb-derive` proc-macro
+The optional `tlb-derive` feature enables the `tonutils-macros` proc-macro
 crate and re-exports `tlb::Tlb` and `tlb::TlbDerive`. The macro generates the
 existing runtime traits, not a separate runtime. Supported attributes are:
 

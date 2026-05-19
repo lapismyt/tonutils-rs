@@ -155,7 +155,7 @@ Current Phase 1 fixture status:
   require canonical reserialization.
 - Phase 1 TL-B macro support includes the `src/tlb/schema.rs` parser and
   deterministic checked-summary workflow plus the optional
-  `tonutils-tlb-derive` workspace proc-macro crate for custom TL-B structs and
+  `tonutils-macros` workspace proc-macro crate for custom TL-B structs and
   enums.
 - Full deep block/header/value-flow models, typed config-param families, and
   broader captured live/upstream proof fixture evidence remain follow-up work
