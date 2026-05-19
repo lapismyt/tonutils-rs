@@ -79,6 +79,9 @@ Follow these rules in order when instructions conflict:
 - After committing the task branch, switch back to the branch that was active
   before the task began and offer to push the completed task branch. Do not
   push without explicit user approval.
+- At the end of executing a plan, the final report must include the completed
+  task branch name, the new commit hash and summary, and the final current
+  branch after any required branch switch.
 - If the user later asks to merge a completed feature, fix, or task branch,
   ask whether the local branch should be deleted after the merge. Do not
   delete remote branches unless the user explicitly requests remote cleanup.
