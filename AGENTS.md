@@ -119,6 +119,10 @@ Follow these rules in order when instructions conflict:
 - Prefer parallel development when the orchestrating agent has the required
   permissions and capabilities: creating `git worktree` checkouts, creating and
   merging local Git branches, and spawning subagents.
+- Use parallel agents whenever doing so is possible and not unsafe for the
+  task. Parallelization is appropriate only when the work can follow the
+  rules in this section without risking conflicting edits, unclear ownership,
+  leaked secrets, destructive operations, or loss of user work.
 - When multiple agents work on the project concurrently, use separate
   `git worktree` checkouts for subagents.
 - The orchestrating agent must either create and assign a dedicated
