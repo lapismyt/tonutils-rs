@@ -533,7 +533,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Map TL-B codec errors to builder, slice, tag, reference, and non-canonical encoding failures #tvm #tlb #tests
   - [x] Add focused tests for tags, `Maybe`, `Either`, refs, `VarUInteger`, and trailing data #tvm #tlb #tests
 - [x] Decide TL-B derive/proc-macro crate shape for Phase 1 #tvm #tlb #features
-  - [x] Add optional feature-gated `tonutils-tlb-derive` proc-macro crate for custom TL-B structs #tvm #tlb #features
+  - [x] Add optional feature-gated `tonutils-macros` proc-macro crate for custom TL-B structs #tvm #tlb #features
   - [x] Keep macro support optional and avoid adding compile cost to low-level TVM users #tvm #tlb #features
   - [x] Define schema-driven drift checks against upstream TON TL-B sources #tvm #tlb #tests
   - [x] Add public TL-B adapters for referenced values, raw cells, varuints, fixed-width fields, and typed `HashmapE` values #tvm #tlb

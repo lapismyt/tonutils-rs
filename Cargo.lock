@@ -2011,14 +2011,14 @@ dependencies = [
  "tokio-test",
  "tokio-tower",
  "tokio-util",
- "tonutils-tlb-derive",
+ "tonutils-macros",
  "tower 0.5.2",
  "ureq",
  "x25519-dalek",
 ]
 
 [[package]]
-name = "tonutils-tlb-derive"
+name = "tonutils-macros"
 version = "0.2.0"
 dependencies = [
  "proc-macro2",

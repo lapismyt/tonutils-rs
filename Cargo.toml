@@ -4,7 +4,7 @@ version = "0.4.0"
 edition = "2024"
 
 [workspace]
-members = ["tonutils-tlb-derive"]
+members = ["tonutils-macros"]
 
 [features]
 default = ["std", "adnl-tcp", "liteclient"]
@@ -12,8 +12,8 @@ std = []
 tl = []
 tvm = ["tl"]
 abi-json = ["tvm", "dep:serde_json"]
-tlb-derive = ["tvm", "dep:tonutils-tlb-derive"]
-contract-derive = ["liteclient", "dep:tonutils-tlb-derive"]
+tlb-derive = ["tvm", "dep:tonutils-macros"]
+contract-derive = ["liteclient", "dep:tonutils-macros"]
 adnl = ["tl"]
 adnl-tcp = ["adnl", "dep:futures", "dep:pin-project", "dep:tokio", "dep:tokio-util"]
 liteclient = ["adnl-tcp", "tvm", "dep:tokio-tower", "dep:tower"]
@@ -77,7 +77,7 @@ pin-project = { version = "1.1.10", optional = true }
 ureq = { version = "3.1.2", features = ["socks-proxy"], optional = true }
 pretty_env_logger = { version = "0.5.0", optional = true }
 tl-proto = { version = "0.5.3", features = ["derive"] }
-tonutils-tlb-derive = { path = "tonutils-tlb-derive", optional = true }
+tonutils-macros = { path = "tonutils-macros", optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

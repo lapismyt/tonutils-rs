@@ -1,5 +1,5 @@
 [package]
-name = "tonutils-tlb-derive"
+name = "tonutils-macros"
 version = "0.2.0"
 edition = "2024"
 publish = false

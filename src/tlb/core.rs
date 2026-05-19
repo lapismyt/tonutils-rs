@@ -6,7 +6,7 @@ use std::sync::Arc;
 use thiserror::Error;
 
 #[cfg(feature = "tlb-derive")]
-pub use tonutils_tlb_derive::{Tlb, Tlb as TlbDerive};
+pub use tonutils_macros::{Tlb, Tlb as TlbDerive};
 
 pub use block::{
     Block, BlockExtra, BlockIdExtTlb, BlockInfo, BlockPrevInfo, ConfigParams, ExtBlkRef,

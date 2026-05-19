@@ -88,7 +88,7 @@ application-specific TL-B bodies and small local schemas; it emits the same
 
 ## Derive Macro Architecture
 
-`tonutils-tlb-derive` is a workspace proc-macro crate enabled only through the
+`tonutils-macros` is a workspace proc-macro crate enabled only through the
 `tlb-derive` feature. The main crate re-exports `tlb::Tlb` and `tlb::TlbDerive`
 under that feature. Default builds do not depend on `syn`, `quote`, or
 `proc-macro2` through this path.
@@ -303,7 +303,7 @@ slice remains in `src/tlb/schemas/block_phase1.tlb`; its checked summary remains
 in `src/tlb/generated/block_phase1.rs`.
 
 The checked schema workflow remains the broad upstream-schema path. A separate
-optional `tonutils-tlb-derive` proc-macro crate now covers hand-written Rust
+optional `tonutils-macros` proc-macro crate now covers hand-written Rust
 structs and enums without adding compile cost for users who do not enable the
 `tlb-derive` feature.
 
@@ -337,7 +337,7 @@ Current implemented building blocks:
   `TlbDeserialize`, `TlbScheme`, `TlbError`, fixed-tag helpers, exact decode
   checks, `Maybe`, `Either`, referenced value helpers, and canonical
   `VarUInteger` helpers.
-- `tonutils-tlb-derive/`: optional proc-macro crate for deriving the TL-B
+- `tonutils-macros/`: optional proc-macro crate for deriving the TL-B
   runtime traits on hand-written Rust structs and enums.
 
 The first built-in hand-written blockchain model slice is implemented in
