@@ -79,6 +79,9 @@ Follow these rules in order when instructions conflict:
 - After committing the task branch, switch back to the branch that was active
   before the task began and offer to push the completed task branch. Do not
   push without explicit user approval.
+- If the user later asks to merge a completed feature, fix, or task branch,
+  ask whether the local branch should be deleted after the merge. Do not
+  delete remote branches unless the user explicitly requests remote cleanup.
 
 ## Commit Message Style
 
@@ -109,6 +112,9 @@ Follow these rules in order when instructions conflict:
 - After parallel agents finish, the orchestrating agent must inspect the
   changes in each assigned worktree, then merge the accepted changes into the
   primary branch managed by the orchestrator.
+- After a subagent's accepted changes are merged or ported into the
+  orchestrator task branch, the orchestrator must remove that subagent
+  `git worktree` and delete the intermediate local branch.
 - At the end of executing a plan, every agent, including orchestrators and
   subagents, must commit its accepted local changes.
 - Subagent intermediate branches must remain local and must not be pushed to
