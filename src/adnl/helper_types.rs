@@ -1,6 +1,6 @@
 use crate::adnl::crypto::PublicKey;
 use sha2::{Digest, Sha256};
-use std::{array::TryFromSliceError, io::Error};
+use std::{array::TryFromSliceError, io::Error, time::Duration};
 use thiserror::Error;
 
 pub trait CryptoRandom: rand::RngCore + rand::CryptoRng {}
@@ -129,6 +129,11 @@ impl AdnlAddress {
 pub enum AdnlError {
     #[error("IO error")]
     IoError(#[from] Error),
+    #[error("{operation} timed out after {timeout:?}")]
+    Timeout {
+        operation: &'static str,
+        timeout: Duration,
+    },
     #[error("Integrity error")]
     IntegrityError,
     #[error("Too short packet (32 bytes min)")]

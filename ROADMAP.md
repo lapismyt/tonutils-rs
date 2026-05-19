@@ -233,8 +233,11 @@ After the foundation, contract, and ABI milestones:
   output contracts across supported commands.
 - Make TVM cell, BoC, slice, builder, dictionary, and stack behavior fully
   spec-accurate with expanded golden fixtures.
-- Add full proof verification models, including `ShardAccounts` path extraction
-  for account proofs, and trust documentation for light client usage.
+- Keep proof material inspection and raw preservation clearly separated from
+  trustless verification. Full proof verification models, including
+  `ShardAccounts` path traversal for account proofs and trust documentation for
+  light client usage, are deliberately deferred to a later proof-specific
+  milestone.
 
 ## Phase 4: Performance, Extended Protocols, And Ecosystem Coverage
 

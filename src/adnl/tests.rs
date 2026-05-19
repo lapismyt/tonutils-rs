@@ -3,6 +3,8 @@
 use super::crypto::*;
 use crate::adnl::{AdnlAesParams, AdnlCodec, AdnlError, AdnlPeer};
 use rand::rngs::OsRng;
+use std::time::Duration;
+use tokio::net::TcpListener;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -165,6 +167,35 @@ async fn test_adnl_loopback_handshake() {
 
     assert!(client.is_ok());
     assert!(server.is_ok());
+}
+
+#[tokio::test]
+async fn adnl_connect_with_timeout_maps_handshake_timeout() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (_stream, _addr) = listener.accept().await.unwrap();
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    });
+
+    let server_secret = SecretKey::from_bytes([9u8; 32]);
+    let server_public = KeyPair::from(&server_secret).public_key.to_bytes();
+    let error =
+        match AdnlPeer::connect_with_timeout(server_public, address, Duration::from_millis(10))
+            .await
+        {
+            Ok(_) => panic!("connect should time out while waiting for ADNL handshake"),
+            Err(error) => error,
+        };
+
+    server.abort();
+    assert!(matches!(
+        error,
+        AdnlError::Timeout {
+            operation: "adnl_handshake",
+            timeout
+        } if timeout == Duration::from_millis(10)
+    ));
 }
 
 #[test]

@@ -44,6 +44,11 @@ construct TL-B proof objects and is not proof verification. Live LiteServer
 `getAccountState` responses have been smoke-tested for multi-root proof BoC
 structural inspection in the CLI account command.
 
+No current LiteClient or CLI API should be described as trustless or verified
+unless its name and documentation explicitly say "verified". The current APIs
+inspect, decode, and preserve proof material so future proof-specific work can
+anchor it correctly; full proof verification is intentionally deferred.
+
 `liteclient::boc::extract_verified_shard_account` is the current checked
 extraction boundary for high-level transaction unblocking. It accepts proof
 material whose root has already been anchored to a verified shard-account path,

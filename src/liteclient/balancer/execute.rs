@@ -3,7 +3,10 @@ use super::*;
 impl LiteBalancer {
     pub fn new(peers: Vec<LiteClient>, timeout: Duration) -> Self {
         Self {
-            peers,
+            peers: peers
+                .into_iter()
+                .map(|peer| peer.with_request_timeout(timeout))
+                .collect(),
             alive_peers: Arc::new(RwLock::new(HashSet::new())),
             archival_peers: Arc::new(RwLock::new(HashSet::new())),
             peer_stats: Arc::new(RwLock::new(HashMap::new())),
@@ -79,31 +82,34 @@ impl LiteBalancer {
         let stats = self.peer_stats.read().await;
         let timeout_ms = self.timeout.as_millis() as u64;
 
+        let best_seqno = stats
+            .values()
+            .map(|stats| stats.last_observed_seqno.max(stats.mc_block_seqno))
+            .max()
+            .unwrap_or(0);
+
         let mut peers_vec: Vec<usize> = peers;
         peers_vec.sort_by(|a, b| {
             let stats_a = stats.get(a);
             let stats_b = stats.get(b);
-
-            let seqno_a = stats_a.map(|s| s.mc_block_seqno).unwrap_or(0);
-            let seqno_b = stats_b.map(|s| s.mc_block_seqno).unwrap_or(0);
-            let time_a = stats_a
-                .map(|s| s.avg_response_time_ms)
-                .unwrap_or(timeout_ms);
-            let time_b = stats_b
-                .map(|s| s.avg_response_time_ms)
-                .unwrap_or(timeout_ms);
-
-            // Sort by seqno descending, then by response time ascending
-            match seqno_b.cmp(&seqno_a) {
-                std::cmp::Ordering::Equal => time_a.cmp(&time_b),
-                other => other,
-            }
+            let score_a = Self::peer_score(stats_a, best_seqno, timeout_ms);
+            let score_b = Self::peer_score(stats_b, best_seqno, timeout_ms);
+            score_a.cmp(&score_b)
         });
 
         peers_vec
     }
 
     pub(super) async fn choose_peer(&self, only_archive: bool) -> Result<usize> {
+        self.choose_peer_excluding(only_archive, &HashSet::new())
+            .await
+    }
+
+    pub(super) async fn choose_peer_excluding(
+        &self,
+        only_archive: bool,
+        excluded: &HashSet<usize>,
+    ) -> Result<usize> {
         let peers = self.build_priority_list(only_archive).await;
 
         if peers.is_empty() {
@@ -120,10 +126,10 @@ impl LiteBalancer {
 
         // First pass: find peer with acceptable load
         for &peer_idx in &peers {
-            if matches!(
-                states.get(&peer_idx),
-                Some(PeerState::Dead | PeerState::Recovering)
-            ) {
+            if excluded.contains(&peer_idx) {
+                continue;
+            }
+            if matches!(states.get(&peer_idx), Some(PeerState::Dead)) {
                 continue;
             }
             let current_req = stats
@@ -140,10 +146,10 @@ impl LiteBalancer {
 
         // Second pass: find peer with minimum load
         for &peer_idx in &peers {
-            if matches!(
-                states.get(&peer_idx),
-                Some(PeerState::Dead | PeerState::Recovering)
-            ) {
+            if excluded.contains(&peer_idx) {
+                continue;
+            }
+            if matches!(states.get(&peer_idx), Some(PeerState::Dead)) {
                 continue;
             }
             let current_req = stats
@@ -180,6 +186,10 @@ impl LiteBalancer {
             peer_stats.total_requests,
             request_time_ms,
         );
+        peer_stats.ewma_latency_ms = Some(match peer_stats.ewma_latency_ms {
+            Some(old) => (old * 7 + request_time_ms * 3) / 10,
+            None => request_time_ms,
+        });
         peer_stats.total_requests += 1;
     }
 
@@ -240,12 +250,40 @@ impl LiteBalancer {
     ) -> Result<(usize, Instant)> {
         let _ = std::marker::PhantomData::<T>;
         let peer_idx = self.choose_peer(only_archive).await?;
+        if let Some(peer) = self.peers.get_mut(peer_idx) {
+            peer.set_request_timeout(self.timeout);
+        }
 
         if let Some(limiter) = &self.global_rate_limiter {
             limiter.acquire().await;
         }
 
         // Increment current request count
+        {
+            let mut stats = self.peer_stats.write().await;
+            let peer_stats = stats.entry(peer_idx).or_insert_with(PeerStats::default);
+            peer_stats.current_requests += 1;
+        }
+
+        let start = Instant::now();
+        Ok((peer_idx, start))
+    }
+
+    pub(super) async fn execute_request_excluding<T>(
+        &mut self,
+        only_archive: bool,
+        excluded: &HashSet<usize>,
+    ) -> Result<(usize, Instant)> {
+        let _ = std::marker::PhantomData::<T>;
+        let peer_idx = self.choose_peer_excluding(only_archive, excluded).await?;
+        if let Some(peer) = self.peers.get_mut(peer_idx) {
+            peer.set_request_timeout(self.timeout);
+        }
+
+        if let Some(limiter) = &self.global_rate_limiter {
+            limiter.acquire().await;
+        }
+
         {
             let mut stats = self.peer_stats.write().await;
             let peer_stats = stats.entry(peer_idx).or_insert_with(PeerStats::default);
@@ -272,28 +310,34 @@ impl LiteBalancer {
     ) {
         let elapsed = start.elapsed().as_millis() as u64;
 
-        // Decrement current request count
-        {
-            let mut stats = self.peer_stats.write().await;
-            if let Some(peer_stats) = stats.get_mut(&peer_idx) {
-                peer_stats.current_requests = peer_stats.current_requests.saturating_sub(1);
-            }
-        }
+        self.decrement_current_requests(peer_idx).await;
 
         if success {
-            self.update_average_request_time(peer_idx, elapsed).await;
-            self.peer_states
-                .write()
-                .await
-                .insert(peer_idx, PeerState::Healthy);
+            self.record_success(peer_idx, elapsed).await;
         } else {
-            self.update_average_request_time(peer_idx, self.timeout.as_millis() as u64)
+            self.record_retryable_failure(
+                peer_idx,
+                PeerFailureKind::Connection,
+                self.timeout.as_millis() as u64,
+            )
+            .await;
+        }
+    }
+
+    pub(super) async fn complete_request_error(
+        &mut self,
+        peer_idx: usize,
+        start: Instant,
+        error: &LiteError,
+    ) {
+        let elapsed = start.elapsed().as_millis() as u64;
+        self.decrement_current_requests(peer_idx).await;
+
+        if let Some(kind) = Self::retryable_failure(error) {
+            self.record_retryable_failure(peer_idx, kind, self.timeout.as_millis() as u64)
                 .await;
-            self.alive_peers.write().await.remove(&peer_idx);
-            self.peer_states
-                .write()
-                .await
-                .insert(peer_idx, PeerState::Dead);
+        } else {
+            self.record_non_retryable_error(peer_idx, elapsed).await;
         }
     }
 
@@ -301,6 +345,7 @@ impl LiteBalancer {
         let mut stats = self.peer_stats.write().await;
         let peer_stats = stats.entry(peer_idx).or_insert_with(PeerStats::default);
         peer_stats.mc_block_seqno = seqno;
+        peer_stats.last_observed_seqno = seqno;
     }
 
     // Delegate methods to underlying clients with load balancing
@@ -318,9 +363,9 @@ impl LiteBalancer {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }
@@ -340,9 +385,9 @@ impl LiteBalancer {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }
@@ -362,9 +407,9 @@ impl LiteBalancer {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }
@@ -384,9 +429,9 @@ impl LiteBalancer {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }
@@ -406,9 +451,9 @@ impl LiteBalancer {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }
@@ -439,9 +484,9 @@ impl LiteBalancer {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }
@@ -478,9 +523,9 @@ impl LiteBalancer {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }
@@ -518,9 +563,18 @@ impl LiteBalancer {
         };
 
         let mut results = Vec::new();
-        for _ in 0..k.min(self.peers.len()) {
+        let mut attempted = HashSet::new();
+        'peers: for _ in 0..k.min(self.peers.len()) {
             for _attempt in 0..self.max_retries {
-                let (peer_idx, start) = self.execute_request::<u32>(false).await?;
+                let (peer_idx, start) = match self
+                    .execute_request_excluding::<u32>(false, &attempted)
+                    .await
+                {
+                    Ok(request) => request,
+                    Err(BalancerError::NoAlivePeers) => break 'peers,
+                    Err(error) => return Err(error),
+                };
+                attempted.insert(peer_idx);
                 let result = self.peers[peer_idx].send_message(body.clone()).await;
 
                 match result {
@@ -530,12 +584,9 @@ impl LiteBalancer {
                         break;
                     }
                     Err(e) => {
-                        let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                        self.complete_request(peer_idx, start, false).await;
-                        if !is_connection_error {
-                            results.push(Err(e));
-                            break;
-                        }
+                        self.complete_request_error(peer_idx, start, &e).await;
+                        results.push(Err(e));
+                        break;
                     }
                 }
             }
@@ -568,9 +619,9 @@ impl LiteBalancer {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }
@@ -634,9 +685,9 @@ impl LiteBalancer {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }
@@ -712,9 +763,9 @@ impl LiteBalancer {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }

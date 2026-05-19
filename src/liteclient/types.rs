@@ -1,5 +1,6 @@
 use crate::adnl::helper_types::AdnlError;
 use crate::tl::TlError;
+use std::time::Duration;
 use thiserror::Error;
 use tower::Service;
 
@@ -9,6 +10,11 @@ use crate::tl::{request::WrappedRequest, response::Response};
 pub enum LiteError {
     #[error("Liteserver error {0}")]
     ServerError(crate::tl::response::Error),
+    #[error("{operation} timed out after {timeout:?}")]
+    Timeout {
+        operation: &'static str,
+        timeout: Duration,
+    },
     #[error("TL parsing error: {0}")]
     TlError(TlError),
     #[error("Unexpected TL message")]

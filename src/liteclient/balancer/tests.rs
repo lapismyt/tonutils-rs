@@ -273,6 +273,7 @@ mod tests {
                     avg_response_time_ms: 50,
                     total_requests: 10,
                     current_requests: 0,
+                    ..Default::default()
                 },
             );
             stats.insert(
@@ -282,6 +283,7 @@ mod tests {
                     avg_response_time_ms: 60,
                     total_requests: 8,
                     current_requests: 0,
+                    ..Default::default()
                 },
             );
             stats.insert(
@@ -291,6 +293,7 @@ mod tests {
                     avg_response_time_ms: 40,
                     total_requests: 12,
                     current_requests: 0,
+                    ..Default::default()
                 },
             );
             stats.insert(
@@ -300,6 +303,7 @@ mod tests {
                     avg_response_time_ms: 55,
                     total_requests: 9,
                     current_requests: 0,
+                    ..Default::default()
                 },
             );
             stats.insert(
@@ -309,6 +313,7 @@ mod tests {
                     avg_response_time_ms: 70,
                     total_requests: 5,
                     current_requests: 0,
+                    ..Default::default()
                 },
             );
         }
@@ -344,6 +349,7 @@ mod tests {
                     avg_response_time_ms: 50,
                     total_requests: 10,
                     current_requests: 0,
+                    ..Default::default()
                 },
             );
 
@@ -355,6 +361,7 @@ mod tests {
                     avg_response_time_ms: 30,
                     total_requests: 15,
                     current_requests: 0,
+                    ..Default::default()
                 },
             );
 
@@ -366,6 +373,7 @@ mod tests {
                     avg_response_time_ms: 25,
                     total_requests: 20,
                     current_requests: 0,
+                    ..Default::default()
                 },
             );
         }
@@ -494,6 +502,7 @@ mod tests {
                     avg_response_time_ms: 50,
                     total_requests: 10,
                     current_requests: 10, // Over limit
+                    ..Default::default()
                 },
             );
 
@@ -505,6 +514,7 @@ mod tests {
                     avg_response_time_ms: 60,
                     total_requests: 5,
                     current_requests: 2, // Under limit
+                    ..Default::default()
                 },
             );
 
@@ -516,6 +526,7 @@ mod tests {
                     avg_response_time_ms: 80,
                     total_requests: 8,
                     current_requests: 3, // Under limit
+                    ..Default::default()
                 },
             );
         }
@@ -546,6 +557,7 @@ mod tests {
                     avg_response_time_ms: 10,
                     total_requests: 1,
                     current_requests: 5,
+                    ..Default::default()
                 },
             );
             stats.insert(
@@ -555,6 +567,7 @@ mod tests {
                     avg_response_time_ms: 20,
                     total_requests: 1,
                     current_requests: 4,
+                    ..Default::default()
                 },
             );
         }
@@ -642,11 +655,11 @@ mod tests {
         assert!(matches!(result.get(&Int256([7; 32])), Some(None)));
         assert_eq!(*peer0_calls.lock().await, 1);
         assert_eq!(*peer1_calls.lock().await, 1);
-        assert!(!balancer.alive_peers.read().await.contains(&0));
+        assert!(balancer.alive_peers.read().await.contains(&0));
         assert!(balancer.alive_peers.read().await.contains(&1));
         assert_eq!(
             balancer.peer_states.read().await.get(&0),
-            Some(&PeerState::Dead)
+            Some(&PeerState::Suspect)
         );
         assert_eq!(
             balancer
@@ -710,11 +723,11 @@ mod tests {
         ));
         assert_eq!(*peer0_calls.lock().await, 1);
         assert_eq!(*peer1_calls.lock().await, 0);
-        assert!(!balancer.alive_peers.read().await.contains(&0));
-        assert_eq!(
+        assert!(balancer.alive_peers.read().await.contains(&0));
+        assert!(!matches!(
             balancer.peer_states.read().await.get(&0),
-            Some(&PeerState::Dead)
-        );
+            Some(PeerState::Dead)
+        ));
         assert_eq!(
             balancer
                 .peer_stats
@@ -782,7 +795,7 @@ mod tests {
         ));
         assert_eq!(*peer0_calls.lock().await, 1);
         assert_eq!(*peer1_calls.lock().await, 0);
-        assert!(!balancer.alive_peers.read().await.contains(&0));
+        assert!(balancer.alive_peers.read().await.contains(&0));
     }
 
     #[tokio::test]
@@ -877,6 +890,7 @@ mod tests {
                     avg_response_time_ms: 50,
                     total_requests: 5,
                     current_requests: 3,
+                    ..Default::default()
                 },
             );
         }
@@ -891,7 +905,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_complete_request_removes_failed_peer() {
+    async fn test_complete_request_removes_repeatedly_failed_peer() {
         let peers = Vec::new();
         let mut balancer = LiteBalancer::new(peers, Duration::from_secs(10));
 
@@ -903,8 +917,8 @@ mod tests {
 
         let start = Instant::now();
         balancer.complete_request(0, start, false).await;
+        balancer.complete_request(0, start, false).await;
 
-        // Check that peer was removed from alive set
         let alive = balancer.alive_peers.read().await;
         assert!(!alive.contains(&0));
     }

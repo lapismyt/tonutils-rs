@@ -21,6 +21,30 @@ impl LiteClient {
             inner: service.boxed(),
             wait_seqno: None,
             rate_limiter: None,
+            request_timeout: None,
+        })
+    }
+
+    pub async fn connect_with_timeout<A: ToSocketAddrs>(
+        address: A,
+        public_key: impl AsRef<[u8]>,
+        timeout: std::time::Duration,
+    ) -> Result<Self> {
+        let adnl = AdnlPeer::connect_with_timeout(public_key, address, timeout).await?;
+        let lite = LitePeer::new(adnl);
+        let service =
+            ServiceBuilder::new()
+                .layer(WrapRawMessagesLayer)
+                .service(multiplex::Client::<
+                    _,
+                    Box<dyn std::error::Error + Send + Sync + 'static>,
+                    _,
+                >::new(lite));
+        Ok(Self {
+            inner: service.boxed(),
+            wait_seqno: None,
+            rate_limiter: None,
+            request_timeout: None,
         })
     }
 
@@ -36,6 +60,7 @@ impl LiteClient {
             inner: service.boxed(),
             wait_seqno: None,
             rate_limiter: None,
+            request_timeout: None,
         }
     }
 
@@ -78,6 +103,19 @@ impl LiteClient {
         self.rate_limiter = None;
     }
 
+    pub fn with_request_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.set_request_timeout(timeout);
+        self
+    }
+
+    pub fn set_request_timeout(&mut self, timeout: std::time::Duration) {
+        self.request_timeout = Some(timeout);
+    }
+
+    pub fn clear_request_timeout(&mut self) {
+        self.request_timeout = None;
+    }
+
     #[cfg(test)]
     pub(crate) fn has_rate_limiter(&self) -> bool {
         self.rate_limiter.is_some()
@@ -102,17 +140,34 @@ impl LiteClient {
             limiter.acquire().await;
         }
 
-        self.inner
-            .ready()
-            .await?
-            .call(RawWrappedRequest {
-                wait_masterchain_seqno: self.wait_seqno.take().map(|seqno| WaitMasterchainSeqno {
-                    seqno,
-                    timeout_ms: 10000,
-                }),
-                request: request.as_ref().to_vec(),
-            })
-            .await
+        let timeout = self.request_timeout;
+        let service = match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, self.inner.ready())
+                .await
+                .map_err(|_| LiteError::Timeout {
+                    operation: "request_ready",
+                    timeout,
+                })??,
+            None => self.inner.ready().await?,
+        };
+
+        let request = RawWrappedRequest {
+            wait_masterchain_seqno: self.wait_seqno.take().map(|seqno| WaitMasterchainSeqno {
+                seqno,
+                timeout_ms: 10000,
+            }),
+            request: request.as_ref().to_vec(),
+        };
+
+        match timeout {
+            Some(timeout) => tokio::time::timeout(timeout, service.call(request))
+                .await
+                .map_err(|_| LiteError::Timeout {
+                    operation: "request_call",
+                    timeout,
+                })?,
+            None => service.call(request).await,
+        }
     }
 
     pub async fn get_masterchain_info(&mut self) -> Result<MasterchainInfo> {

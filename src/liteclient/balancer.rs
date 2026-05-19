@@ -43,9 +43,9 @@ macro_rules! balanced_call {
                     return Ok(response);
                 }
                 Err(e) => {
-                    let is_connection_error = matches!(e, LiteError::AdnlError(_));
-                    $self.complete_request(peer_idx, start, false).await;
-                    if !is_connection_error {
+                    let is_retryable = LiteBalancer::retryable_failure(&e).is_some();
+                    $self.complete_request_error(peer_idx, start, &e).await;
+                    if !is_retryable {
                         return Err(BalancerError::LiteError(e));
                     }
                 }
@@ -58,6 +58,8 @@ macro_rules! balanced_call {
 mod archive;
 mod execute;
 mod helpers;
+#[cfg(test)]
+mod reliability_tests;
 mod selection;
 mod state;
 #[cfg(test)]

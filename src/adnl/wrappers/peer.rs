@@ -1,5 +1,6 @@
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use crate::adnl::crypto::{KeyPair, PublicKey};
 use crate::adnl::helper_types::AdnlConnectionInfo;
@@ -34,6 +35,34 @@ impl AdnlPeer<TcpStream> {
         let transport = TcpStream::connect(server_address).await?;
         log::debug!("Connected to {:?}, handshaking...", transport.peer_addr());
         let client = Self::perform_handshake(transport, server_public).await?;
+        log::debug!(
+            "Handshake completed, connected to {:?}",
+            client.connection_info.remote_address()
+        );
+        Ok(client)
+    }
+
+    /// Connect ADNL client to specified server over [`TcpStream`] with a bounded TCP connect and handshake wait.
+    pub async fn connect_with_timeout<A: ToSocketAddrs>(
+        server_public: impl AsRef<[u8]>,
+        server_address: A,
+        timeout: Duration,
+    ) -> Result<AdnlPeer<TcpStream>, AdnlError> {
+        log::debug!("Connecting to TCP server");
+        let transport = tokio::time::timeout(timeout, TcpStream::connect(server_address))
+            .await
+            .map_err(|_| AdnlError::Timeout {
+                operation: "tcp_connect",
+                timeout,
+            })??;
+        log::debug!("Connected to {:?}, handshaking...", transport.peer_addr());
+        let client =
+            tokio::time::timeout(timeout, Self::perform_handshake(transport, server_public))
+                .await
+                .map_err(|_| AdnlError::Timeout {
+                    operation: "adnl_handshake",
+                    timeout,
+                })??;
         log::debug!(
             "Handshake completed, connected to {:?}",
             client.connection_info.remote_address()

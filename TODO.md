@@ -28,8 +28,9 @@ postponed work moves to `# BACKLOG`.
       - [x] Add offline tests for typed-helper retry routing, archival probe filtering, non-retryable server errors, and local decode errors #balancer #network #tests
       - [ ] Add raw query delegation coverage if a public balancer raw-query helper is introduced #balancer #network #tests
   - [-] Add verification coverage for peer health state transitions, failover, and request routing decisions #balancer #network #tests
-    - [x] Verify current failure handling removes failed peers, records dead state, and clears in-flight counters #balancer #network #tests
-    - [ ] Add reconnect and timeout state-machine coverage after those behaviors are implemented #balancer #network #tests
+    - [x] Verify retryable failures transition peers through healthy, suspect, and dead states, while successes reset failure state and clear in-flight counters #balancer #network #tests
+    - [x] Verify timeout-aware peer selection, non-retryable error handling, and distinct-peer send-message attempts #balancer #network #tests
+    - [ ] Add reconnect state-machine coverage after peer descriptor recovery is implemented #balancer #network #tests
   - [-] Keep LiteBalancer typed helper coverage synchronized with LiteClient helper coverage #balancer #liteclient #docs
     - [x] Add offline parity checks for representative typed helper routing through peer selection, retry, and local decode error paths #balancer #liteclient #tests
     - [ ] Keep adding representative parity checks when LiteClient typed helper coverage expands #balancer #liteclient #tests
@@ -376,6 +377,7 @@ postponed work moves to `# BACKLOG`.
     - [ ] Generate typed config-param family models #tlb #tvm
 - [-] Add proof verification primitives #proofs
   - [x] Add Merkle proof/update exotic wrappers and child virtual-hash checks #proofs #tvm
+  - [-] Keep current LiteClient proof APIs limited to structural inspection and raw preservation until a proof-specific milestone adds verified APIs #proofs #liteclient #docs
   - [ ] Verify account state proof from `getAccountState` #proofs #liteclient
   - [-] Extract `ShardAccount` and `last_trans_hash` from verified `ShardAccounts` proof paths #proofs #liteclient #tlb
     - [x] Add checked shard-account extraction API for proof-anchored roots with account hash, shard root, malformed BoC, and state/proof mismatch tests #proofs #liteclient #tests

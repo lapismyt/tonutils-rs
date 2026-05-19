@@ -212,6 +212,41 @@ async fn query_raw_preserves_unknown_request_and_response_bytes() {
 }
 
 #[tokio::test]
+async fn query_raw_request_timeout_maps_to_lite_error_timeout() {
+    let service = service_fn(
+        move |_request: crate::tl::request::RawWrappedRequest| async move {
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            Ok::<_, LiteError>(Vec::new())
+        },
+    );
+    let mut client = super::client::LiteClient::from_service(service)
+        .with_request_timeout(std::time::Duration::from_millis(10));
+
+    let error = client.query_raw([1]).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        LiteError::Timeout {
+            operation: "request_call",
+            timeout
+        } if timeout == std::time::Duration::from_millis(10)
+    ));
+}
+
+#[tokio::test]
+async fn query_raw_without_request_timeout_preserves_existing_behavior() {
+    let service = service_fn(
+        move |request: crate::tl::request::RawWrappedRequest| async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            Ok::<_, LiteError>(request.request)
+        },
+    );
+    let mut client = super::client::LiteClient::from_service(service);
+
+    assert_eq!(client.query_raw([7]).await.unwrap(), vec![7]);
+}
+
+#[tokio::test]
 async fn query_typed_decodes_success_response_and_rejects_unexpected_type() {
     let info = crate::tl::response::MasterchainInfo {
         last: test_block_id(),

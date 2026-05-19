@@ -44,11 +44,21 @@ pub enum PeerState {
     Recovering,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum PeerFailureKind {
+    Timeout,
+    Connection,
+}
+
 pub(super) struct PeerStats {
     pub(super) mc_block_seqno: u32,
     pub(super) avg_response_time_ms: u64,
     pub(super) total_requests: u64,
     pub(super) current_requests: u64,
+    pub(super) failure_count: u32,
+    pub(super) last_failure_kind: Option<PeerFailureKind>,
+    pub(super) ewma_latency_ms: Option<u64>,
+    pub(super) last_observed_seqno: u32,
 }
 
 impl Default for PeerStats {
@@ -58,6 +68,10 @@ impl Default for PeerStats {
             avg_response_time_ms: 0,
             total_requests: 0,
             current_requests: 0,
+            failure_count: 0,
+            last_failure_kind: None,
+            ewma_latency_ms: None,
+            last_observed_seqno: 0,
         }
     }
 }
