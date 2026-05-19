@@ -564,30 +564,26 @@ impl LiteBalancer {
 
         let mut results = Vec::new();
         let mut attempted = HashSet::new();
-        'peers: for _ in 0..k.min(self.peers.len()) {
-            for _attempt in 0..self.max_retries {
-                let (peer_idx, start) = match self
-                    .execute_request_excluding::<u32>(false, &attempted)
-                    .await
-                {
-                    Ok(request) => request,
-                    Err(BalancerError::NoAlivePeers) => break 'peers,
-                    Err(error) => return Err(error),
-                };
-                attempted.insert(peer_idx);
-                let result = self.peers[peer_idx].send_message(body.clone()).await;
+        for _ in 0..k.min(self.peers.len()) {
+            let (peer_idx, start) = match self
+                .execute_request_excluding::<u32>(false, &attempted)
+                .await
+            {
+                Ok(request) => request,
+                Err(BalancerError::NoAlivePeers) => break,
+                Err(error) => return Err(error),
+            };
+            attempted.insert(peer_idx);
+            let result = self.peers[peer_idx].send_message(body.clone()).await;
 
-                match result {
-                    Ok(status) => {
-                        self.complete_request(peer_idx, start, true).await;
-                        results.push(Ok(status));
-                        break;
-                    }
-                    Err(e) => {
-                        self.complete_request_error(peer_idx, start, &e).await;
-                        results.push(Err(e));
-                        break;
-                    }
+            match result {
+                Ok(status) => {
+                    self.complete_request(peer_idx, start, true).await;
+                    results.push(Ok(status));
+                }
+                Err(e) => {
+                    self.complete_request_error(peer_idx, start, &e).await;
+                    results.push(Err(e));
                 }
             }
         }

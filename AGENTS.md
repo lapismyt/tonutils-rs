@@ -48,11 +48,12 @@ Follow these rules in order when instructions conflict:
    example, or docs page first.
 8. Add focused tests for every protocol, wire-format, serialization, or public
    behavior change.
-9. Run focused checks appropriate to the change. If `prek` is installed and
-   configured, agents do not have to run `cargo check`, `cargo fmt`,
-   `cargo test`, or `cargo clippy` manually at the end of the task because the
-   pre-commit hooks run them during commit. If pre-commit hooks fail, fix the
-   agent's own errors before handing off.
+9. Before committing, run `cargo fmt`, `cargo check`, `cargo test`, and
+   `cargo clippy`. Run broader or narrower focused checks in addition when
+   examples, features, CLI behavior, doctests, or protocol-specific surfaces
+   are affected. If `prek` is installed and configured, treat its pre-commit
+   hooks as an additional verification layer; if hooks fail, fix the agent's
+   own errors before handing off.
 10. Reconcile trackers after implementation: mark completed TODO items, keep
    deferred work visible, and update `ROADMAP.md` only for phase or direction
    changes.
