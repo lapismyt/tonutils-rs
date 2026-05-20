@@ -86,7 +86,7 @@ tl-proto = { version = "0.5.3", features = ["derive"] }
 tonutils-macros = { path = "tonutils-macros", version = "1.0.0", optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 serde_json = "1.0.143"
 tl-scheme = "0.3.0"
 tokio-test = "0.4"
