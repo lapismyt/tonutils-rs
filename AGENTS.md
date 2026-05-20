@@ -106,13 +106,30 @@ Follow these rules in order when instructions conflict:
 ## Commit Message Style
 
 - Write commit messages in English.
-- Use a short, specific summary that describes the accepted change, not the
-  agent process. Avoid placeholders such as `.`, `update`, `fix`, or `wip`.
-- Prefer an imperative verb phrase, optionally with a narrow conventional type
-  prefix when it improves scanability, for example `docs: update agent workflow
-  rules` or `fix: reject invalid cell descriptors`.
+- Commit messages must follow Conventional Commits 1.0.0:
+  https://www.conventionalcommits.org/en/v1.0.0.
+- Use the form `type[optional scope]: description`, and add `!` before the
+  colon or a `BREAKING CHANGE:` footer when the change breaks public API.
+- Use `fix:` for bug fixes, `feat:` for new features, and other conventional
+  types such as `docs:`, `test:`, `refactor:`, `perf:`, `build:`, `ci:`, and
+  `chore:` when they describe the accepted change.
+- Keep the description short and specific. Avoid placeholders such as `.`,
+  `update`, `fix`, or `wip`.
 - Keep subagent and worktree coordination details out of commit messages unless
   they are directly relevant to the committed project behavior.
+
+## Versioning
+
+- Project versions must follow Semantic Versioning 2.0.0:
+  https://semver.org/#summary.
+- Use `MAJOR.MINOR.PATCH` versions. Increment `PATCH` for backward-compatible
+  bug fixes, `MINOR` for backward-compatible public API additions or
+  deprecations, and `MAJOR` for backward-incompatible public API changes.
+- When preparing or committing a change whose public behavior requires a
+  SemVer version bump, the agent must call that out and offer to update the
+  project version before finalizing the task.
+- If the correct version impact is unclear, state the uncertainty and ask the
+  user whether to update the project version.
 
 ## Parallel Agent Workflow
 
