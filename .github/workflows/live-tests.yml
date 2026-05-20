@@ -1,4 +1,4 @@
-name: Live Tests
+name: CI
 
 on:
   push:
@@ -7,18 +7,9 @@ on:
 permissions:
   contents: read
 
-env:
-  TON_GLOBAL_CONFIG_JSON: ${{ secrets.TON_GLOBAL_CONFIG_JSON != '' && secrets.TON_GLOBAL_CONFIG_JSON || vars.TON_GLOBAL_CONFIG_JSON }}
-  TON_KNOWN_CONTRACT_ADDRESS: ${{ secrets.TON_KNOWN_CONTRACT_ADDRESS != '' && secrets.TON_KNOWN_CONTRACT_ADDRESS || vars.TON_KNOWN_CONTRACT_ADDRESS }}
-  TON_STACK_TEST_CONTRACT_ADDRESS: ${{ secrets.TON_STACK_TEST_CONTRACT_ADDRESS != '' && secrets.TON_STACK_TEST_CONTRACT_ADDRESS || vars.TON_STACK_TEST_CONTRACT_ADDRESS }}
-  TON_STACK_TEST_JSON: ${{ secrets.TON_STACK_TEST_JSON != '' && secrets.TON_STACK_TEST_JSON || vars.TON_STACK_TEST_JSON }}
-  TON_STACK_TEST_METHOD: ${{ vars.TON_STACK_TEST_METHOD }}
-  TON_STACK_TEST_ACCEPT_EXIT_CODE: ${{ vars.TON_STACK_TEST_ACCEPT_EXIT_CODE }}
-  TON_STACK_TEST_NETWORK: ${{ vars.TON_STACK_TEST_NETWORK }}
-
 jobs:
-  ignored-live-tests:
-    name: Ignored live tests
+  checks:
+    name: Rust checks
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -27,30 +18,30 @@ jobs:
 
       - name: Install Rust
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
           rustup default stable
 
-      - name: Validate live test settings
-        shell: bash
-        run: |
-          missing=()
-          for name in \
-            TON_GLOBAL_CONFIG_JSON \
-            TON_KNOWN_CONTRACT_ADDRESS \
-            TON_STACK_TEST_CONTRACT_ADDRESS \
-            TON_STACK_TEST_JSON
-          do
-            if [[ -z "${!name}" ]]; then
-              missing+=("$name")
-            fi
-          done
+      - name: Cache Cargo
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
-          if (( ${#missing[@]} > 0 )); then
-            printf 'Missing required live test settings:\n'
-            printf '  - %s\n' "${missing[@]}"
-            printf '\nConfigure repository secrets/variables in GitHub Actions before running this workflow.\n'
-            exit 1
-          fi
+      - name: Check formatting
+        run: cargo fmt --check
 
-      - name: Run ignored live tests
-        run: cargo test --features full -- --ignored --test-threads=1
+      - name: Check full feature build
+        run: cargo check --features full
+
+      - name: Test full feature build
+        run: cargo test --features full
+
+      - name: Lint full feature build
+        run: cargo clippy --features full -- -D warnings
