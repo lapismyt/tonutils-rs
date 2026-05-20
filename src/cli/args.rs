@@ -857,7 +857,7 @@ pub(super) struct TimeView {
     pub(super) now: u32,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub(super) struct RawBytesView {
     pub(super) hex: String,
     pub(super) base64: String,
