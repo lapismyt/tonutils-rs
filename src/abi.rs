@@ -18,8 +18,6 @@ mod model;
 mod tests;
 
 use codec::*;
-#[cfg(feature = "abi-json")]
-use json::*;
 use map::*;
 use model::*;
 

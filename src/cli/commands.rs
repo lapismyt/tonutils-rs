@@ -197,13 +197,10 @@ pub(super) fn best_effort_account_state_view(
     let state_root_hash = decode_root_hash(&raw.state, "state", &mut decode_errors);
 
     let decoded = match crate::tvm::Address::from_str(address) {
-        Ok(address) => match crate::liteclient::boc::DecodedAccountState::from_raw_verified(
-            raw.clone(),
-            &address,
-        ) {
-            Ok(decoded) => Some(decoded),
-            Err(_error) => None,
-        },
+        Ok(address) => {
+            crate::liteclient::boc::DecodedAccountState::from_raw_verified(raw.clone(), &address)
+                .ok()
+        }
         Err(error) => {
             decode_errors.push(format!(
                 "address parse failed for proof extraction: {error}"
@@ -419,7 +416,7 @@ pub(super) fn valid_until_from_timeout(timeout: u32) -> Result<u32> {
     let valid_until = now
         .checked_add(timeout as u64)
         .context("valid_until overflow")?;
-    Ok(u32::try_from(valid_until).context("valid_until does not fit into uint32")?)
+    u32::try_from(valid_until).context("valid_until does not fit into uint32")
 }
 
 pub(super) fn seqno_from_stack(result: crate::tl::response::RunMethodResult) -> Result<u32> {

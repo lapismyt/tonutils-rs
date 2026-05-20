@@ -1,0 +1,56 @@
+name: Live Tests
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TON_GLOBAL_CONFIG_JSON: ${{ secrets.TON_GLOBAL_CONFIG_JSON }}
+  TON_KNOWN_CONTRACT_ADDRESS: ${{ secrets.TON_KNOWN_CONTRACT_ADDRESS != '' && secrets.TON_KNOWN_CONTRACT_ADDRESS || vars.TON_KNOWN_CONTRACT_ADDRESS }}
+  TON_STACK_TEST_CONTRACT_ADDRESS: ${{ secrets.TON_STACK_TEST_CONTRACT_ADDRESS != '' && secrets.TON_STACK_TEST_CONTRACT_ADDRESS || vars.TON_STACK_TEST_CONTRACT_ADDRESS }}
+  TON_STACK_TEST_JSON: ${{ secrets.TON_STACK_TEST_JSON }}
+  TON_STACK_TEST_METHOD: ${{ vars.TON_STACK_TEST_METHOD }}
+  TON_STACK_TEST_ACCEPT_EXIT_CODE: ${{ vars.TON_STACK_TEST_ACCEPT_EXIT_CODE }}
+  TON_STACK_TEST_NETWORK: ${{ vars.TON_STACK_TEST_NETWORK }}
+
+jobs:
+  ignored-live-tests:
+    name: Ignored live tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Validate live test settings
+        shell: bash
+        run: |
+          missing=()
+          for name in \
+            TON_GLOBAL_CONFIG_JSON \
+            TON_KNOWN_CONTRACT_ADDRESS \
+            TON_STACK_TEST_CONTRACT_ADDRESS \
+            TON_STACK_TEST_JSON
+          do
+            if [[ -z "${!name}" ]]; then
+              missing+=("$name")
+            fi
+          done
+
+          if (( ${#missing[@]} > 0 )); then
+            printf 'Missing required live test settings:\n'
+            printf '  - %s\n' "${missing[@]}"
+            printf '\nConfigure repository secrets/variables in GitHub Actions before running this workflow.\n'
+            exit 1
+          fi
+
+      - name: Run ignored live tests
+        run: cargo test --features full -- --ignored --test-threads=1

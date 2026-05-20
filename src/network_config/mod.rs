@@ -65,9 +65,9 @@ impl FromStr for ConfigGlobal {
     }
 }
 
-impl Into<[u8; 32]> for ConfigPublicKey {
-    fn into(self) -> [u8; 32] {
-        match self {
+impl From<ConfigPublicKey> for [u8; 32] {
+    fn from(value: ConfigPublicKey) -> Self {
+        match value {
             ConfigPublicKey::Ed25519 { key } => key,
         }
     }
