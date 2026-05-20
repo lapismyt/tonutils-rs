@@ -1,8 +1,6 @@
 use super::*;
 
 use crate::liteclient::{rate_limit::RateLimiter, types::LiteError};
-#[cfg(feature = "network-config")]
-use crate::network_config::{ConfigGlobal, ConfigLiteServer};
 
 pub struct LiteClient {
     pub(super) inner: tower::util::BoxService<RawWrappedRequest, Vec<u8>, LiteError>,

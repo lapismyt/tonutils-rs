@@ -1,8 +1,12 @@
 [package]
 name = "tonutils-macros"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2024"
-publish = false
+description = "Procedural macros for tonutils TL-B and contract helpers."
+license = "MIT"
+repository = "https://github.com/lapismyt/tonutils-rs"
+keywords = ["ton", "blockchain", "tlb", "proc-macro", "sdk"]
+categories = ["development-tools::procedural-macro-helpers"]
 
 [lib]
 proc-macro = true

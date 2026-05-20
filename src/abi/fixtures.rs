@@ -20,6 +20,7 @@ mod tests {
         fixtures: Vec<Fixture>,
     }
 
+    #[allow(dead_code)]
     #[derive(Debug, Deserialize)]
     struct Fixture {
         name: String,
