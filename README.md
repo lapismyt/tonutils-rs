@@ -1,5 +1,8 @@
 # tonutils-rs
 
+[![CI](https://github.com/lapismyt/tonutils-rs/actions/workflows/live-tests.yml/badge.svg)](https://github.com/lapismyt/tonutils-rs/actions/workflows/live-tests.yml)
+[![crates.io](https://img.shields.io/crates/v/tonutils.svg)](https://crates.io/crates/tonutils)
+
 `tonutils-rs` publishes the `tonutils` crate: a pure Rust TON SDK inspired by
 `tonutils-go`. It provides native TON primitives, LiteAPI clients, TVM cells,
 BoC, TL, TL-B helpers, wallet utilities, and CLI diagnostics without depending
