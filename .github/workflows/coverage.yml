@@ -1,0 +1,32 @@
+name: Coverage
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  coverage:
+    name: cargo llvm-cov
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate LCOV
+        run: >
+          cargo llvm-cov --all-features --workspace --lcov
+          --output-path lcov.info
+          --ignore-filename-regex 'src/(cli/backend|cli/wallet|liteclient/peer|liteclient/server|main)\.rs$'
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: lcov.info
