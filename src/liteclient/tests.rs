@@ -163,6 +163,14 @@ fn test_zero_state_id() -> ZeroStateIdExt {
     }
 }
 
+fn test_candidate_id() -> crate::tl::common::NonfinalCandidateId {
+    crate::tl::common::NonfinalCandidateId {
+        block_id: test_block_id(),
+        creator: Int256([9; 32]),
+        collated_data_hash: Int256([10; 32]),
+    }
+}
+
 fn response_client(response: Response) -> super::client::LiteClient {
     let bytes = tl_proto::serialize(response);
     super::client::LiteClient::from_service(service_fn(
@@ -188,6 +196,366 @@ fn request_response_client(
             }
         },
     ))
+}
+
+#[tokio::test]
+async fn liteclient_basic_methods_build_requests_and_decode_responses() {
+    let mut client = response_client(Response::MasterchainInfoExt(
+        crate::tl::response::MasterchainInfoExt {
+            mode: (),
+            version: 2,
+            capabilities: 3,
+            last: test_block_id(),
+            last_utime: 4,
+            now: 5,
+            state_root_hash: Int256([6; 32]),
+            init: test_zero_state_id(),
+        },
+    ));
+    assert_eq!(client.get_masterchain_info_ext(1).await.unwrap().version, 2);
+
+    let mut client = response_client(Response::CurrentTime(crate::tl::response::CurrentTime {
+        now: 123,
+    }));
+    assert_eq!(client.get_time().await.unwrap(), 123);
+
+    let mut client = response_client(Response::Version(crate::tl::response::Version {
+        mode: 1,
+        version: 2,
+        capabilities: 3,
+        now: 4,
+    }));
+    assert_eq!(client.get_version().await.unwrap().capabilities, 3);
+
+    let mut client = response_client(Response::BlockData(crate::tl::response::BlockData {
+        id: test_block_id(),
+        data: vec![1, 2, 3],
+    }));
+    assert_eq!(
+        client.get_block(test_block_id()).await.unwrap(),
+        vec![1, 2, 3]
+    );
+
+    let mut client = response_client(Response::BlockState(crate::tl::response::BlockState {
+        id: test_block_id(),
+        root_hash: Int256([7; 32]),
+        file_hash: Int256([8; 32]),
+        data: vec![4, 5],
+    }));
+    assert_eq!(
+        client.get_state(test_block_id()).await.unwrap().data,
+        vec![4, 5]
+    );
+
+    let mut client = response_client(Response::BlockHeader(crate::tl::response::BlockHeader {
+        id: test_block_id(),
+        mode: (),
+        with_state_update: Some(()),
+        with_value_flow: Some(()),
+        with_extra: Some(()),
+        with_shard_hashes: Some(()),
+        with_prev_blk_signatures: Some(()),
+        header_proof: vec![6, 7],
+    }));
+    assert_eq!(
+        client
+            .get_block_header(test_block_id(), true, true, true, true, true)
+            .await
+            .unwrap(),
+        vec![6, 7]
+    );
+
+    let mut client = response_client(Response::SendMsgStatus(
+        crate::tl::response::SendMsgStatus { status: 200 },
+    ));
+    assert_eq!(client.send_message(vec![1]).await.unwrap(), 200);
+
+    let mut client = response_client(Response::RunMethodResult(
+        crate::tl::response::RunMethodResult {
+            mode: (),
+            id: test_block_id(),
+            shardblk: test_block_id(),
+            shard_proof: None,
+            proof: None,
+            state_proof: None,
+            init_c7: None,
+            lib_extras: None,
+            exit_code: 0,
+            result: Some(crate::tvm::TvmStack::empty().to_boc().unwrap()),
+        },
+    ));
+    let stack = client
+        .run_get_method_typed(
+            0,
+            test_block_id(),
+            crate::tvm::Address::new(0, [0; 32]),
+            1,
+            crate::tvm::TvmStack::empty(),
+        )
+        .await
+        .unwrap();
+    assert!(stack.is_empty());
+}
+
+#[tokio::test]
+async fn liteclient_extended_methods_cover_flagged_request_paths() {
+    let config = crate::tl::response::ConfigInfo {
+        mode: (),
+        id: test_block_id(),
+        state_proof: vec![1],
+        config_proof: vec![2],
+        with_state_root: Some(()),
+        with_libraries: Some(()),
+        with_state_extra_root: Some(()),
+        with_shard_hashes: Some(()),
+        with_validator_set: Some(()),
+        with_special_smc: Some(()),
+        with_accounts_root: Some(()),
+        with_prev_blocks: Some(()),
+        with_workchain_info: Some(()),
+        with_capabilities: Some(()),
+        extract_from_key_block: Some(()),
+    };
+    let mut client = response_client(Response::ConfigInfo(config.clone()));
+    assert_eq!(
+        client
+            .get_config_params(
+                test_block_id(),
+                vec![0, 17],
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+                true,
+            )
+            .await
+            .unwrap(),
+        config
+    );
+
+    let mut client = response_client(Response::ValidatorStats(
+        crate::tl::response::ValidatorStats {
+            mode: (),
+            id: test_block_id(),
+            count: 1,
+            complete: true,
+            state_proof: vec![3],
+            data_proof: vec![4],
+        },
+    ));
+    assert!(
+        client
+            .get_validator_stats(test_block_id(), 1, Some(Int256([1; 32])), Some(2))
+            .await
+            .unwrap()
+            .complete
+    );
+
+    let cell_boc =
+        crate::tvm::serialize_boc(&crate::tvm::Builder::new().build().unwrap(), false).unwrap();
+    let mut client = response_client(Response::LibraryResult(
+        crate::tl::response::LibraryResult {
+            result: vec![
+                LibraryEntry {
+                    hash: Int256([1; 32]),
+                    data: Vec::new(),
+                },
+                LibraryEntry {
+                    hash: Int256([2; 32]),
+                    data: cell_boc.clone(),
+                },
+            ],
+        },
+    ));
+    let libraries = client
+        .get_libraries_typed(vec![Int256([1; 32]), Int256([2; 32])])
+        .await
+        .unwrap();
+    assert_eq!(libraries.len(), 2);
+
+    let raw_libraries = crate::tl::response::LibraryResultWithProof {
+        id: test_block_id(),
+        mode: (),
+        result: vec![LibraryEntry {
+            hash: Int256([3; 32]),
+            data: cell_boc,
+        }],
+        state_proof: Vec::new(),
+        data_proof: Vec::new(),
+    };
+    let mut client = response_client(Response::LibraryResultWithProof(raw_libraries));
+    assert_eq!(
+        client
+            .get_libraries_with_proof_typed(test_block_id(), 0, vec![Int256([3; 32])])
+            .await
+            .unwrap()
+            .libraries
+            .len(),
+        1
+    );
+
+    let mut client = response_client(Response::ShardBlockProof(
+        crate::tl::response::ShardBlockProof {
+            masterchain_id: test_block_id(),
+            links: vec![crate::tl::response::ShardBlockLink {
+                id: test_block_id(),
+                proof: vec![5],
+            }],
+        },
+    ));
+    assert_eq!(
+        client
+            .get_shard_block_proof(test_block_id())
+            .await
+            .unwrap()
+            .links
+            .len(),
+        1
+    );
+
+    let mut client = response_client(Response::OutMsgQueueSizes(
+        crate::tl::response::OutMsgQueueSizes {
+            shards: vec![crate::tl::response::OutMsgQueueSize {
+                id: test_block_id(),
+                size: 9,
+            }],
+            ext_msg_queue_size_limit: 10,
+        },
+    ));
+    assert_eq!(
+        client
+            .get_out_msg_queue_sizes(Some((-1, 0x8000_0000_0000_0000)))
+            .await
+            .unwrap()
+            .shards[0]
+            .size,
+        9
+    );
+
+    let mut client = response_client(Response::BlockOutMsgQueueSize(
+        crate::tl::response::BlockOutMsgQueueSize {
+            mode: (),
+            id: test_block_id(),
+            size: 11,
+            proof: Some(vec![6]),
+        },
+    ));
+    assert_eq!(
+        client
+            .get_block_out_msg_queue_size(test_block_id(), true)
+            .await
+            .unwrap()
+            .size,
+        11
+    );
+
+    let mut client = response_client(Response::DispatchQueueInfo(
+        crate::tl::response::DispatchQueueInfo {
+            mode: (),
+            id: test_block_id(),
+            account_dispatch_queues: vec![crate::tl::response::AccountDispatchQueueInfo {
+                addr: Int256([4; 32]),
+                size: 12,
+                min_lt: 1,
+                max_lt: 2,
+            }],
+            complete: true,
+            proof: Some(vec![7]),
+        },
+    ));
+    assert!(
+        client
+            .get_dispatch_queue_info(test_block_id(), Some(Int256([4; 32])), 1, true)
+            .await
+            .unwrap()
+            .complete
+    );
+
+    let mut client = response_client(Response::DispatchQueueMessages(
+        crate::tl::response::DispatchQueueMessages {
+            mode: (),
+            id: test_block_id(),
+            messages: Vec::new(),
+            complete: false,
+            proof: Some(vec![8]),
+            messages_boc: Some(vec![9]),
+        },
+    ));
+    assert!(
+        !client
+            .get_dispatch_queue_messages(test_block_id(), Int256([5; 32]), 1, 2, true, true, true)
+            .await
+            .unwrap()
+            .complete
+    );
+}
+
+#[tokio::test]
+async fn liteclient_nonfinal_methods_decode_responses() {
+    let mut client = response_client(Response::NonfinalValidatorGroups(
+        crate::tl::response::NonfinalValidatorGroups {
+            groups: vec![crate::tl::response::NonfinalValidatorGroupInfo {
+                next_block_id: BlockId {
+                    workchain: -1,
+                    shard: i64::MIN,
+                    seqno: 2,
+                },
+                cc_seqno: 3,
+                prev: vec![test_block_id()],
+                candidates: vec![crate::tl::common::NonfinalCandidateInfo {
+                    id: test_candidate_id(),
+                    available: true,
+                    approved_weight: 1,
+                    signed_weight: 2,
+                    total_weight: 3,
+                }],
+            }],
+        },
+    ));
+    assert_eq!(
+        client
+            .get_nonfinal_validator_groups(Some((-1, 0x8000_0000_0000_0000)))
+            .await
+            .unwrap()
+            .groups
+            .len(),
+        1
+    );
+
+    let id = test_candidate_id();
+    let mut client = response_client(Response::NonfinalCandidate(
+        crate::tl::response::NonfinalCandidate {
+            id: id.clone(),
+            data: vec![1],
+            collated_data: vec![2],
+        },
+    ));
+    assert_eq!(
+        client.get_nonfinal_candidate(id).await.unwrap().data,
+        vec![1]
+    );
+
+    let mut client = response_client(Response::NonfinalPendingShardBlocks(
+        crate::tl::response::NonfinalPendingShardBlocks {
+            signed_blocks: vec![test_block_id()],
+            candidates: vec![test_block_id()],
+        },
+    ));
+    assert_eq!(
+        client
+            .get_nonfinal_pending_shard_blocks(None)
+            .await
+            .unwrap()
+            .signed_blocks
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]

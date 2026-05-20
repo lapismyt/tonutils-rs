@@ -956,4 +956,6 @@ pub(super) fn account_state_view(state: crate::tl::response::AccountState) -> Ac
 }
 
 #[cfg(test)]
+mod coverage_tests;
+#[cfg(test)]
 mod stack_input_tests;
