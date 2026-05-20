@@ -1,128 +1,210 @@
 # tonutils-rs
 
-`tonutils-rs` is a pure Rust TON SDK inspired by `tonutils-go`. It provides
-native TON primitives and network clients without depending on third-party Rust
-TON SDK crates or native `.so` runtime libraries.
+`tonutils-rs` publishes the `tonutils` crate: a pure Rust TON SDK inspired by
+`tonutils-go`. It provides native TON primitives, LiteAPI clients, TVM cells,
+BoC, TL, TL-B helpers, wallet utilities, and CLI diagnostics without depending
+on third-party Rust TON SDK crates or native `.so` runtime libraries.
 
-The project is under active development. The current crate is useful for
-LiteAPI access over native ADNL TCP, LiteBalancer experiments, TL
-serialization, TVM cells and BoC handling, TL-B model work, account and
-transaction inspection, smart-contract get-method calls, and scriptable CLI
-diagnostics. It is not yet a complete proof-verifying light client, wallet SDK,
-ABI layer, DHT/overlay stack, or mempool scanner.
+The crate is under active development. It is useful for offline TON data
+handling, LiteAPI experiments over native ADNL TCP, contract get-method calls,
+account and transaction inspection, wallet transfer construction, and
+scriptable diagnostics. It is not yet a complete proof-verifying production
+light client, DHT/overlay stack, mempool scanner, or full ABI layer.
 
-## Current Maturity
+## Install
 
-Phase 1 closed on 2026-05-09 as the SDK foundation milestone. It added checked
-offline fixtures for TVM cells, BoC, dictionaries, TL-B
-messages/accounts/transactions, a deterministic upstream-derived TL-B schema
-slice for block/config/proof wrappers, LiteClient BoC decode helpers, and
-offline CLI inspection.
+Add the crate from crates.io:
 
-The active priorities are ergonomic LiteClient, LiteBalancer, contract, wallet,
-jetton, and ABI capabilities guided by idiomatic Rust API design and TON
-protocol correctness, plus broader fixture evidence. Full trust-level proof
-verification, complete `block.tlb` expansion, production balancer behavior,
-DHT, overlays, and mempool workflows remain tracked follow-up work in
-[TODO.md](TODO.md).
+```toml
+[dependencies]
+tonutils = "1.0.0"
+```
 
-## Where To Start
+The default feature set enables the native LiteClient path:
 
-- New users: read [docs/getting-started.md](docs/getting-started.md), then
-  choose a task guide from `docs/`.
-- LiteClient callers: start with [docs/liteclient.md](docs/liteclient.md) and
-  [docs/balancer.md](docs/balancer.md).
-- Contract callers: read [docs/contracts.md](docs/contracts.md) for account
-  state and get-method helpers.
-- Wallet callers: read [docs/wallets.md](docs/wallets.md) for mnemonic,
-  address, and signed transfer helpers.
-- TVM and BoC users: read [docs/tvm.md](docs/tvm.md) and
-  [docs/tl.md](docs/tl.md).
-- CLI users: read [docs/cli.md](docs/cli.md) and
-  [docs/examples.md](docs/examples.md).
-- Contributors and AI agents: read [AGENTS.md](AGENTS.md),
-  [ROADMAP.md](ROADMAP.md), [TODO.md](TODO.md), and
-  [dev-docs/README.md](dev-docs/README.md) before changing protocol behavior.
+```toml
+tonutils = "1.0.0"
+```
 
-## Quick Commands
+For offline TVM, BoC, address, dictionary, and TL-B work only:
 
-Run the minimum local verification:
+```toml
+tonutils = { version = "1.0.0", default-features = false, features = ["tvm"] }
+```
+
+For the CLI and public TON config parsing helpers:
+
+```toml
+tonutils = { version = "1.0.0", features = ["network-config", "cli"] }
+```
+
+## Feature Flags
+
+- `default`: `std`, `adnl-tcp`, and `liteclient`.
+- `tl`: TL types, LiteAPI request and response structures, and serialization.
+- `tvm`: cells, slices, builders, BoC, addresses, dictionaries, TL-B helpers,
+  and TVM stack values. Enables `tl`.
+- `adnl`: ADNL types shared by transports. Enables `tl`.
+- `adnl-tcp`: native ADNL TCP transport. Enables `adnl`.
+- `liteclient`: LiteAPI client, LiteBalancer, and contract helpers. Enables
+  `adnl-tcp` and `tvm`.
+- `network-config`: TON global config parsing and liteserver selection.
+- `cli`: command-line diagnostics. Enables `liteclient`, `network-config`, and
+  JSON ABI helpers.
+- `full`: all crate features.
+
+Keep heavyweight or optional integrations behind explicit features when adding
+new capabilities.
+
+## Quick Start
+
+Check the crate and examples:
 
 ```bash
 cargo check
-cargo test --lib
-```
-
-Compile examples when examples, feature declarations, or public docs change:
-
-```bash
 cargo check --examples --all-features
 ```
 
-Run common CLI flows with the full feature set:
+Run common CLI diagnostics with the full feature set:
 
 ```bash
+cargo run -F full --bin tonutils-rs -- --output json status
 cargo run -F full --bin tonutils-rs -- --output json tvm schema check
 cargo run -F full --bin tonutils-rs -- --output json tvm boc decode --hex '<boc-hex>' --tlb account
-cargo run -F full --bin tonutils-rs -- --output json status
 ```
 
-Live examples default to public mainnet config download and can be pointed at
-testnet or explicit config JSON with the environment variables documented in
-[docs/examples.md](docs/examples.md).
+Run an offline TVM/BoC example:
 
-## Feature Shape
+```bash
+cargo run -F tvm --example tvm_boc_roundtrip
+```
 
-Default features enable the native network-first path: `std`, `adnl-tcp`, and
-`liteclient`. The `liteclient` feature enables TVM and ADNL TCP support, and
-TVM/ADNL both enable TL support. `network-config` and `cli` are explicit
-features so embedders can avoid config parsing and command-line dependencies
-when they only need low-level primitives.
+Run a live LiteClient example using public mainnet config defaults:
 
-The complete feature map is documented in
-[docs/getting-started.md](docs/getting-started.md). Keep new heavyweight
-functionality feature-gated and avoid enabling heavy optional dependencies by
-default.
+```bash
+cargo run -F full --example liteclient_masterchain_info
+TON_NETWORK=testnet cargo run -F full --example liteclient_masterchain_info
+```
 
-## Repository Map
+Live examples can use `TON_NETWORK`, `TON_GLOBAL_CONFIG_JSON`, `TON_LS_INDEX`,
+and task-specific variables documented in [docs/examples.md](docs/examples.md).
 
-- `src/`: crate code, feature-gated modules, CLI entry points, and tests.
-- `docs/`: public user guides organized by task.
-- `dev-docs/`: internal TON protocol and implementation reference.
-- `examples/`: compile-checked examples for public workflows.
-- `fixtures/`: deterministic offline fixture data and metadata.
-- `ROADMAP.md`: high-level phases and current project direction.
-- `TODO.md`: detailed todo-md task tracker.
-- `AGENTS.md`: rules for AI agents and contributors making changes.
+## Examples
+
+The repository includes compile-checked examples for:
+
+- LiteClient and LiteBalancer calls over native ADNL TCP.
+- Network config loading and liteserver selection.
+- Contract account state and get-method helpers.
+- TVM cells, BoC, dictionaries, stack values, and addresses.
+- TL-B account, message, transaction, block wrapper, and config wrapper
+  roundtrips.
+- Derive macros for custom TL-B and contract wrappers.
+- Offline wallet address derivation and signed transfer BoC construction.
+
+See [docs/examples.md](docs/examples.md) for the full list, feature
+requirements, and live-network environment variables.
+
+## Current Capabilities
+
+- Native TL serialization and LiteAPI request/response structures.
+- Native ADNL TCP transport and LiteClient request flow.
+- LiteBalancer peer management and failover experiments.
+- TON cells, slices, builders, BoC, addresses, dictionaries, and TVM stack
+  values.
+- TL-B models and checked fixture workflows for core account, message,
+  transaction, block/config wrapper, and proof-related data.
+- Contract account state loading and get-method calls.
+- Wallet mnemonic, address, and offline signed transfer helpers.
+- Scriptable CLI diagnostics for schema checks, BoC decoding, status checks,
+  and live LiteClient workflows.
+
+## Known Limits
+
+- Proof payloads and Merkle proof invariants are preserved and tested in
+  focused areas, but full trust-level light-client proof verification is not
+  complete.
+- DHT, overlays, and mempool workflows are research or follow-up areas, not
+  production SDK surfaces.
+- LiteBalancer behavior is useful for experiments and diagnostics, but still
+  needs broader live-network evidence before being treated as production
+  infrastructure.
+- The TL-B surface is intentionally growing from checked upstream-derived
+  slices and fixtures; unsupported constructors should be treated as explicit
+  gaps rather than inferred behavior.
+- Live-network examples require network access and should not be run with real
+  private keys, seed phrases, or production credentials.
+
+Tracked follow-up work lives in [TODO.md](TODO.md).
+
+## Documentation
+
+- [Getting started](docs/getting-started.md): feature selection and guide map.
+- [LiteClient](docs/liteclient.md): typed and raw LiteAPI workflows.
+- [LiteBalancer](docs/balancer.md): multi-peer workflows and current limits.
+- [Contracts](docs/contracts.md): account state and get-method wrappers.
+- [Wallets](docs/wallets.md): mnemonic derivation, addresses, and signed
+  transfer helpers.
+- [TVM primitives](docs/tvm.md): cells, BoC, stack values, addresses, and
+  dictionaries.
+- [TL and LiteAPI](docs/tl.md): constructors, serialization, and schema checks.
+- [Networking](docs/networking.md): ADNL TCP, network config, DHT, and overlay
+  boundaries.
+- [CLI](docs/cli.md): commands, output formats, and exit behavior.
+- [Testing](docs/testing.md): local checks, fixtures, and live-test
+  requirements.
+- [Internal dev docs](dev-docs/README.md): protocol and implementation notes.
+
+Project direction is tracked in [ROADMAP.md](ROADMAP.md). Contributor and agent
+rules are in [AGENTS.md](AGENTS.md).
+
+## Testing
+
+Recommended local checks:
+
+```bash
+cargo fmt --check
+cargo check
+cargo test
+cargo clippy -- -D warnings
+```
+
+Use `cargo check --examples --all-features` when examples, feature
+declarations, or public docs change. Live tests require explicit environment
+variables; see [docs/testing.md](docs/testing.md).
+
+## Contributing
+
+Contributions are welcome when they preserve the project direction: pure Rust
+TON implementation work, no third-party Rust TON SDK crate dependencies, no
+native `.so` runtime dependencies, feature-gated optional functionality, and
+protocol facts grounded in upstream TON sources or checked fixtures.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before opening a pull request.
+
+## Security
+
+Do not open public issues for vulnerabilities. Use GitHub Private Vulnerability
+Reporting or a GitHub Security Advisory when possible, and never include real
+private keys, seed phrases, production credentials, or non-public user data in
+reports. See [SECURITY.md](SECURITY.md).
 
 ## Acknowledgments
 
-This project uses the following references for protocol research, behavior
-checks, and API comparisons. Thanks to their authors and maintainers:
+This project uses these references for protocol research, behavior checks, and
+API comparisons. Thanks to their authors and maintainers:
 
-- [ton-blockchain/ton](https://github.com/ton-blockchain/ton) by
-  [TON Blockchain](https://github.com/ton-blockchain)
-- [ton-blockchain/ton4j](https://github.com/ton-blockchain/ton4j) by
-  [TON Blockchain](https://github.com/ton-blockchain)
-- [xssnick/tonutils-go](https://github.com/xssnick/tonutils-go) by
-  [@xssnick](https://github.com/xssnick)
-- [tonkeeper/tongo](https://github.com/tonkeeper/tongo) by
-  [Tonkeeper](https://github.com/tonkeeper)
-- [ston-fi/ton-rs](https://github.com/ston-fi/ton-rs) by
-  [STON.fi](https://github.com/ston-fi)
-- [ston-fi/tonlib-rs](https://github.com/ston-fi/tonlib-rs) by
-  [STON.fi](https://github.com/ston-fi)
-- [RSquad/ton-rust-node](https://github.com/RSquad/ton-rust-node) by
-  [RSquad](https://github.com/RSquad)
-- [nessshon/tonutils](https://github.com/nessshon/tonutils) by
-  [@nessshon](https://github.com/nessshon)
-- [getgems-io/ton-grpc](https://github.com/getgems-io/ton-grpc) by
-  [Getgems](https://github.com/getgems-io)
-- [yungwine/ton-mempool](https://github.com/yungwine/ton-mempool) by
-  [@yungwine](https://github.com/yungwine)
-- [yungwine/pytoniq-core](https://github.com/yungwine/pytoniq-core) by
-  [@yungwine](https://github.com/yungwine)
-- [yungwine/pytoniq](https://github.com/yungwine/pytoniq) by
-  [@yungwine](https://github.com/yungwine)
-- [yungwine/pytvm](https://github.com/yungwine/pytvm) by
-  [@yungwine](https://github.com/yungwine)
+- [ton-blockchain/ton](https://github.com/ton-blockchain/ton)
+- [ton-blockchain/ton4j](https://github.com/ton-blockchain/ton4j)
+- [xssnick/tonutils-go](https://github.com/xssnick/tonutils-go)
+- [tonkeeper/tongo](https://github.com/tonkeeper/tongo)
+- [ston-fi/ton-rs](https://github.com/ston-fi/ton-rs)
+- [ston-fi/tonlib-rs](https://github.com/ston-fi/tonlib-rs)
+- [RSquad/ton-rust-node](https://github.com/RSquad/ton-rust-node)
+- [nessshon/tonutils](https://github.com/nessshon/tonutils)
+- [getgems-io/ton-grpc](https://github.com/getgems-io/ton-grpc)
+- [yungwine/ton-mempool](https://github.com/yungwine/ton-mempool)
+- [yungwine/pytoniq-core](https://github.com/yungwine/pytoniq-core)
+- [yungwine/pytoniq](https://github.com/yungwine/pytoniq)
+- [yungwine/pytvm](https://github.com/yungwine/pytvm)
