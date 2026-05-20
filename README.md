@@ -139,6 +139,7 @@ Tracked follow-up work lives in [TODO.md](TODO.md).
 
 ## Documentation
 
+- [Published documentation](https://lapismyt.github.io/tonutils-rs): hosted guide and API documentation.
 - [Getting started](docs/getting-started.md): feature selection and guide map.
 - [LiteClient](docs/liteclient.md): typed and raw LiteAPI workflows.
 - [LiteBalancer](docs/balancer.md): multi-peer workflows and current limits.
