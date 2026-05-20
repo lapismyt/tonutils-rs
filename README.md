@@ -1,5 +1,7 @@
 # tonutils-rs
 
+[![codecov](https://codecov.io/gh/lapismyt/tonutils-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/lapismyt/tonutils-rs)
+
 `tonutils-rs` publishes the `tonutils` crate: a pure Rust TON SDK inspired by
 `tonutils-go`. It provides native TON primitives, LiteAPI clients, TVM cells,
 BoC, TL, TL-B helpers, wallet utilities, and CLI diagnostics without depending
@@ -138,6 +140,13 @@ requirements, and live-network environment variables.
 Tracked follow-up work lives in [TODO.md](TODO.md).
 
 ## Documentation
+
+HTML documentation is published through GitHub Pages at
+<https://lapismyt.github.io/tonutils-rs/>. Build the same site locally with:
+
+```bash
+scripts/build-docs-site.sh
+```
 
 - [Getting started](docs/getting-started.md): feature selection and guide map.
 - [LiteClient](docs/liteclient.md): typed and raw LiteAPI workflows.
