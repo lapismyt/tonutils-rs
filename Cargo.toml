@@ -58,7 +58,7 @@ pbkdf2 = "0.12"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.143", optional = true }
 serde_with = { version = "3.12", features = ["base64"], optional = true }
-sha2 = "0.10"
+sha2 = "0.11"
 tokio = { version = "1.47.1", features = ["full", "time"], optional = true }
 byteorder = "1.5"
 ed25519-dalek = "2.1"
