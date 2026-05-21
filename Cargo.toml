@@ -51,7 +51,7 @@ anyhow = "1.0.99"
 async-trait = "0.1.89"
 base64 = "0.22"
 bip39 = { version = "2.1", features = ["rand"] }
-hmac = "0.12"
+hmac = "0.13"
 hex = "0.4"
 num-bigint = "0.4.6"
 pbkdf2 = "0.12"
