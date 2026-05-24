@@ -73,15 +73,31 @@ Follow these rules in order when instructions conflict:
 
 ## CodeGraph Setup
 
-- New contributors should install CodeGraph from
-  https://github.com/colbymchenry/codegraph and configure the CodeGraph MCP
-  server for their agent environment.
-- The standard setup path is to install and configure the MCP server with
-  `npx @colbymchenry/codegraph`, restart the agent environment if needed, then
-  run `codegraph init -i` in this repository checkout.
+- New contributors who use agents should set up both CodeGraph pieces:
+  CodeGraph MCP server access for the agent environment, and CodeGraph CLI
+  binaries for repository indexing commands.
+- Configure the CodeGraph MCP server with `npx @colbymchenry/codegraph`, then
+  restart the agent environment if needed so the `codegraph_*` MCP tools are
+  available.
+- Install the CodeGraph CLI binaries separately. The preferred path is the
+  portable installer:
+
+  ```bash
+  # macOS / Linux
+  curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh
+
+  # Windows (PowerShell)
+  irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex
+  ```
+
+  If the portable installer is not used, install the npm-provided CLI binary
+  with `npm i -g @colbymchenry/codegraph`.
+- After the MCP server and CLI binary are available, run `codegraph init -i` in
+  this repository checkout.
 - On the first request in a checkout, agents must ask the user to
-  install/configure CodeGraph MCP and initialize the project index unless
-  `.agents/INDEX.md` already records either successful setup or user refusal.
+  install/configure CodeGraph MCP, install CodeGraph CLI binaries, and
+  initialize the project index unless `.agents/INDEX.md` already records either
+  successful setup or user refusal.
 - After that first check, agents must record either CodeGraph
   installed/initialized status or declined status in `.agents/INDEX.md` so
   future agents do not ask again in the same checkout unless the user requests

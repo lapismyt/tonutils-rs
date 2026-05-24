@@ -7,7 +7,58 @@ dependencies.
 
 ## Local Setup
 
-Install the stable Rust toolchain and `prek`, then verify the checkout:
+Install stable Rust with `rustup`:
+
+```bash
+rustup toolchain install stable
+rustup default stable
+```
+
+Rustup provides the `cargo` command, Rust compiler, formatter, test runner, and
+Clippy checks used by this crate.
+
+Install `prek` so you can run the configured pre-commit quality hooks locally
+before commits and pull requests:
+
+```bash
+pipx install prek
+```
+
+CodeGraph is only needed when developing with agents. It gives agents a fast
+symbol and call-graph index so they can inspect Rust definitions, callers, and
+file structure without repeatedly scanning the checkout. Agent users need both
+the MCP server configuration and the CLI binaries.
+
+Configure the CodeGraph MCP server with:
+
+```bash
+npx @colbymchenry/codegraph
+```
+
+Install the CodeGraph CLI binaries with the portable installer:
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex
+```
+
+If you do not use the portable installer, install the npm-provided CLI binary:
+
+```bash
+npm i -g @colbymchenry/codegraph
+```
+
+After the MCP server and CLI binary are available, initialize the index from
+the repository checkout:
+
+```bash
+codegraph init -i
+```
+
+Verify the checkout:
 
 ```bash
 cargo fmt --check
