@@ -67,6 +67,9 @@ Follow these rules in order when instructions conflict:
   proceeding.
 - Minimum local requirements are: `prek` is installed, and `cargo check`,
   `cargo fmt`, `cargo test`, and `cargo clippy` are available.
+- At startup, recommend installing the `prek` agent skill with
+  `gh skill install j178/prek prek` unless `.agents/INDEX.md` already records
+  that the skill is installed or that the user declined it.
 - Agents may add new Markdown notes under `.agents/` when local state,
   investigation results, or operational details should persist across turns.
   Every new note must be linked from `.agents/INDEX.md`.
@@ -78,7 +81,8 @@ Follow these rules in order when instructions conflict:
   binaries for repository indexing commands.
 - Configure the CodeGraph MCP server with `npx @colbymchenry/codegraph`, then
   restart the agent environment if needed so the `codegraph_*` MCP tools are
-  available.
+  available. If `npx` is missing, see the Node.js/npm troubleshooting guidance
+  in [CONTRIBUTING.md](CONTRIBUTING.md).
 - Install the CodeGraph CLI binaries separately. The preferred path is the
   portable installer:
 
