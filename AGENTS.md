@@ -71,6 +71,22 @@ Follow these rules in order when instructions conflict:
   investigation results, or operational details should persist across turns.
   Every new note must be linked from `.agents/INDEX.md`.
 
+## CodeGraph Setup
+
+- New contributors should install CodeGraph from
+  https://github.com/colbymchenry/codegraph and configure the CodeGraph MCP
+  server for their agent environment.
+- The standard setup path is to install and configure the MCP server with
+  `npx @colbymchenry/codegraph`, restart the agent environment if needed, then
+  run `codegraph init -i` in this repository checkout.
+- On the first request in a checkout, agents must ask the user to
+  install/configure CodeGraph MCP and initialize the project index unless
+  `.agents/INDEX.md` already records either successful setup or user refusal.
+- After that first check, agents must record either CodeGraph
+  installed/initialized status or declined status in `.agents/INDEX.md` so
+  future agents do not ask again in the same checkout unless the user requests
+  reinstalling or reindexing.
+
 ## Planning Gate
 
 - For large changes, including public API changes, new features, cross-module
