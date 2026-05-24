@@ -7,7 +7,102 @@ dependencies.
 
 ## Local Setup
 
-Install the stable Rust toolchain and `prek`, then verify the checkout:
+Install Rust with `rustup` before selecting a toolchain. On Unix-like systems,
+including Linux, macOS, and WSL, run the official installer and follow the
+prompts:
+
+```bash
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+```
+
+On Windows, use the official installer from
+<https://www.rust-lang.org/tools/install>. Reopen the shell if needed so the
+`~/.cargo/bin` or `%USERPROFILE%\.cargo\bin` PATH update is visible, then
+verify the Rust tools:
+
+```bash
+rustc --version
+cargo --version
+```
+
+Install and select the stable Rust toolchain:
+
+```bash
+rustup toolchain install stable
+rustup default stable
+```
+
+Rustup provides the `cargo` command, Rust compiler, formatter, test runner, and
+Clippy checks used by this crate.
+
+Install `prek` so you can run the configured pre-commit quality hooks locally
+before commits and pull requests. The preferred path is the standalone installer
+from the `j178/prek` releases:
+
+```bash
+# Linux / macOS
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/j178/prek/releases/download/v0.4.1/prek-installer.sh | sh
+
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/j178/prek/releases/download/v0.4.1/prek-installer.ps1 | iex"
+```
+
+If you already have a recent Rust toolchain, you can alternatively build `prek`
+from crates.io. Current upstream `prek` requires Rust 1.89 or newer for this
+path:
+
+```bash
+cargo install --locked prek
+```
+
+CodeGraph is only needed when developing with agents. It gives agents a fast
+symbol and call-graph index so they can inspect Rust definitions, callers, and
+file structure without repeatedly scanning the checkout. Agent users need both
+the MCP server configuration and the CLI binaries.
+
+Configure the CodeGraph MCP server with:
+
+```bash
+npx @colbymchenry/codegraph
+```
+
+If this fails with `npx: command not found`, install Node.js and npm first,
+then reopen the shell and verify:
+
+```bash
+node --version
+npm --version
+npx --version
+```
+
+If `npm` is available but `npx` is not, use `npm exec -- @colbymchenry/codegraph`
+or update the npm/Node.js installation. Modern `npx` is backed by `npm exec`,
+so this uses the same package execution path.
+
+Install the CodeGraph CLI binaries with the portable installer:
+
+```bash
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex
+```
+
+If you do not use the portable installer, install the npm-provided CLI binary:
+
+```bash
+npm i -g @colbymchenry/codegraph
+```
+
+After the MCP server and CLI binary are available, initialize the index from
+the repository checkout:
+
+```bash
+codegraph init -i
+```
+
+Verify the checkout:
 
 ```bash
 cargo fmt --check
