@@ -510,6 +510,60 @@ mod tests {
     }
 
     #[test]
+    fn payload_components_roundtrip_without_selector_prefix() {
+        let parameters = vec![
+            parameter("query_id", AbiType::Uint { bits: 64 }),
+            parameter("recipient", AbiType::Address),
+            parameter("memo", AbiType::Optional(Box::new(AbiType::String))),
+        ];
+        let values = vec![
+            AbiValue::Uint(BigUint::from(7u8)),
+            AbiValue::Address(Address::new(0, [0x33; 32])),
+            AbiValue::Optional(Some(Box::new(AbiValue::String("hello".to_string())))),
+        ];
+
+        let payload = encode_payload_components(&parameters, &values).unwrap();
+
+        assert_eq!(
+            decode_payload_components(&parameters, payload).unwrap(),
+            values
+        );
+    }
+
+    #[test]
+    fn event_payload_roundtrips_opcode_and_rejects_method_id() {
+        let event = AbiEvent {
+            name: "Transfer".to_string(),
+            selector: AbiSelector::Opcode(0x0f8a_7ea5),
+            fields: transfer_message_function().inputs,
+        };
+        let values = vec![
+            AbiValue::Uint(BigUint::from(7u8)),
+            AbiValue::Uint(BigUint::from(1_000_000_000u64)),
+            AbiValue::Address(Address::new(0, [0x33; 32])),
+            AbiValue::Bool(true),
+            AbiValue::Optional(Some(Box::new(AbiValue::String("hello".to_string())))),
+        ];
+
+        let payload = encode_event_payload(&event, &values).unwrap();
+
+        assert_eq!(payload.reference_count(), 1);
+        assert_eq!(decode_event_payload(&event, payload).unwrap(), values);
+
+        let bad = AbiEvent {
+            name: "Bad".to_string(),
+            selector: AbiSelector::MethodId(1),
+            fields: Vec::new(),
+        };
+        assert_eq!(
+            encode_event_payload(&bad, &[]).unwrap_err(),
+            AbiCodecError::InvalidEventSelector {
+                selector: AbiSelector::MethodId(1),
+            }
+        );
+    }
+
+    #[test]
     fn message_body_rejects_get_method_and_method_selector() {
         let get_method = valid_function();
         assert_eq!(

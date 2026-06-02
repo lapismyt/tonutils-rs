@@ -105,7 +105,7 @@ postponed work moves to `# BACKLOG`.
     - [x] Add local fixed integer-key ABI map/dictionary stack and message-body codecs #abi #tvm #tests
   - [-] Decode get-method outputs and external message payload components from ABI definitions #abi #tvm
     - [x] Add ABI get-method input encoding and output decoding helpers over TVM stack entries #abi #tvm #tests
-    - [ ] Add ABI event/external payload component helpers beyond full message-body decode #abi #tvm #tests
+    - [x] Add ABI event/external payload component helpers beyond full message-body decode #abi #tvm #tests
   - [-] Add edge-case coverage for tuples, nested arrays, optional values, and dictionary-like payloads #abi #tests
     - [x] Cover nested tuple, array, optional, and JSON loader cases for stack and schema paths #abi #tests
     - [x] Define and test local dictionary-like payload policy before enabling map codecs #abi #tests

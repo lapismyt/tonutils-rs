@@ -555,6 +555,13 @@ pub enum AbiCodecError {
         /// Selector attached to the function.
         selector: AbiSelector,
     },
+    /// Event payload construction was requested with a selector kind that is
+    /// not valid for events.
+    #[error("ABI event selector {selector:?} is invalid")]
+    InvalidEventSelector {
+        /// Selector attached to the event.
+        selector: AbiSelector,
+    },
     /// The body opcode does not match the ABI selector.
     #[error("ABI message body opcode mismatch: expected {expected:#010x}, got {actual:#010x}")]
     OpcodeMismatch {

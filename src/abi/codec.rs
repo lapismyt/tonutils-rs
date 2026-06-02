@@ -60,19 +60,10 @@ pub fn encode_message_body(
     values: &[AbiValue],
 ) -> Result<Arc<Cell>, AbiCodecError> {
     ensure_message_function(function)?;
-    if function.inputs.len() != values.len() {
-        return Err(AbiCodecError::ArityMismatch {
-            kind: "message inputs",
-            expected: function.inputs.len(),
-            actual: values.len(),
-        });
-    }
 
     let mut builder = Builder::new();
     store_message_selector(&mut builder, function)?;
-    for (parameter, value) in function.inputs.iter().zip(values) {
-        store_body_value(&mut builder, &parameter.ty, value)?;
-    }
+    store_payload_components(&mut builder, &function.inputs, values, "message inputs")?;
     builder
         .build()
         .map_err(|source| AbiCodecError::MalformedBody {
@@ -89,20 +80,71 @@ pub fn decode_message_body(
 
     let mut slice = Slice::new(body);
     load_message_selector(&mut slice, function)?;
-    let values = function
-        .inputs
-        .iter()
-        .map(|parameter| load_body_value(&mut slice, &parameter.ty))
-        .collect::<Result<Vec<_>, _>>()?;
+    load_payload_components_exact(&mut slice, &function.inputs)
+}
 
-    if !slice.is_empty() {
-        return Err(AbiCodecError::TrailingBodyData {
-            bits: slice.remaining_bits(),
-            refs: slice.remaining_refs(),
-        });
-    }
+/// Encodes ABI values as payload components without a selector prefix.
+///
+/// This uses the same local payload policy as message bodies for scalar,
+/// address, tuple, optional, reference, and map values.
+pub fn encode_payload_components(
+    parameters: &[AbiParameter],
+    values: &[AbiValue],
+) -> Result<Arc<Cell>, AbiCodecError> {
+    let mut builder = Builder::new();
+    store_payload_components(&mut builder, parameters, values, "payload components")?;
+    builder
+        .build()
+        .map_err(|source| AbiCodecError::MalformedBody {
+            reason: source.to_string(),
+        })
+}
 
-    Ok(values)
+/// Decodes ABI values from payload components without a selector prefix.
+///
+/// Decoding is exact and rejects trailing bits or references after the
+/// declared components are loaded.
+pub fn decode_payload_components(
+    parameters: &[AbiParameter],
+    payload: Arc<Cell>,
+) -> Result<Vec<AbiValue>, AbiCodecError> {
+    let mut slice = Slice::new(payload);
+    load_payload_components_exact(&mut slice, parameters)
+}
+
+/// Encodes an event payload using the same local component policy as message
+/// bodies.
+///
+/// `Opcode(u32)` event selectors are encoded as a 32-bit prefix. `None`
+/// selectors have no prefix. `MethodId` selectors are rejected because they are
+/// only valid for get-method calls.
+pub fn encode_event_payload(
+    event: &AbiEvent,
+    values: &[AbiValue],
+) -> Result<Arc<Cell>, AbiCodecError> {
+    ensure_event_selector(event.selector)?;
+
+    let mut builder = Builder::new();
+    store_selector(&mut builder, event.selector)?;
+    store_payload_components(&mut builder, &event.fields, values, "event fields")?;
+    builder
+        .build()
+        .map_err(|source| AbiCodecError::MalformedBody {
+            reason: source.to_string(),
+        })
+}
+
+/// Decodes an event payload using the same local component policy as message
+/// bodies.
+pub fn decode_event_payload(
+    event: &AbiEvent,
+    payload: Arc<Cell>,
+) -> Result<Vec<AbiValue>, AbiCodecError> {
+    ensure_event_selector(event.selector)?;
+
+    let mut slice = Slice::new(payload);
+    load_selector(&mut slice, event.selector)?;
+    load_payload_components_exact(&mut slice, &event.fields)
 }
 
 fn ensure_message_function(function: &AbiFunction) -> Result<(), AbiCodecError> {
@@ -137,7 +179,22 @@ fn store_message_selector(
     builder: &mut Builder,
     function: &AbiFunction,
 ) -> Result<(), AbiCodecError> {
-    if let AbiSelector::Opcode(opcode) = function.selector {
+    store_selector(builder, function.selector)
+}
+
+fn load_message_selector(slice: &mut Slice, function: &AbiFunction) -> Result<(), AbiCodecError> {
+    load_selector(slice, function.selector)
+}
+
+fn ensure_event_selector(selector: AbiSelector) -> Result<(), AbiCodecError> {
+    match selector {
+        AbiSelector::None | AbiSelector::Opcode(_) => Ok(()),
+        AbiSelector::MethodId(_) => Err(AbiCodecError::InvalidEventSelector { selector }),
+    }
+}
+
+fn store_selector(builder: &mut Builder, selector: AbiSelector) -> Result<(), AbiCodecError> {
+    if let AbiSelector::Opcode(opcode) = selector {
         builder
             .store_u32(opcode)
             .map_err(|source| AbiCodecError::MalformedBody {
@@ -147,8 +204,8 @@ fn store_message_selector(
     Ok(())
 }
 
-fn load_message_selector(slice: &mut Slice, function: &AbiFunction) -> Result<(), AbiCodecError> {
-    if let AbiSelector::Opcode(expected) = function.selector {
+fn load_selector(slice: &mut Slice, selector: AbiSelector) -> Result<(), AbiCodecError> {
+    if let AbiSelector::Opcode(expected) = selector {
         let actual = slice
             .load_u32()
             .map_err(|source| AbiCodecError::MalformedBody {
@@ -159,6 +216,45 @@ fn load_message_selector(slice: &mut Slice, function: &AbiFunction) -> Result<()
         }
     }
     Ok(())
+}
+
+fn store_payload_components(
+    builder: &mut Builder,
+    parameters: &[AbiParameter],
+    values: &[AbiValue],
+    kind: &'static str,
+) -> Result<(), AbiCodecError> {
+    if parameters.len() != values.len() {
+        return Err(AbiCodecError::ArityMismatch {
+            kind,
+            expected: parameters.len(),
+            actual: values.len(),
+        });
+    }
+
+    for (parameter, value) in parameters.iter().zip(values) {
+        store_body_value(builder, &parameter.ty, value)?;
+    }
+    Ok(())
+}
+
+fn load_payload_components_exact(
+    slice: &mut Slice,
+    parameters: &[AbiParameter],
+) -> Result<Vec<AbiValue>, AbiCodecError> {
+    let values = parameters
+        .iter()
+        .map(|parameter| load_body_value(slice, &parameter.ty))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if !slice.is_empty() {
+        return Err(AbiCodecError::TrailingBodyData {
+            bits: slice.remaining_bits(),
+            refs: slice.remaining_refs(),
+        });
+    }
+
+    Ok(values)
 }
 
 pub(super) fn store_body_value(
