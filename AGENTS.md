@@ -166,6 +166,9 @@ Follow these rules in order when instructions conflict:
   project version before finalizing the task.
 - If the correct version impact is unclear, state the uncertainty and ask the
   user whether to update the project version.
+- At the end of every repository-change task, the final report must state
+  whether the project version and `CHANGELOG.md` were updated; if either was
+  not updated, explicitly offer to update them.
 
 ## Parallel Agent Workflow
 

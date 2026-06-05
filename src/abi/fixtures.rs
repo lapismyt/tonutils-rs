@@ -3,7 +3,7 @@ use super::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tvm::{Address, Cell, TvmStack, hex_to_boc};
+    use crate::tvm::{Address, Cell, TvmStack, TvmStackEntry, hex_to_boc};
     use num_bigint::{BigInt, BigUint};
     use serde::Deserialize;
     use serde_json::Value;
@@ -191,6 +191,41 @@ mod tests {
     }
 
     #[test]
+    fn event_payload_fixture_encodes_decodes_and_reencodes_exactly() {
+        let fixture = named_fixture("event_opcode_scalar_address_optional_map");
+        let event = fixture_event(&fixture);
+        let values = parse_values(&fixture.input_values, &event.fields);
+        let payload = encode_event_payload(&event, &values).unwrap();
+
+        assert_eq!(
+            crate::tvm::boc_to_hex(&payload, false).unwrap(),
+            fixture.message_body_boc_hex.as_deref().unwrap()
+        );
+        assert_eq!(
+            hex::encode(payload.hash()),
+            fixture.root_hash.as_deref().unwrap()
+        );
+
+        let fixture_payload = hex_to_boc(fixture.message_body_boc_hex.as_deref().unwrap()).unwrap();
+        assert_eq!(
+            hex::encode(fixture_payload.hash()),
+            fixture.root_hash.as_deref().unwrap()
+        );
+        let decoded = decode_event_payload(&event, fixture_payload).unwrap();
+        let expected = parse_values(
+            fixture.expected_decoded_inputs.as_deref().unwrap(),
+            &event.fields,
+        );
+        assert_eq!(decoded, expected);
+
+        let reencoded = encode_event_payload(&event, &decoded).unwrap();
+        assert_eq!(
+            crate::tvm::boc_to_hex(&reencoded, false).unwrap(),
+            fixture.message_body_boc_hex.as_deref().unwrap()
+        );
+    }
+
+    #[test]
     fn map_dictionary_fixtures_roundtrip_stack_and_message_body() {
         for fixture_name in ["map_get_method", "map_message_body"] {
             let fixture = named_fixture(fixture_name);
@@ -214,6 +249,38 @@ mod tests {
         }
     }
 
+    #[test]
+    fn opt_in_get_method_templates_accept_declared_abi_workflows() {
+        let seqno = named_fixture("wallet_seqno_no_input_opt_in");
+        let function = fixture_function(&seqno);
+        let values = parse_values(&seqno.input_values, &function.inputs);
+        assert!(
+            encode_get_method_inputs(&function, &values)
+                .unwrap()
+                .is_empty()
+        );
+
+        let decoded =
+            decode_get_method_outputs(&function, &[TvmStackEntry::Int(BigInt::from(42u8))])
+                .unwrap();
+        assert_eq!(decoded, vec![AbiValue::Uint(BigUint::from(42u8))]);
+
+        let wallet_address = named_fixture("jetton_get_wallet_address_opt_in");
+        let function = fixture_function(&wallet_address);
+        let values = parse_values(&wallet_address.input_values, &function.inputs);
+        let entries = encode_get_method_inputs(&function, &values).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            AbiValue::from_stack_entry(&function.inputs[0].ty, &entries[0]).unwrap(),
+            values[0]
+        );
+
+        let wallet = AbiValue::Address(Address::new(0, [0x55; 32]));
+        let output = wallet.to_stack_entry(&function.outputs[0].ty).unwrap();
+        let decoded = decode_get_method_outputs(&function, &[output]).unwrap();
+        assert_eq!(decoded, vec![wallet]);
+    }
+
     fn named_fixture(name: &str) -> Fixture {
         fixtures()
             .fixtures
@@ -233,8 +300,23 @@ mod tests {
             .clone()
     }
 
+    fn fixture_event(fixture: &Fixture) -> AbiEvent {
+        let definition = parse_definition(fixture);
+        definition
+            .contracts
+            .iter()
+            .flat_map(|contract| contract.events.iter())
+            .find(|event| event.name == fixture.function)
+            .unwrap_or_else(|| panic!("missing event {}", fixture.function))
+            .clone()
+    }
+
     fn function_has_inputs(fixture: &Fixture) -> bool {
-        !fixture_function(fixture).inputs.is_empty()
+        if fixture.kind == "event_payload" {
+            !fixture_event(fixture).fields.is_empty()
+        } else {
+            !fixture_function(fixture).inputs.is_empty()
+        }
     }
 
     fn parse_definition(fixture: &Fixture) -> AbiDefinition {

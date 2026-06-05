@@ -117,6 +117,14 @@ Decoding is exact and rejects opcode mismatches or trailing bits/references.
 `Array` and `Unknown` are intentionally unsupported for message bodies until a
 sequence layout policy is documented.
 
+`encode_payload_components` and `decode_payload_components` expose the same
+component mapping without a selector prefix. `encode_event_payload` and
+`decode_event_payload` apply that component mapping to `AbiEvent` fields:
+`Opcode(u32)` selectors use the same 32-bit prefix as message bodies, `None`
+has no prefix, and `MethodId` is rejected as get-method-only. This event
+payload support is symmetric local-policy coverage only; checked bytes are not
+yet claimed as upstream-captured event evidence.
+
 ## JSON Loader
 
 `parse_abi_json_str` and `parse_abi_json_value` are compiled with
@@ -189,6 +197,9 @@ offline wire artifacts:
   representation hash, and expected decoded inputs;
 - map fixtures store ABI JSON with fixed integer keys and fixture-only
   `{ "key": ..., "value": ... }` entries for stack and message-body roundtrips.
+- event fixtures store `message_body_boc_hex`, the event payload root
+  representation hash, and expected decoded event fields generated from the
+  local event payload policy.
 
 The message-body BoCs are body-cell BoCs only. They are not full internal or
 external message BoCs and do not include `CommonMsgInfo`, state init, fees, or
@@ -206,7 +217,6 @@ command are checked in, so independent compatibility validation remains open.
 
 This step does not implement:
 
-- ABI event payload helpers beyond full message-body decode,
 - independent upstream or live-captured ABI compatibility vectors.
 
 The module should therefore not be described as ABI execution support. It is a
@@ -217,6 +227,5 @@ work.
 
 Planned follow-up work:
 
-- add event/external payload component helpers beyond full body decode,
 - cross-check checked ABI fixtures against accepted TON protocol evidence and
   compatibility references.
