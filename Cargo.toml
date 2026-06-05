@@ -57,7 +57,7 @@ num-bigint = "0.4.6"
 pbkdf2 = "0.12"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = { version = "1.0.150", optional = true }
-serde_with = { version = "3.12", features = ["base64"], optional = true }
+serde_with = { version = "3.21", features = ["base64"], optional = true }
 sha2 = "0.10"
 tokio = { version = "1.47.1", features = ["full", "time"], optional = true }
 byteorder = "1.5"
