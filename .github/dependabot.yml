@@ -7,9 +7,6 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "cargo"
-    labels:
-      - "dependencies"
-      - "rust"
     groups:
       cargo-minor-and-patch:
         patterns:
@@ -25,9 +22,6 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "actions"
-    labels:
-      - "dependencies"
-      - "github-actions"
     groups:
       github-actions:
         patterns:
