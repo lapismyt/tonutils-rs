@@ -48,11 +48,6 @@ jobs:
           expected_tag="v${version}"
           release_tag="${{ github.event.release.tag_name }}"
 
-          if [[ "$release_tag" != "v1.0.0" ]]; then
-            echo "Release tag must be v1.0.0 for this release workflow."
-            exit 1
-          fi
-
           if [[ "$release_tag" != "$expected_tag" ]]; then
             echo "Release tag $release_tag does not match tonutils package version $version."
             exit 1
