@@ -116,7 +116,7 @@ impl AdnlHandshake {
         if our_address != receiver {
             log::error!(
                 "private key selector returned wrong key, expected address: {:?}, got: {:?}",
-                &receiver,
+                receiver,
                 our_address
             );
             return Err(AdnlError::UnknownAddr(receiver));

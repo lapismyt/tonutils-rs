@@ -67,7 +67,7 @@ On 2026-05-09, the account CLI command was smoke-tested against a live
 LiteServer response:
 
 ```bash
-cargo run -F full -- account UQA_rW3Zvza4OcuW0yh4vH-cno3X0IcABYAX3whMjO5BSsQn
+cargo run -p tonutils-cli -- account UQA_rW3Zvza4OcuW0yh4vH-cno3X0IcABYAX3whMjO5BSsQn
 ```
 
 The run verified structural diagnostics for multi-root account proof BoCs. The
@@ -75,6 +75,13 @@ output reported `shard_proof_root_count: 2`, two `shard_proof_root_hash` lines,
 `proof_root_count: 2`, and two `proof_root_hash` lines, with no proof-related
 `decode_error`. This is evidence for CLI inspection behavior only; it is not
 trustless account-state proof verification.
+
+The retired `full` feature no longer exists. Validate all workspace crates and
+their optional functionality with:
+
+```bash
+cargo check --workspace --all-features
+```
 
 ## Missing Work
 

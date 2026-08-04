@@ -14,7 +14,7 @@ pub struct AdnlAddress([u8; 32]);
 impl std::fmt::Debug for AdnlAddress {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("AdnlAddress")
-            .field(&format!("{:02x?}", &self.0))
+            .field(&format!("{:02x?}", self.0))
             .finish()
     }
 }
