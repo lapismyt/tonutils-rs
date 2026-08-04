@@ -66,10 +66,22 @@ Current live example variables:
 Useful live smoke checks:
 
 ```bash
-cargo run -F full --example network_config
-cargo run -F full --example liteclient_masterchain_info
-TON_NETWORK=testnet cargo run -F full --example liteclient_masterchain_info
-cargo run -F full --example contract_get_method
+cargo run -p tonutils-cli -- --network "${TON_NETWORK:-mainnet}" status
+cargo run -p tonutils-cli -- --network "${TON_NETWORK:-mainnet}" \
+  liteclient masterchain-info --ls-index "${TON_LS_INDEX:-0}"
+cargo run -p tonutils-cli -- --network testnet \
+  liteclient masterchain-info --ls-index "${TON_LS_INDEX:-0}"
+cargo run -p tonutils-cli -- --network "${TON_NETWORK:-mainnet}" \
+  contract run-get-method --ls-index "${TON_LS_INDEX:-0}" \
+  --address "${TON_CONTRACT_ADDRESS:-UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP}" \
+  --method "${TON_GET_METHOD:-seqno}"
+```
+
+The retired `full` feature no longer exists. Validate the modular workspace
+with all optional functionality enabled using:
+
+```bash
+cargo check --workspace --all-features
 ```
 
 ## Live-Network Tests

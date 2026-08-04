@@ -37,11 +37,18 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
-      - name: Check full feature build
-        run: cargo check --features full
+      - name: Check workspace feature build
+        run: cargo check --workspace --all-features
 
-      - name: Test full feature build
-        run: cargo test --features full
+      - name: Test workspace feature build
+        run: cargo test --workspace --all-features
 
-      - name: Lint full feature build
-        run: cargo clippy --features full -- -D warnings
+      - name: Lint workspace feature build
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Reject retired full feature commands
+        run: |
+          if rg -n -- '--features[[:space:]]+full|-F[[:space:]]+full' .github/workflows docs dev-docs; then
+            echo 'The retired full feature must not be used; validate every crate with --workspace --all-features instead.' >&2
+            exit 1
+          fi
