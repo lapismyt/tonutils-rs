@@ -1,0 +1,30 @@
+[package]
+name = "tonutils-wallet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Offline TON wallet data, signing, and message helpers."
+
+[features]
+default = []
+provider = ["dep:tonutils-contracts"]
+
+[dependencies]
+bip39.workspace = true
+anyhow.workspace = true
+ed25519-dalek.workspace = true
+hex.workspace = true
+hmac.workspace = true
+num-bigint.workspace = true
+pbkdf2.workspace = true
+rand.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tonutils-crc = { path = "../tonutils-crc", version = "2.0.0" }
+tonutils-contracts = { path = "../tonutils-contracts", version = "2.0.0", optional = true }
+tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
+tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
+
+[dev-dependencies]
+serde.workspace = true

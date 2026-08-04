@@ -1,9 +1,9 @@
 use num_bigint::BigUint;
-use tonutils::tlb::{
+use tonutils_tlb::{
     CommonMsgInfo, CurrencyCollection, Either, Grams, Message, MsgAddressInt, TlbDeserialize,
     TlbSerialize,
 };
-use tonutils::tvm::{Address, Builder};
+use tonutils_tvm::{Address, Builder};
 
 fn main() -> anyhow::Result<()> {
     let inline_message = message(false)?;

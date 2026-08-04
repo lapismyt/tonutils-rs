@@ -15,7 +15,7 @@ A cell stores up to 1023 bits and up to 4 references. `Builder` and
 
 ```rust
 use num_bigint::BigUint;
-use tonutils::tvm::{Builder, Slice};
+use tonutils_tvm::{Builder, Slice};
 
 fn example() -> anyhow::Result<()> {
     let value = BigUint::from(1u64) << 96;
@@ -41,7 +41,7 @@ an error instead of silently truncating data.
 BoC helpers serialize and parse a root cell:
 
 ```rust
-use tonutils::tvm::{Builder, deserialize_boc, serialize_boc};
+use tonutils_tvm::{Builder, deserialize_boc, serialize_boc};
 
 fn example() -> anyhow::Result<()> {
     let mut builder = Builder::new();
@@ -66,7 +66,7 @@ and can convert to LiteAPI `AccountId`:
 
 ```rust
 use std::str::FromStr;
-use tonutils::tvm::Address;
+use tonutils_tvm::Address;
 
 fn example(address: &str) -> anyhow::Result<()> {
     let parsed = Address::from_str(address)?;
@@ -86,7 +86,7 @@ The higher-level `Dict` wrapper supports integer keys and cell values for the
 current public surface.
 
 ```rust
-use tonutils::tvm::{Dict, DictValue};
+use tonutils_tvm::{Dict, DictValue};
 
 fn example() -> anyhow::Result<()> {
     let mut dict = Dict::new(16);
@@ -104,15 +104,14 @@ items.
 
 ## TL-B Models And Derive
 
-The `tvm` feature exposes `tonutils::tlb` for typed cell models. Messages,
 accounts, transactions, common transaction phases, block roots, config wrappers,
 and proof wrappers are public APIs. Some deep block and shard-state families are
 raw-preserving wrappers while the full upstream `block.tlb` generator is still
 being expanded.
 
 ```rust
-use tonutils::tlb::{Account, TlbDeserialize, TlbSerialize};
-use tonutils::tvm::boc_to_hex;
+use tonutils_tlb::{Account, TlbDeserialize, TlbSerialize};
+use tonutils_tvm::boc_to_hex;
 
 fn example() -> anyhow::Result<()> {
     let cell = Account::None.to_cell()?;
@@ -126,7 +125,7 @@ fn example() -> anyhow::Result<()> {
 Custom TL-B structs can use the optional `tlb-derive` feature:
 
 ```rust
-use tonutils::tlb::{Tlb, TlbDeserialize, TlbSerialize};
+use tonutils_tlb::{Tlb, TlbDeserialize, TlbSerialize};
 
 #[derive(Tlb)]
 #[tlb(tag = "0x0f8a7ea5")]
@@ -150,7 +149,7 @@ cells, slices, tuples, lists, and explicit unsupported payloads for lossless
 roundtrips.
 
 ```rust
-use tonutils::tvm::{TvmStack, TvmStackEntry};
+use tonutils_tvm::{TvmStack, TvmStackEntry};
 
 fn example() -> anyhow::Result<()> {
     let stack = TvmStack::new(vec![TvmStackEntry::int(10)]);

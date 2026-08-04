@@ -11,11 +11,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Added
 
-- Added public ABI payload component helpers for selector-free payload encode
   and exact decode.
-- Added ABI event payload encode/decode helpers using the same local wire policy
   as message bodies.
-- Added synthetic event payload fixture coverage and opt-in ABI workflow
   acceptance coverage for wallet `seqno` and TEP-74 `get_wallet_address`.
 
 ## [1.0.0] - 2026-05-19

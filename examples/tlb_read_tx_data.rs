@@ -1,8 +1,8 @@
-use tonutils::tlb::{
+use tonutils_tlb::{
     AccountStatus, CurrencyCollection, Grams, HashUpdateAccount, TlbDeserialize, TlbSerialize,
     TrComputePhase, Transaction, TransactionDescr,
 };
-use tonutils::tvm::{HashmapE, base64_to_boc, boc_to_base64, hex_to_boc};
+use tonutils_tvm::{HashmapE, base64_to_boc, boc_to_base64, hex_to_boc};
 
 fn main() -> anyhow::Result<()> {
     let cell = match (
@@ -52,7 +52,7 @@ fn fixture_transaction() -> Transaction {
             storage_ph: None,
             credit_ph: None,
             compute_ph: TrComputePhase::Skipped {
-                reason: tonutils::tlb::ComputeSkipReason::NoState,
+                reason: tonutils_tlb::ComputeSkipReason::NoState,
             },
             action: None,
             aborted: true,

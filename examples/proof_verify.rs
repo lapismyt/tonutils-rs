@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use tonutils::tlb::MerkleProof;
-use tonutils::tvm::{Cell, deserialize_boc, serialize_boc};
+use tonutils_tlb::MerkleProof;
+use tonutils_tvm::{Cell, deserialize_boc, serialize_boc};
 
 fn main() -> anyhow::Result<()> {
     let raw = match std::env::var("TON_MERKLE_PROOF_BOC_HEX") {

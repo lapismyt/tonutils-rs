@@ -2,8 +2,8 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use ed25519_dalek::VerifyingKey;
 use rand::{SeedableRng, rngs::StdRng};
 use std::time::Duration;
-use tonutils::tvm::{Address, Builder};
-use tonutils::wallet::{
+use tonutils_tvm::{Address, Builder};
+use tonutils_wallet::{
     MAINNET_GLOBAL_ID, TonMnemonic, WALLET_V4R2_DEFAULT_ID, WALLET_V5R1_MAINNET_DEFAULT_ID,
     WalletMessage, WalletV4R2, WalletV5R1, WalletV5R1WalletId, ton_mnemonic_seed, wallet_v4r2_code,
     wallet_v5r1_code,

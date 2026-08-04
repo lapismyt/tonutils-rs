@@ -1,6 +1,6 @@
 mod common;
 
-use tonutils::liteclient::client::LiteClient;
+use tonutils_liteclient::client::LiteClient;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

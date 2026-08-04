@@ -1,9 +1,9 @@
 use num_bigint::BigUint;
-use tonutils::tlb::{
+use tonutils_tlb::{
     Account, AccountState, AccountStorage, CurrencyCollection, Grams, MsgAddressInt, StateInit,
     StorageExtraInfo, StorageInfo, StorageUsed, TlbDeserialize, TlbSerialize,
 };
-use tonutils::tvm::Address;
+use tonutils_tvm::Address;
 
 fn main() -> anyhow::Result<()> {
     let address = Address::new(0, [0x42; 32]);

@@ -114,27 +114,20 @@ vectors remain useful as stronger evidence for later compatibility expansion,
 but they are not required by normal test runs and must never make CI depend on
 network access.
 
-ABI golden fixtures are checked in under `fixtures/abi/contracts.json` as JSON
 metadata and small BoC hex payloads. The schema records:
 
 - `schema_revision`,
 - top-level synthetic `source` and `capture_date`,
-- fixture `name`, `kind`, `source`, ABI JSON document, and function name,
 - evidence metadata: `evidence_kind`, `source_url`, `source_commit`,
   `network`, `account`, `block_id`, `method_id`, `capture_command`, and
   `compat_reference`,
-- fixture-only ABI input values,
 - expected stack BoC/root hashes for get-method inputs and outputs, or expected
   message-body BoC/root hash for body codecs,
-- expected decoded ABI values.
 
-Normal ABI fixture tests read the file with `include_str!`, load each ABI JSON
 document through `parse_abi_json_str`, encode and decode through the existing
-ABI stack/message-body helpers, and verify exact BoC hex plus root
 representation hashes. The message-body entries are body-cell BoCs only, not
 full message envelopes.
 
-The current ABI fixture set is synthetic offline evidence plus
 `captured_or_opt_in` templates. It covers one get-method stack vector with
 address input and uint output, one opcode-prefixed external body vector with
 scalar and referenced values, one no-selector internal body vector with tuple

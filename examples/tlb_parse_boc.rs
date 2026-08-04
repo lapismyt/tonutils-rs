@@ -1,5 +1,5 @@
-use tonutils::tlb::{Account, TlbDeserialize, TlbSerialize};
-use tonutils::tvm::{boc_to_hex, hex_to_boc};
+use tonutils_tlb::{Account, TlbDeserialize, TlbSerialize};
+use tonutils_tvm::{boc_to_hex, hex_to_boc};
 
 fn main() -> anyhow::Result<()> {
     let fixture = Account::None.to_cell()?;

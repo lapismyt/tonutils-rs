@@ -14,8 +14,8 @@ commands over the same APIs, see [CLI](cli.md).
 
 ```rust
 use std::str::FromStr;
-use tonutils::liteclient::client::LiteClient;
-use tonutils::network_config::ConfigGlobal;
+use tonutils_liteclient::client::LiteClient;
+use tonutils_network_config::ConfigGlobal;
 
 async fn example(config_json: &str) -> anyhow::Result<()> {
     let config = ConfigGlobal::from_str(config_json)?;
@@ -34,8 +34,8 @@ LiteAPI request body. The output is the raw serialized LiteAPI response body.
 
 ```rust
 use std::str::FromStr;
-use tonutils::liteclient::client::LiteClient;
-use tonutils::network_config::ConfigGlobal;
+use tonutils_liteclient::client::LiteClient;
+use tonutils_network_config::ConfigGlobal;
 async fn example(config_json: &str, request: Vec<u8>) -> anyhow::Result<()> {
     let config = ConfigGlobal::from_str(config_json)?;
     let mut client = LiteClient::connect_config(&config, 0).await?;
@@ -51,7 +51,7 @@ async fn example(config_json: &str, request: Vec<u8>) -> anyhow::Result<()> {
 local token-bucket limiter before sending requests:
 
 ```rust
-use tonutils::liteclient::{
+use tonutils_liteclient::{
     client::LiteClient,
     rate_limit::RequestRateLimit,
 };
@@ -69,14 +69,14 @@ queries share the same `query_raw` path, so one configured limit covers both.
 
 ## Contract Helpers
 
-`tonutils::contracts::Contract` reuses `LiteClient::get_masterchain_info`,
+`tonutils_contracts::Contract` reuses `LiteClient::get_masterchain_info`,
 `LiteClient::get_account_state`, and `LiteClient::run_get_method`. It does not
 change the LiteAPI trust model: proof fields are preserved, but proof
 verification is not implemented yet.
 
 ## Decoded BoC Helpers
 
-`tonutils::liteclient::boc` contains offline decode helpers for LiteClient
+`tonutils_liteclient::boc` contains offline decode helpers for LiteClient
 payloads. Each helper preserves the raw BoC bytes and decoded root cell, then
 adds a typed view where Phase 1 models exist:
 
@@ -93,7 +93,7 @@ the local exotic-cell child-hash invariant only; callers must still anchor
 proofs to trusted block ids before using decoded data as trusted state.
 
 ```rust
-use tonutils::liteclient::boc::decode_account_state_boc;
+use tonutils_liteclient::boc::decode_account_state_boc;
 
 fn example(raw_state_boc: &[u8]) -> anyhow::Result<()> {
     let decoded = decode_account_state_boc(raw_state_boc)?;
@@ -132,8 +132,8 @@ Recent typed helpers added to `LiteClient`:
 Example:
 
 ```rust
-use tonutils::liteclient::client::LiteClient;
-use tonutils::tl::{BlockId, BlockIdExt};
+use tonutils_liteclient::client::LiteClient;
+use tonutils_tl::{BlockId, BlockIdExt};
 
 async fn example(client: &mut LiteClient, block_id: BlockId, mc_block_id: BlockIdExt) -> anyhow::Result<()> {
     let proof = client
@@ -160,8 +160,8 @@ before finalization. They are useful for diagnostics and research flows and do
 not include proof verification or production-safety guarantees.
 
 ```rust
-use tonutils::liteclient::client::LiteClient;
-use tonutils::tl::NonfinalCandidateId;
+use tonutils_liteclient::client::LiteClient;
+use tonutils_tl::NonfinalCandidateId;
 
 async fn example(client: &mut LiteClient, candidate_id: NonfinalCandidateId) -> anyhow::Result<()> {
     let groups = client.get_nonfinal_validator_groups(None).await?;

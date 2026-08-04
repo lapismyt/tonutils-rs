@@ -19,12 +19,12 @@ sending requests.
 ```rust
 use std::str::FromStr;
 use std::time::Duration;
-use tonutils::liteclient::{
+use tonutils_liteclient::{
     balancer::LiteBalancer,
     client::LiteClient,
     rate_limit::RequestRateLimit,
 };
-use tonutils::network_config::{ConfigGlobal, LiteServerBlacklist};
+use tonutils_network_config::{ConfigGlobal, LiteServerBlacklist};
 
 async fn example(config_json: &str) -> anyhow::Result<()> {
     let config = ConfigGlobal::from_str(config_json)?;

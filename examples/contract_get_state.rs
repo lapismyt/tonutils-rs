@@ -1,8 +1,8 @@
 mod common;
 
-use tonutils::contracts::Contract;
-use tonutils::liteclient::client::LiteClient;
-use tonutils::tvm::Address;
+use tonutils_contracts::Contract;
+use tonutils_liteclient::client::LiteClient;
+use tonutils_tvm::Address;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
