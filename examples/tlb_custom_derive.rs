@@ -1,10 +1,10 @@
 use num_bigint::BigUint;
 use std::sync::Arc;
-use tonutils::tlb::{
+use tonutils_tlb::{
     CellRef, Either, Grams, MsgAddress, MsgAddressInt, Tlb, TlbDeserialize, TlbSerialize,
     VarUInteger,
 };
-use tonutils::tvm::{Address, Builder, Cell};
+use tonutils_tvm::{Address, Builder, Cell};
 
 #[derive(Debug, Clone, PartialEq, Eq, Tlb)]
 #[tlb(tag = "0x0f8a7ea5")]

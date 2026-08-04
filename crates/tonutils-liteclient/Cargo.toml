@@ -1,0 +1,33 @@
+[package]
+name = "tonutils-liteclient"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TON LiteAPI client and liteserver balancer."
+
+[features]
+default = ["network-config"]
+network-config = ["dep:tonutils-network-config"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+hex.workspace = true
+log.workspace = true
+pin-project.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+tl-proto.workspace = true
+tokio.workspace = true
+tokio-tower.workspace = true
+tokio-util.workspace = true
+tower.workspace = true
+tonutils-adnl = { path = "../tonutils-adnl", version = "2.0.0" }
+tonutils-crc = { path = "../tonutils-crc", version = "2.0.0" }
+tonutils-contracts = { path = "../tonutils-contracts", version = "2.0.0" }
+tonutils-network-config = { path = "../tonutils-network-config", version = "2.0.0", optional = true }
+tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
+tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
+tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }

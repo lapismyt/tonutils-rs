@@ -1,0 +1,17 @@
+[package]
+name = "tonutils-contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Low-level TON smart-contract provider and message helpers."
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+num-bigint.workspace = true
+thiserror.workspace = true
+tonutils-crc = { path = "../tonutils-crc", version = "2.0.0" }
+tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
+tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
+tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }

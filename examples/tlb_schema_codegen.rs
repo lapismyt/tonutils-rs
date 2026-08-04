@@ -1,4 +1,4 @@
-use tonutils::tlb::schema;
+use tonutils_tlb::schema;
 
 fn main() -> anyhow::Result<()> {
     let user_schema = r#"

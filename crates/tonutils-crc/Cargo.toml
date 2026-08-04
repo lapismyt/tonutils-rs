@@ -1,0 +1,10 @@
+[package]
+name = "tonutils-crc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CRC helpers for TON protocols."
+
+[dependencies]
+crc.workspace = true

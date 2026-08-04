@@ -1,6 +1,6 @@
-use tonutils::liteclient::boc::decode_account_state_boc;
-use tonutils::tlb::{Account, TlbSerialize};
-use tonutils::tvm::serialize_boc;
+use tonutils_liteclient::boc::decode_account_state_boc;
+use tonutils_tlb::{Account, TlbSerialize};
+use tonutils_tvm::serialize_boc;
 
 fn main() -> anyhow::Result<()> {
     let raw = match std::env::var("TON_ACCOUNT_STATE_BOC_HEX") {

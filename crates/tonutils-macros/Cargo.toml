@@ -1,0 +1,17 @@
+[package]
+name = "tonutils-macros"
+version.workspace = true
+edition.workspace = true
+description = "Procedural macros for tonutils TL-B and contract helpers."
+license.workspace = true
+repository.workspace = true
+keywords = ["ton", "blockchain", "tlb", "proc-macro", "sdk"]
+categories = ["development-tools::procedural-macro-helpers"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true

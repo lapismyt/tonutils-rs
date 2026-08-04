@@ -1,0 +1,12 @@
+[package]
+name = "tonutils-metadata"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TEP-64 metadata parsing helpers for TON."
+
+[dependencies]
+sha2.workspace = true
+thiserror.workspace = true
+tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }

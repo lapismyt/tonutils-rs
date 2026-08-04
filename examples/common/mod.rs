@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use anyhow::{Context, bail};
-use tonutils::network_config::ConfigGlobal;
+use tonutils_network_config::ConfigGlobal;
 
 pub const DEFAULT_MAINNET_CONTRACT_ADDRESS: &str =
     "UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP";

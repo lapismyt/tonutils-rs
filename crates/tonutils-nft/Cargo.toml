@@ -1,0 +1,21 @@
+[package]
+name = "tonutils-nft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TON NFT payloads, metadata, and get-method decoders."
+
+[features]
+default = []
+provider = ["dep:tonutils-contracts"]
+
+[dependencies]
+num-bigint.workspace = true
+thiserror.workspace = true
+tonutils-crc = { path = "../tonutils-crc", version = "2.0.0" }
+tonutils-contracts = { path = "../tonutils-contracts", version = "2.0.0", optional = true }
+tonutils-jetton = { path = "../tonutils-jetton", version = "2.0.0" }
+tonutils-metadata = { path = "../tonutils-metadata", version = "2.0.0" }
+tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
+tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }

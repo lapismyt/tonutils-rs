@@ -1,5 +1,5 @@
-use tonutils::tlb::{Block, TlbDeserialize, TlbSerialize};
-use tonutils::tvm::{Builder, Cell};
+use tonutils_tlb::{Block, TlbDeserialize, TlbSerialize};
+use tonutils_tvm::{Builder, Cell};
 
 fn main() -> anyhow::Result<()> {
     let block = Block {

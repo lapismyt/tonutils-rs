@@ -28,7 +28,7 @@ transport performs the native ADNL TCP handshake, then sends LiteAPI requests
 through the framed encrypted stream.
 
 ```rust
-use tonutils::liteclient::client::LiteClient;
+use tonutils_liteclient::client::LiteClient;
 
 async fn example(addr: &str, public_key: [u8; 32]) -> anyhow::Result<()> {
     let mut client = LiteClient::connect(addr, public_key).await?;
@@ -50,7 +50,7 @@ hardened.
 
 ```rust
 use std::str::FromStr;
-use tonutils::network_config::ConfigGlobal;
+use tonutils_network_config::ConfigGlobal;
 
 fn example(config_json: &str) -> anyhow::Result<()> {
     let config = ConfigGlobal::from_str(config_json)?;

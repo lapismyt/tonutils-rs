@@ -1,0 +1,19 @@
+[package]
+name = "tonutils-tlb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TL-B data models and serialization for TON."
+
+[dependencies]
+anyhow.workspace = true
+num-bigint.workspace = true
+thiserror.workspace = true
+tonutils-macros = { path = "../tonutils-macros", version = "2.0.0" }
+tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
+
+[dev-dependencies]
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true

@@ -13,9 +13,9 @@ network transport, and upstream TON schema evidence before changing wire types.
 
 LiteAPI wire types are maintained from upstream TON schemas, primarily
 `src/tl/schemas/lite_api.tl`. Request constructors live in
-`tonutils::tl::request`; response constructors live in
-`tonutils::tl::response`; common identifiers such as `BlockIdExt`, `Int256`,
-and `AccountId` live in `tonutils::tl::common`.
+`tonutils_tl::request`; response constructors live in
+`tonutils_tl::response`; common identifiers such as `BlockIdExt`, `Int256`,
+and `AccountId` live in `tonutils_tl::common`.
 
 The repository has a schema-check test that parses the local LiteAPI schema and
 compares computed constructor ids with the handwritten Rust ids. It is a drift
@@ -24,7 +24,7 @@ check for implemented constructors, not a full code generator.
 ## TL-B Schema Workflow
 
 The `tvm` feature also exposes a small TL-B schema workflow in
-`tonutils::tlb::schema`. Phase 1 keeps an upstream-derived slice of
+`tonutils_tlb::schema`. Phase 1 keeps an upstream-derived slice of
 `ton-blockchain/ton` `crypto/block/block.tlb` at
 `src/tlb/schemas/block_phase1.tlb` and a checked generated summary at
 `src/tlb/generated/block_phase1.rs`.
@@ -60,14 +60,14 @@ When adding a constructor:
 
 ## Typed Requests
 
-`LiteClient::query_typed` accepts a `tonutils::tl::request::Request` value and
+`LiteClient::query_typed` accepts a `tonutils_tl::request::Request` value and
 decodes the response into a type that implements the crate's response mapping.
 The higher-level LiteClient helpers build these requests internally.
 
 ```rust
-use tonutils::liteclient::client::LiteClient;
-use tonutils::tl::request::Request;
-use tonutils::tl::response::CurrentTime;
+use tonutils_liteclient::client::LiteClient;
+use tonutils_tl::request::Request;
+use tonutils_tl::response::CurrentTime;
 
 async fn example(client: &mut LiteClient) -> anyhow::Result<()> {
     let time: CurrentTime = client.query_typed(Request::GetTime).await?;
@@ -82,7 +82,7 @@ Use `query_raw` when the request is already serialized LiteAPI bytes or when a
 constructor is known by schema but not yet modeled by the typed API.
 
 ```rust
-use tonutils::liteclient::client::LiteClient;
+use tonutils_liteclient::client::LiteClient;
 
 async fn example(client: &mut LiteClient, bytes: Vec<u8>) -> anyhow::Result<()> {
     let response = client.query_raw(bytes).await?;

@@ -25,7 +25,6 @@ dev-docs). These are enablers, not the top priority.
 
 Phase 1 has closed as the SDK foundation needed for TVM, BoC, TL, TL-B, and
 contract ergonomics. The immediate priority moves to ergonomic LiteClient,
-LiteBalancer, contract, wallet, and ABI capabilities:
 
 1. Complete TVM types.
 2. Complete BoC handling, including an `Address` type with raw,
@@ -38,7 +37,6 @@ LiteBalancer, contract, wallet, and ABI capabilities:
    balance, transactions, code, and data.
 7. Add custom smart-contract client support with idiomatic Rust wrappers.
 8. Add built-in smart-contract wrappers for wallets and jettons.
-9. Add an ABI module organized by protocol, version, and contract family.
 10. Keep reusable get-method argument/result abstractions complete enough for
    wrapper work: the public conversion traits now cover common scalar, address,
    cell, option, and tuple cases, with fixture and live-network expansion still
@@ -47,7 +45,6 @@ LiteBalancer, contract, wallet, and ABI capabilities:
    contract families while preserving unsupported raw content.
 
 Hardening, productionization, and broad protocol expansion remain important but
-are intentionally deferred until these foundation, contract, and ABI milestones
 are complete.
 
 ## Phase 1: TVM, BoC, TL, And TL-B Foundation
@@ -161,7 +158,6 @@ Current Phase 1 fixture status:
   broader captured live/upstream proof fixture evidence remain follow-up work
   tracked in `TODO.md`.
 
-## Phase 2: LiteClient, Contract Clients, Wrappers, Metadata, And ABI
 
 Build ergonomic high-level SDK surfaces on top of the TVM, BoC, TL, and TL-B
 foundation:
@@ -176,7 +172,6 @@ foundation:
 - Add built-in smart-contract wrappers. Initially include wallet wrappers for
   V4, V5, and Highload wallets, plus jetton wrappers based on a selected
   available contract variant.
-- Add TEP metadata parsing before or alongside ABI work. Initial coverage must
   include a common raw-preserving metadata cell parser, TEP-64 on-chain and
   off-chain content handling, jetton metadata for TEP-74 wrappers, and NFT item
   and collection metadata for TEP-62 wrappers.
@@ -189,20 +184,15 @@ foundation:
   `FromTVMStack`, but shaped idiomatically for this crate. They should support
   composing typed Rust arguments into TVM stack values, decoding stack results
   into typed Rust values, surfacing precise conversion errors, and reusing the
-  same conversions from contract wrappers, ABI helpers, and CLI input/output.
-- Add an `abi` module split by protocol and then by version or contract family.
-  Initial ABI coverage must include wallets V4, V5, Highload, and jettons
   TEP-74 and TEP-89.
 - Start wallet wrappers with Wallet V5R1 and V4R2. The first executable
   milestone is offline-safe: storage data cells, wallet-id packing, TON
   mnemonic derivation, signed external body construction, external message BoC
   construction, address derivation, and deterministic tests before live sending
   workflows are promoted.
-- Keep a clear distinction between a concrete contract wrapper and an ABI
   description. As in tongo, contracts with different code must still work when
   they support the required methods and message shapes.
 - Reuse the previously added TVM, BoC, TL, TL-B, and macro features for wrapper
-  and ABI implementation instead of duplicating serialization logic.
 
 Exit criteria for Phase 2:
 
@@ -216,14 +206,11 @@ Exit criteria for Phase 2:
   Jettons, NFTs, and later TEP-compatible contract families.
 - Contract wrappers can express get-method arguments and results through typed
   TVM stack conversion traits instead of ad hoc stack assembly and decoding.
-- ABI definitions can be used independently from concrete code hashes when the
   method and message interfaces are compatible.
 - LiteClient and LiteBalancer expose the contract data retrieval methods needed
-  by the wrappers and ABI layer.
 
 ## Phase 3: Hardening, Reliability, And Productionization
 
-After the foundation, contract, and ABI milestones:
 
 - Harden ADNL TCP behavior around boundaries, timeouts, graceful close, and
   structured diagnostics.

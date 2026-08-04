@@ -97,7 +97,6 @@ tonutils --output json contract run-get-method --ls-index 0 --address '<addr>' -
 tonutils --output json contract run-get-method --ls-index 0 --address '<addr>' --method-id 85143
 tonutils --output json contract run-get-method --ls-index 0 --address '<addr>' --method balance --arg int:0 --arg null
 tonutils --output json contract run-get-method --ls-index 0 --address '<addr>' --method balance --stack-json '[{"type":"int","value":"0"}]'
-tonutils --output json contract run-abi-get-method --ls-index 0 --address '<addr>' --abi-file contract.abi.json --contract Wallet --method seqno --arg 'owner="<addr>"'
 ```
 
 JSON state output includes the masterchain block id, shard block id, proof byte
@@ -108,11 +107,8 @@ decoded stack when the current stack decoder supports the returned shape.
 stack inputs as high-level `call`. JSON stack entries use objects with `type`
 set to `null`, `int`, `cell`, `slice`, `tuple`, `list`, or `unsupported`;
 integer values are decimal strings and BoC or raw byte payloads are hex strings.
-`run-abi-get-method` loads ABI JSON, encodes `--arg name=json` inputs through
-the ABI metadata, and renders named decoded outputs. It accepts JSON integer
 numbers or decimal/hex integer strings, booleans, strings, hex bytes, address
 strings, tuple objects, arrays supported by the stack codec, and cell/slice BoC
-hex strings. ABI maps and dictionaries use arrays of `{ "key": ..., "value":
 ... }` entries and are limited to fixed-width integer keys.
 
 ## Wallet Commands

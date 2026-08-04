@@ -3,7 +3,6 @@
 This file follows the `todo-md/todo-md` format and is the detailed tracker for
 work that should not be hidden in prose. Active work is currently prioritized
 around idiomatic high-level LiteClient, LiteBalancer, contract, wallet,
-mnemonic, and ABI capabilities, plus post-Phase-1 protocol hardening.
 `ROADMAP.md` explains the phase intent at a higher level; `dev-docs/` records
 protocol facts and source evidence. Completed work moves to `# DONE`;
 postponed work moves to `# BACKLOG`.
@@ -68,12 +67,9 @@ postponed work moves to `# BACKLOG`.
     - [x] Add deterministic Criterion benchmarks for mnemonic derivation, cached wallet code, address derivation, and signed transfer BoC construction #wallet #crypto #perf #tests
     - [x] Reconcile embedded `@ton/ton` Wallet V4R2/V5R1 code BoC hashes with current TON wallet-history documentation hashes #wallet #crypto #docs #tests
     - [x] Add upstream Wallet V5R1 and V4R2 state-init/address fixtures for mainnet and testnet defaults #wallet #crypto #tests
-- [ ] Track ABI and typed wrapper capabilities #abi #contracts #wallet #tests #docs
-  - [-] Map each ABI and wrapper gap to subsystem tags and acceptance tests #abi #contracts #docs #tests
     - [x] Add direct address-bound `Contract<'a, P>` typed-client delegation test #contracts #docs #tests
     - [x] Add derive-backed contract blueprint pattern for typed data and fixed code BoCs #contracts #docs #tests #features
     - [x] Add reusable typed TVM stack conversion traits for wrapper get-method arguments and results #contracts #tvm #tests #docs
-    - [ ] Map ABI parser/encoder gaps to typed wrapper acceptance tests #abi #contracts #docs #tests
   - [ ] Keep capability tracker entries synchronized whenever implementation work completes or defers a gap #docs #tests
 
 ## TEP Metadata And Typed Wrappers
@@ -92,42 +88,6 @@ postponed work moves to `# BACKLOG`.
   - [x] Map TEP-64 NFT collection and item metadata keys into typed Rust fields with raw unknown-key preservation #metadata #nft
   - [x] Add fixture-backed NFT metadata cells for collection, item, and individual-content merge behavior #metadata #nft #tests
 
-## ABI (Tongo-Level)
-
-- [-] Implement full ABI data model coverage #abi #contracts #tvm
-  - [x] Define ABI Rust types for contracts, methods, events, tuples, arrays, optional fields, and dictionaries #abi
-  - [x] Define ABI scalar mappings for TON/TVM-relevant integer, bytes, address, bool, and cell-like values #abi #tvm
-  - [x] Document ABI data-model invariants, numeric limits, and current non-goals in `dev-docs/` #abi #docs
-- [ ] Implement ABI encoding and decoding engine #abi #contracts #tvm #tests
-  - [-] Encode ABI inputs into TVM stack and message-body representations #abi #tvm
-    - [x] Add value-level scalar TVM stack encode/decode helpers for integers, booleans, bytes, strings, addresses, cells, slices, tuples, arrays, and optionals #abi #tvm #tests
-    - [x] Add ABI message-body encoding policy and implementation #abi #tvm #contracts #tests
-    - [x] Add local fixed integer-key ABI map/dictionary stack and message-body codecs #abi #tvm #tests
-  - [-] Decode get-method outputs and external message payload components from ABI definitions #abi #tvm
-    - [x] Add ABI get-method input encoding and output decoding helpers over TVM stack entries #abi #tvm #tests
-    - [x] Add ABI event/external payload component helpers beyond full message-body decode #abi #tvm #tests
-  - [-] Add edge-case coverage for tuples, nested arrays, optional values, and dictionary-like payloads #abi #tests
-    - [x] Cover nested tuple, array, optional, and JSON loader cases for stack and schema paths #abi #tests
-    - [x] Define and test local dictionary-like payload policy before enabling map codecs #abi #tests
-- [-] Implement JSON ABI parser and loader #abi #contracts #tests
-  - [x] Parse and validate ABI JSON schema with precise diagnostics #abi #tests
-  - [x] Support loading ABI definitions for contract wrappers and CLI workflows #abi #contracts #cli
-  - [-] Add schema validation tests for malformed or ambiguous ABI documents #abi #tests
-    - [x] Add malformed missing-field and invalid integer-width coverage #abi #tests
-    - [x] Add ambiguous selector and unsupported compatibility-shape coverage #abi #tests
-- [ ] Integrate ABI with contract workflows #abi #contracts #liteclient #cli #tests
-  - [x] Add ABI-driven get-method argument encoding for contract wrappers #abi #contracts
-  - [x] Add ABI-driven external message body construction #abi #contracts
-  - [x] Add ABI-driven CLI input/output paths where contract commands expose typed data #abi #cli #contracts
-- [-] Add golden fixtures and cross-reference validation cases #abi #tests #docs
-  - [x] Add checked synthetic fixture-backed encode/decode vectors for representative ABI JSON, get-method stack, and message-body paths #abi #tests
-  - [x] Add structured ABI evidence metadata and opt-in templates for wallet `seqno` and TEP-74 `get_wallet_address` captures #abi #tests #docs
-  - [ ] Cross-check ABI fixtures against upstream or live-captured contract evidence #abi #tests
-  - [ ] Cross-check behavior against tongo-compatible expectations and TON protocol definitions #abi #tests #docs
-  - [x] Define and document local ABI map/dictionary stack and message codec policy before enabling map conversion #abi #tvm #docs
-  - [x] Document unsupported ABI map key families and upstream-validation follow-up tasks #abi #docs
-
-## Subsequent Phases (Post-ABI)
 
 - [ ] Complete blockchain TL-B coverage from upstream `block.tlb` #tvm #tlb #docs #tests
   - [x] Add checked local `src/tlb/schemas/block.tlb` snapshot for currently implemented constructor families #tvm #tlb
@@ -448,7 +408,6 @@ postponed work moves to `# BACKLOG`.
     - [ ] `address parse` and `address format` #cli #tvm
     - [ ] `contract state` for account state loading #cli #contracts
     - [x] `contract run-get-method` with typed stack argument input #cli #contracts
-    - [x] `contract run-abi-get-method` with ABI JSON argument input and output decoding #cli #contracts #abi
     - [x] `contract run-get-method` with JSON stack argument input for shell scripts #cli #contracts
   - [-] Add high-level default-balancer commands for common workflows #cli #balancer #liteclient
     - [x] Add `status`, `account`, `call`, `transactions`, `block`, and `config` commands #cli
@@ -522,7 +481,6 @@ postponed work moves to `# BACKLOG`.
   - [x] Add BoC regression tests for indexed decode, malformed index table, CRC mismatch, invalid root/reference indexes, trailing bytes, and string roundtrips #tvm #boc #tests
   - [x] Add embedded TON Docs address fixtures and schema-derived BoC compatibility fixtures #tvm #boc #address #tests
   - [x] Add checked-in Phase 1 BoC fixture metadata for account/message/transaction compatibility #tvm #boc #tests
-  - [x] Add checked-in synthetic ABI fixture metadata for JSON, get-method stack, message-body, and local map coverage #abi #tests
 - [x] Complete remaining TVM primitive compatibility before TL-B macros #tvm #tlb
   - [x] Audit ordinary cell representation hash against TON golden fixtures #tvm #tests
   - [x] Add exotic cell support for pruned branch, library reference, Merkle proof, and Merkle update #tvm #boc

@@ -2,8 +2,8 @@ use std::time::Duration;
 
 mod common;
 
-use tonutils::liteclient::balancer::LiteBalancer;
-use tonutils::liteclient::client::LiteClient;
+use tonutils_liteclient::balancer::LiteBalancer;
+use tonutils_liteclient::client::LiteClient;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

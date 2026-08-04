@@ -1,8 +1,8 @@
-use tonutils::tlb::{
+use tonutils_tlb::{
     AccountStatus, CurrencyCollection, Grams, HashUpdateAccount, TlbDeserialize, TlbSerialize,
     TrComputePhase, Transaction, TransactionDescr,
 };
-use tonutils::tvm::HashmapE;
+use tonutils_tvm::HashmapE;
 
 fn main() -> anyhow::Result<()> {
     let transaction = Transaction {
@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
             storage_ph: None,
             credit_ph: None,
             compute_ph: TrComputePhase::Skipped {
-                reason: tonutils::tlb::ComputeSkipReason::NoState,
+                reason: tonutils_tlb::ComputeSkipReason::NoState,
             },
             action: None,
             aborted: true,

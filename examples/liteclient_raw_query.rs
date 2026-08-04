@@ -1,7 +1,7 @@
 mod common;
 
-use tonutils::liteclient::client::LiteClient;
-use tonutils::tl::Request;
+use tonutils_liteclient::client::LiteClient;
+use tonutils_tl::Request;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

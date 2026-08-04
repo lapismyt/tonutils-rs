@@ -1,5 +1,5 @@
 use num_bigint::{BigInt, BigUint};
-use tonutils::tvm::{Builder, Slice};
+use tonutils_tvm::{Builder, Slice};
 
 fn main() -> anyhow::Result<()> {
     let mut builder = Builder::new();

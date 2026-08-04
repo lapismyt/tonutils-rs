@@ -1,5 +1,5 @@
-use tonutils::tvm::Address;
-use tonutils::wallet::{
+use tonutils_tvm::Address;
+use tonutils_wallet::{
     MAINNET_GLOBAL_ID, TonMnemonic, WALLET_V4R2_DEFAULT_ID, WalletMessage, WalletV4R2, WalletV5R1,
     WalletV5R1WalletId, wallet_v4r2_code, wallet_v5r1_code,
 };

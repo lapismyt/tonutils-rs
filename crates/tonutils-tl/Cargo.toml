@@ -1,0 +1,17 @@
+[package]
+name = "tonutils-tl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TL schema types and LiteAPI serialization for TON."
+
+[dependencies]
+derivative.workspace = true
+hex.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+tl-proto.workspace = true
+
+[dev-dependencies]
+tl-scheme.workspace = true

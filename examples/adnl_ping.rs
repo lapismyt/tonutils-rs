@@ -1,5 +1,5 @@
-use tonutils::adnl::crypto::KeyPair;
-use tonutils::adnl::{AdnlAddress, AdnlBuilder, AdnlHandshake};
+use tonutils_adnl::crypto::KeyPair;
+use tonutils_adnl::{AdnlAddress, AdnlBuilder, AdnlHandshake};
 
 fn main() -> anyhow::Result<()> {
     let server = KeyPair::generate(&mut rand::rngs::OsRng);

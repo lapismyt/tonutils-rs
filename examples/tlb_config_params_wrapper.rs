@@ -1,5 +1,5 @@
-use tonutils::tlb::{ConfigParams, TlbDeserialize, TlbSerialize};
-use tonutils::tvm::{Builder, Dict, DictValue};
+use tonutils_tlb::{ConfigParams, TlbDeserialize, TlbSerialize};
+use tonutils_tvm::{Builder, Dict, DictValue};
 
 fn main() -> anyhow::Result<()> {
     let config_value = {

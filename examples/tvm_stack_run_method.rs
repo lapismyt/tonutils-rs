@@ -1,7 +1,7 @@
 mod common;
 
-use tonutils::liteclient::client::LiteClient;
-use tonutils::tvm::{Address, TvmStack};
+use tonutils_liteclient::client::LiteClient;
+use tonutils_tvm::{Address, TvmStack};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

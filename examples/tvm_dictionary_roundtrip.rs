@@ -1,4 +1,4 @@
-use tonutils::tvm::{Builder, Dict, DictValue, Slice};
+use tonutils_tvm::{Builder, Dict, DictValue, Slice};
 
 fn main() -> anyhow::Result<()> {
     let mut dict = Dict::new(8);

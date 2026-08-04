@@ -78,7 +78,6 @@ fixed code BoC and typed TL-B data:
 - `address()` calls the shared `address_from_state_init` primitive,
 - `bind()` creates a normal address-bound `Contract<'a, P>`.
 
-The optional `contract-derive` feature re-exports `tonutils::Contract` as a
 derive macro. The macro accepts `#[contract(code = ...)]`,
 `#[contract(code_hex = "...")]`, or `#[contract(code_file = "...")]` and
 rejects unnamed/unit structs, missing `data`, extra fields, and multiple code
@@ -141,4 +140,3 @@ in `RunMethodResult` without treating them as transport errors.
 - Expand result stack decoding against live liteserver fixtures.
 - Add known contract fixtures.
 - Add proof verification.
-- Add wallet signing, deployment builders, and ABI-driven message bodies.

@@ -4,9 +4,9 @@ use std::time::Duration;
 use tl_proto::TlRead;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
-use tonutils::adnl::{AdnlAesParams, AdnlCodec};
-use tonutils::tl::request::{GetMasterchainInfoExt, Request};
-use tonutils::tvm::{
+use tonutils_adnl::{AdnlAesParams, AdnlCodec};
+use tonutils_tl::request::{GetMasterchainInfoExt, Request};
+use tonutils_tvm::{
     Builder, Cell, Slice, TvmStack, TvmStackEntry, deserialize_boc, serialize_boc,
 };
 

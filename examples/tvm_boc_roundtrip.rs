@@ -1,4 +1,4 @@
-use tonutils::tvm::{Builder, deserialize_boc, serialize_boc};
+use tonutils_tvm::{Builder, deserialize_boc, serialize_boc};
 
 fn main() -> anyhow::Result<()> {
     let mut payload = Builder::new();
