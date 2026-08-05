@@ -346,7 +346,7 @@ postponed work moves to `# BACKLOG`.
   - [ ] Verify block proof links and signatures #proofs
   - [ ] Document trust assumptions for light client usage #proofs #docs
 
-## DHT, Overlay, And Mempool
+## DHT, Overlay, QUIC, And Mempool
 
 - [ ] Research and implement native ADNL UDP #network #adnl
   - [ ] Document packet format and channel negotiation #network #docs
@@ -360,22 +360,18 @@ postponed work moves to `# BACKLOG`.
   - [ ] Add overlay node and peer exchange types #overlay #tl
   - [ ] Add overlay query transport #overlay
   - [ ] Add broadcast handling where needed for mempool #overlay #mempool
+- [ ] Implement native Rust QUIC transport #quic #network
+  - [ ] Define optional feature gating without native runtime dependencies #quic #features
+  - [ ] Add peer and session lifecycle handling #quic #network
+  - [ ] Model stream and datagram semantics with rate limiting and backpressure #quic #network #perf
+  - [ ] Integrate QUIC with block-sync, fast-sync, and overlay communication #quic #network #overlay
+  - [ ] Add offline fixtures and interoperability tests #quic #network #tests
 - [ ] Build mempool scanning support #mempool
   - [ ] Study `yungwine/ton-mempool` behavior and map required overlay flows #mempool #docs
   - [ ] Identify public API for pending external messages #mempool
   - [ ] Add stream API for pending messages #mempool
   - [ ] Add backpressure and filtering #mempool #perf
   - [ ] Add tests with captured fixtures before live network tests #mempool #tests
-
-## Emulator And Local LiteServer
-
-- [ ] Design the pure Rust emulator and local LiteServer phase only after ADNL UDP, DHT, and overlay are implemented #emulator #liteserver #adnl #dht #overlay #network #tests #docs
-  - [ ] Confirm ADNL UDP, DHT discovery, and overlay query transport are implemented and fixture-backed before starting emulator or local LiteServer design #emulator #liteserver #adnl #dht #overlay #tests
-  - [ ] Write `dev-docs/` design notes for emulator scope, trust assumptions, upstream TON source evidence, and unsupported execution paths #emulator #tvm #docs
-  - [ ] Define emulator execution scope for account state, config, time/logical-time context, get-method execution, inbound message execution, transaction results, and action results #emulator #tvm #tests
-  - [ ] Define the fixture strategy for comparing supported emulator paths against upstream TON or recorded live behavior #emulator #tvm #tests #docs
-  - [ ] Define local LiteServer protocol and API scope for fixture-backed account, block, config, get-method, and send-message workflows #liteserver #liteclient #network #tests #docs
-  - [ ] Plan feature gates, examples, CLI integration, and dev-test workflows for offline contract, wallet, jetton, LiteClient, and LiteBalancer tests #emulator #liteserver #liteclient #network #tests #docs
 
 ## CLI And Shell Automation
 
@@ -466,6 +462,7 @@ postponed work moves to `# BACKLOG`.
 - [ ] Add jetton and NFT convenience packages #contracts
 - [ ] Add storage daemon protocol support #storage
 - [ ] Add validator engine control API support #validator
+- [ ] Revisit pure Rust emulator and local LiteServer capabilities as an independent backlog item when their scope and protocol evidence are clear #emulator #liteserver #network #docs
 
 # DONE
 
