@@ -7,6 +7,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Added the manual `tonutils-schema-gen` package with deterministic TL/TL-B
+  source inventory, SHA-256 drift checks, and checked-in constructor metadata.
+
 ## [1.1.0] - 2026-06-02
 
 ### Added

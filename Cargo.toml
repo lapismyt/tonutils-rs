@@ -13,6 +13,7 @@ members = [
     "crates/tonutils-nft",
     "crates/tonutils-tl",
     "crates/tonutils-tlb",
+    "crates/tonutils-schema-gen",
     "crates/tonutils-tvm",
     "crates/tonutils-wallet",
 ]

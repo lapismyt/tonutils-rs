@@ -2,6 +2,19 @@
 
 TL, the Type Language, defines binary wire formats used by TON. Schemas define both data constructors and function constructors.
 
+## Checked-In Schema Inventory
+
+The manual `tonutils-schema-gen` package records the repository's checked-in TL
+snapshots in `dev-docs/schema-inventory.tsv`. Run
+`cargo run -p tonutils-schema-gen -- --write` after an intentional schema
+change, or `cargo run -p tonutils-schema-gen -- --check` in CI and before a
+release. The generator hashes source files with SHA-256 and emits deterministic
+constructor metadata under `crates/tonutils-tl/src/tl/generated/`.
+
+These metadata modules are an inventory and compile fixture, not a replacement
+for the handwritten wire codecs yet. Constructor ids and field expressions
+remain subject to the schema-specific validation described below.
+
 ## Constructor Shape
 
 General form:

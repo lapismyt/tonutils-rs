@@ -1,0 +1,7 @@
+# Deterministic inventory of checked-in TON schemas
+# path\tkind\tsha256\tconstructors\tmodule
+crates/tonutils-tl/src/tl/schemas/lite_api.tl	TL	a05e782303a1a1753762f08567dd9332be84fee4a135da4a1f4edd9ab038f1e9	103	crates/tonutils-tl/src/tl/generated/schema_lite_api.rs
+crates/tonutils-tl/src/tl/schemas/ton_api.tl	TL	db5f20a51abcc76bb9b29ab1ab6b485e4f61b4a4fab05484bed6d2626ce9459c	513	crates/tonutils-tl/src/tl/generated/schema_ton_api.rs
+crates/tonutils-tl/src/tl/schemas/tonlib_api.tl	TL	1a700a0e3924bd211c967fa9d1f378b925bf9e29dc57c8961ada89cf790f04a2	220	crates/tonutils-tl/src/tl/generated/schema_tonlib_api.rs
+crates/tonutils-tlb/src/tlb/schemas/block.tlb	TL-B	ac3c7991d6f9875df74800282df934b33054d48102194483d7775d0323e1cdba	17	crates/tonutils-tlb/src/tlb/generated/schema_block.rs
+crates/tonutils-tlb/src/tlb/schemas/block_phase1.tlb	TL-B	8d9ad04f6ae7af291059fe8e355548fe5fbf776ad7ee4b20179afadd33cbc923	14	crates/tonutils-tlb/src/tlb/generated/schema_block_phase1.rs

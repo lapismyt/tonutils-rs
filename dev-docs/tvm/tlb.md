@@ -1,5 +1,15 @@
 # TL-B Data Models
 
+## Checked-In Schema Inventory
+
+`tonutils-schema-gen` also inventories the checked-in TL-B snapshots and emits
+deterministic constructor metadata under
+`crates/tonutils-tlb/src/tlb/generated/`. Use `--write` only when updating a
+schema snapshot and `--check` to enforce byte-identical regeneration. The
+metadata preserves constructor names, tag spelling, result types, field counts,
+and source SHA-256 values; it does not claim that every upstream TL-B type has
+been migrated to a generated codec.
+
 ## Purpose And Scope
 
 TL-B defines TON's bit-level schema language for data stored in TVM cells. It is

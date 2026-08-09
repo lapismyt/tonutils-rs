@@ -13,6 +13,7 @@
 pub mod adnl;
 pub mod common;
 pub mod error;
+pub mod generated;
 pub mod request;
 pub mod response;
 #[cfg(test)]
