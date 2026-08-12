@@ -33,7 +33,7 @@ repository = "https://github.com/lapismyt/tonutils-rs"
 rust-version = "1.85"
 
 [workspace.dependencies]
-aes = "0.8"
+aes = "0.9"
 anyhow = "1.0.99"
 async-trait = "0.1.89"
 base64 = "0.23"
