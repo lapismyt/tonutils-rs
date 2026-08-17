@@ -1,13 +1,14 @@
 # Roadmap
 
-This roadmap describes the intended development phases for `tonutils-rs`. It is a
-high-level planning document: `TODO.md` remains the detailed task tracker, and
-`dev-docs/README.md` is the entry point for protocol and implementation notes.
+This roadmap describes the intended development phases for `tonutils-rs`. It
+is a high-level planning document: `TODO.md` is the detailed task tracker, and
+`dev-docs/README.md` is the entry point for protocol evidence and
+implementation notes.
 
 ## Direction
 
-`tonutils-rs` is a pure Rust TON SDK inspired by `tonutils-go`. The crate should
-stay autonomous, flexible, and feature-gated.
+`tonutils-rs` is a pure Rust TON SDK inspired by `tonutils-go`. It remains
+autonomous, flexible, and feature-gated.
 
 Core constraints:
 
@@ -19,219 +20,86 @@ Core constraints:
 
 ## Current Status
 
-The project has a strong foundation (feature gates, ADNL TCP transport,
-LiteClient/LiteBalancer surfaces, TVM primitives, contract wrappers, CLI, and
-dev-docs). These are enablers, not the top priority.
+The project has completed its transition to the modular `tonutils-*` workspace
+for the upcoming 2.0 release. The independent crates separate TVM, TL, TL-B,
+ADNL, LiteClient, contracts, wallet, metadata, and related concerns while
+sharing a workspace version and feature-aware validation.
 
-Phase 1 has closed as the SDK foundation needed for TVM, BoC, TL, TL-B, and
-contract ergonomics. The immediate priority moves to ergonomic LiteClient,
+The foundation already includes native TVM and BoC primitives, ADNL TCP,
+LiteClient and LiteBalancer surfaces, typed-stack contract helpers, contract
+blueprints and provider boundaries, Wallet V4R2/V5R1 support, jetton and NFT
+payloads, and raw-preserving TEP metadata parsing. These are established
+capabilities, not the immediate roadmap bottleneck. Their remaining gaps stay
+explicitly tracked in `TODO.md`.
 
-1. Complete TVM types.
-2. Complete BoC handling, including an `Address` type with raw,
-   user-friendly, bounceable, non-bounceable, testnet, base64/base64url,
-   hex/raw, external-address, and precise parse/format capabilities.
-3. Use the supported TL-B schema parser/check-summary workflow for schema work.
-4. Expand user-defined TL and TL-B schemas where higher-level APIs need them.
-5. Add broader built-in TL and TL-B schemas beyond the Phase 1 surface.
-6. Close important LiteClient and LiteBalancer methods for contract data,
-   balance, transactions, code, and data.
-7. Add custom smart-contract client support with idiomatic Rust wrappers.
-8. Add built-in smart-contract wrappers for wallets and jettons.
-10. Keep reusable get-method argument/result abstractions complete enough for
-   wrapper work: the public conversion traits now cover common scalar, address,
-   cell, option, and tuple cases, with fixture and live-network expansion still
-   tracked in `TODO.md`.
-11. Expand typed metadata parsing for Jettons, NFTs, and future TEP-compatible
-   contract families while preserving unsupported raw content.
+The current priority order is:
 
-Hardening, productionization, and broad protocol expansion remain important but
-are complete.
+1. Complete deterministic, typed coverage of the pinned upstream TL and TL-B
+   schemas without treating parser gaps as opaque success paths.
+2. Replace raw-preserving block, shard-state, configuration, and proof wrappers
+   with stable typed models, backed by checked upstream or live-captured
+   fixtures and documented trust assumptions.
+3. Harden LiteBalancer and ADNL TCP reliability: connection lifecycle,
+   reconnects, backoff, peer scoring, boundary handling, and fixture-backed or
+   live-network evidence.
 
 ## Phase 1: TVM, BoC, TL, And TL-B Foundation
 
-Status: closed on 2026-05-09 as a compatibility foundation milestone.
+Status: closed on 2026-05-09 as the compatibility foundation milestone.
 
-Build the low-level primitives needed to decode, encode, and model TON data
-without depending on third-party Rust TON SDK crates:
+Phase 1 delivered the low-level primitives needed to encode, decode, and model
+TON data without third-party Rust TON SDK crates. It includes cells, slices,
+builders, BoC handling, addresses, dictionaries, TVM stack values, TL and TL-B
+schema support, deterministic schema inventory checks, and an initial typed
+block/config/proof wrapper slice.
 
-- Complete all required TVM value types and make `Cell`, `Slice`, `Builder`,
-  stack values, dictionaries, and numeric codecs spec-accurate.
-- Complete BoC serialization and deserialization, including common BoC variants,
-  CRC handling, index/cache-bit behavior where required, exotic cells, golden
-  fixtures, and string conversions.
-- Bring `Address` to complete user-facing capability: raw, user-friendly,
-  bounceable/non-bounceable, testnet, base64/base64url, hex/raw forms, external
-  addresses, and precise parse/format validation.
-- Add macro support for TL-B definitions so crate code can express cell-level
-  schemas with checked serialization and deserialization.
-- Add support for user-defined TL and TL-B schemas, while keeping checked schema
-  maintenance and generated or derived code deterministic.
-- Maintain checked-in schema inventory and deterministic metadata generation with
-  the manual `tonutils-schema-gen` package; full typed upstream migration remains
-  a later phase.
-- Add built-in TL and TL-B schemas for core TON objects needed by the SDK,
-  including messages, accounts, transactions, blocks, config objects, wallet
-  payloads, and jetton payloads.
+The closed milestone does not imply that all upstream schemas or protocol
+fixtures are complete. The complete typed upstream TL/TL-B migration, deep
+block/config/proof models, and additional independent fixture evidence remain
+active work in `TODO.md`.
 
-Exit criteria for Phase 1:
+## Phase 2: High-Level Contracts And Wallets
 
-- BoC strings can be parsed into cells and serialized back across supported
-  ordinary and required exotic cell cases.
-- Core TL-B data models roundtrip through cells with golden fixtures.
-- Custom TL/TL-B schemas can be defined by crate users through the supported
-  macro/schema workflow.
-- Address behavior is protocol-correct and covered by TON Docs fixtures.
+Status: substantially complete; follow-up validation and coverage remain open.
 
-Current Phase 1 fixture status:
+Phase 2 built ergonomic SDK surfaces on the low-level foundation:
 
-- Address parsing and formatting are locked against embedded TON Docs vectors
-  for raw, bounceable, non-bounceable, test-only, URL-safe, and standard
-  base64 forms.
-- Ordinary BoC and library-reference exotic BoC behavior are locked against
-  small schema-derived embedded fixtures, including indexed decode and cache-bit
-  rejection policy.
-- TL-B runtime and macro direction is documented in `dev-docs/tvm/tlb.md`,
-  including intended trait shape, constructor tag handling, references,
-  `Maybe`, `Either`, `VarUInteger`, `HashmapE`, and error behavior.
-- The minimal TL-B runtime trait foundation is implemented in `src/tlb/mod.rs`,
-  including exact top-level decode, fixed tag helpers, `Maybe`, `Either`,
-  referenced value helpers, canonical `VarUInteger` checks, and focused unit
-  coverage.
-- The first hand-written TL-B blockchain model slice is implemented in
-  `src/tlb/message.rs`, covering `Anycast`, internal and external message
-  addresses, `Grams`, `CurrencyCollection`, `TickTock`, current upstream
-  `StateInit`, `CommonMsgInfo`, and `Message Any`.
-- The next hand-written message slice is implemented in `src/tlb/message.rs`,
-  covering `MsgAddress`, `CommonMsgInfoRelaxed`, `MessageRelaxed Any`,
-  `SimpleLib`, and `StateInitWithLibs`.
-- The closed `OutAction` family and `LibRef` are implemented in
-  `src/tlb/message.rs`, including send-message, set-code, reserve-currency,
-  and change-library actions.
-- `OutList` is implemented in `src/tlb/message.rs` for transaction action
-  linked lists, with the upstream 255-action limit enforced.
-- Schema-exact `TrActionPhase` metadata is implemented in `src/tlb/message.rs`,
-  including `AccStatusChange`, `StorageUsed`, optional fees/result argument,
-  `uint16` counters, and `action_list_hash:bits256` without embedding `OutList`.
-- Transaction-description models are implemented in `src/tlb/transaction.rs`,
-  including storage, credit, skipped/VM compute, bounce, split/merge info, and
-  all `TransactionDescr` constructors. `Maybe ^TrActionPhase` is represented as
-  `Option<TrActionPhase>` with exact referenced child-cell encoding.
-- Account and top-level transaction models are implemented in
-  `src/tlb/transaction.rs`, including `StorageExtraInfo`, `StorageInfo`,
-  `AccountState`, `AccountStorage`, `AccountStatus`, `Account`, `ShardAccount`,
-  concrete `HASH_UPDATE Account`, and `transaction$0111` with exact referenced
-  inbound/outbound message payloads. Split/merge install
-  `prepare_transaction:^Transaction` fields now decode as boxed `Transaction`
-  values.
-- Augmented dictionary support is implemented in `src/tvm/dict.rs` with
-  `HashmapAug` and `HashmapAugE`, preserving leaf, fork, and top-level
-  augmentation values. The account-block slice in `src/tlb/transaction.rs`
-  covers `DepthBalanceInfo`, `ShardAccounts`, `AccountBlock`, and
-  `ShardAccountBlocks`.
-- The currently implemented TL-B message, account, transaction, shard-account,
-  and augmented dictionary model surface is locked by small embedded synthetic
-  offline BoC fixtures with expected root hashes, exact decode checks, and
-  canonical reserialization checks.
-- Phase 1 now has a deterministic upstream-derived TL-B schema slice for
-  block/config/proof families in `src/tlb/schemas/block_phase1.tlb`, a checked
-  generated summary in `src/tlb/generated/block_phase1.rs`, and schema drift
-  tests in `src/tlb/schema.rs`.
-- Generated-backed Phase 1 wrappers cover `ShardIdent`, `ExtBlkRef`,
-  `BlockIdExt`, `Block`, `ValueFlow`, `BlockExtra`, `ShardState`,
-  `ConfigParams`, and exotic Merkle proof/update primitives while preserving
-  raw child cells for deeper generated families that remain follow-up work.
-- LiteClient BoC helpers preserve raw bytes and decoded root cells for semantic
-  payloads, and structurally inspect multi-root account proof BoCs for root
-  counts and representation hashes. They expose typed views for account `state`
-  cells, block, config, shard-state, and single-root proof payloads. The CLI can
-  decode BoCs, inspect known TL-B roots, and verify the schema snapshot offline.
-- The CLI now has default-balancer high-level commands for status, account
-  state, get-method calls, transactions, blocks, and config retrieval while
-  retaining advanced `liteclient`, `balancer`, and raw compatibility commands.
-- `fixtures/phase1/` now contains checked-in BoC metadata and bytes for
-  message, relaxed-message, account, transaction, and all Phase 1
-  transaction-description constructor families. Normal library tests decode
-  these offline, compare root representation hashes, decode TL-B shape, and
-  require canonical reserialization.
-- Phase 1 TL-B macro support includes the `src/tlb/schema.rs` parser and
-  deterministic checked-summary workflow plus the optional
-  `tonutils-macros` workspace proc-macro crate for custom TL-B structs and
-  enums.
-- Full deep block/header/value-flow models, typed config-param families, and
-  broader captured live/upstream proof fixture evidence remain follow-up work
-  tracked in `TODO.md`.
+- Provider-bound contract clients, contract blueprints, state-init address
+  derivation, account code/data/balance access, and typed get-method stack
+  conversions.
+- Wallet V5R1 and V4R2 mnemonic, state, signed-body, external-message, and
+  provider workflows with deterministic offline coverage.
+- Typed jetton and NFT payload helpers plus common TEP-64 metadata parsing that
+  preserves unsupported or malformed content as raw cells.
+- LiteClient and LiteBalancer helpers for contract-facing account, method,
+  transaction, block, and configuration workflows.
 
+The remaining work is intentionally not hidden by this phase label: expand
+protocol-backed fixtures and live evidence, complete typed response coverage,
+and keep helper behavior synchronized as the TL/TL-B model surface grows. See
+`TODO.md` for the implementation-level checklist.
 
-Build ergonomic high-level SDK surfaces on top of the TVM, BoC, TL, and TL-B
-foundation:
+## Phase 3: Protocol Coverage And Reliability
 
-- Close important LiteClient and LiteBalancer methods for contract workflows:
-  fetch contract state, balance, transactions, code, data, raw state, and
-  get-method results with typed decoding where available.
-- Add custom smart-contract client support. The minimum surface must support
-  contract data serialization/deserialization, address computation from state
-  init plus workchain, deployment by external message, balance lookup, and
-  user-defined contract methods.
-- Add built-in smart-contract wrappers. Initially include wallet wrappers for
-  V4, V5, and Highload wallets, plus jetton wrappers based on a selected
-  available contract variant.
-  include a common raw-preserving metadata cell parser, TEP-64 on-chain and
-  off-chain content handling, jetton metadata for TEP-74 wrappers, and NFT item
-  and collection metadata for TEP-62 wrappers.
-- Grow metadata parsing into a reusable contract metadata layer. It should cover
-  Jetton, NFT item, NFT collection, and future TEP-compatible metadata formats;
-  expose typed fields for common keys; keep unknown, malformed, or unsupported
-  content raw-preserved; and stay usable independently of concrete wrapper
-  implementations.
-- Add get-method conversion traits similar in role to ton-rs `ToTVMStack` and
-  `FromTVMStack`, but shaped idiomatically for this crate. They should support
-  composing typed Rust arguments into TVM stack values, decoding stack results
-  into typed Rust values, surfacing precise conversion errors, and reusing the
-  TEP-74 and TEP-89.
-- Start wallet wrappers with Wallet V5R1 and V4R2. The first executable
-  milestone is offline-safe: storage data cells, wallet-id packing, TON
-  mnemonic derivation, signed external body construction, external message BoC
-  construction, address derivation, and deterministic tests before live sending
-  workflows are promoted.
-  description. As in tongo, contracts with different code must still work when
-  they support the required methods and message shapes.
-- Reuse the previously added TVM, BoC, TL, TL-B, and macro features for wrapper
+The next phase is driven by protocol completeness and evidence before broader
+surface expansion:
 
-Exit criteria for Phase 2:
-
-- Users can implement their own contract clients with typed data, methods,
-  state-init address derivation, deployment, and balance access.
-- Built-in wallet and jetton wrappers cover the initial contract families,
-  starting with Wallet V5R1.
-- Jetton and NFT wrappers can decode supported TEP-64 metadata content while
-  preserving unsupported raw content for follow-up parsing.
-- Contract metadata parsing is available as a reusable raw-preserving layer for
-  Jettons, NFTs, and later TEP-compatible contract families.
-- Contract wrappers can express get-method arguments and results through typed
-  TVM stack conversion traits instead of ad hoc stack assembly and decoding.
-  method and message interfaces are compatible.
-- LiteClient and LiteBalancer expose the contract data retrieval methods needed
-
-## Phase 3: Hardening, Reliability, And Productionization
-
-
-- Harden ADNL TCP behavior around boundaries, timeouts, graceful close, and
-  structured diagnostics.
-- Replace prototype balancer behavior with explicit peer states, reconnects,
-  backoff, scoring, and clean shutdown.
-- Stabilize CLI behavior, JSON error objects, and remaining machine-readable
-  output contracts across supported commands.
-- Make TVM cell, BoC, slice, builder, dictionary, and stack behavior fully
-  spec-accurate with expanded golden fixtures.
-- Keep proof material inspection and raw preservation clearly separated from
-  trustless verification. Full proof verification models, including
-  `ShardAccounts` path traversal for account proofs and trust documentation for
-  light client usage, are deliberately deferred to a later proof-specific
-  milestone.
+- Generate or handwrite complete typed models for the pinned upstream TL and
+  TL-B schema sets, with deterministic source inventory and drift checks.
+- Complete typed `block.tlb` coverage for blocks, shard states, configuration
+  parameters, Merkle proofs, and Merkle updates; preserve raw bytes only where
+  a typed interpretation is explicitly unavailable.
+- Add checked upstream or live-captured fixtures for representative account,
+  block, configuration, shard-state, and proof payloads. Clearly distinguish
+  structural inspection from trustless proof verification.
+- Harden ADNL TCP around frame limits, handshake failures, timeouts, graceful
+  close, and diagnostics.
+- Make LiteBalancer peer lifecycle explicit and reliable: reconnect descriptors,
+  backoff, health transitions, scoring, routing, and clean shutdown.
 
 ## Phase 4: Performance, Extended Protocols, And Ecosystem Coverage
 
-After production hardening:
+After protocol coverage and reliability are established:
 
 - Add benchmarks and allocation audits for ADNL, TL, TVM, BoC, and balancer
   hot paths.
@@ -240,13 +108,8 @@ After production hardening:
 - Define peer and session lifecycle handling for QUIC, including stream and
   datagram semantics, rate limiting, and backpressure.
 - Integrate QUIC with block-sync, fast-sync, and overlay communication paths.
-- Treat ADNL UDP, DHT, overlay, and QUIC as network prerequisites for extended
-  node-to-node capabilities, while keeping each capability optional and
-  feature-gated.
-- Add offline fixtures and interoperability tests for the network protocols
-  and their cross-protocol integration.
-- Expand docs/examples coverage to match the finalized high-level APIs and
-  CLI workflows.
+- Expand public documentation and examples alongside stabilized APIs and CLI
+  workflows.
 
 ## Later Backlog
 
@@ -254,13 +117,7 @@ These items remain intentionally postponed:
 
 - Toncenter-compatible HTTP API client.
 - WASM and no-std feasibility audits.
-- Wallet contract builders.
-- Jetton and NFT convenience packages.
+- Additional wallet contract builders.
+- Additional jetton and NFT convenience packages.
 - Storage daemon protocol support.
 - Validator engine control API support.
-
-## Roadmap Maintenance
-
-Update this file when project direction or major phases change. Keep detailed
-implementation tasks in `TODO.md`, and keep protocol facts, wire formats,
-invariants, and source-tracking notes in `dev-docs/`.
