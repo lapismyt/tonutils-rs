@@ -66,6 +66,9 @@ without depending on third-party Rust TON SDK crates:
   schemas with checked serialization and deserialization.
 - Add support for user-defined TL and TL-B schemas, while keeping checked schema
   maintenance and generated or derived code deterministic.
+- Maintain checked-in schema inventory and deterministic metadata generation with
+  the manual `tonutils-schema-gen` package; full typed upstream migration remains
+  a later phase.
 - Add built-in TL and TL-B schemas for core TON objects needed by the SDK,
   including messages, accounts, transactions, blocks, config objects, wallet
   payloads, and jetton payloads.

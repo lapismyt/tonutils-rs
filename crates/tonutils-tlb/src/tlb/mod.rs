@@ -7,6 +7,7 @@
 //! same [`TlbSerialize`] and [`TlbDeserialize`] traits.
 
 pub mod block;
+pub mod generated;
 pub mod message;
 pub mod schema;
 pub mod transaction;

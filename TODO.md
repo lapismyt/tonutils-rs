@@ -7,6 +7,11 @@ around idiomatic high-level LiteClient, LiteBalancer, contract, wallet,
 protocol facts and source evidence. Completed work moves to `# DONE`;
 postponed work moves to `# BACKLOG`.
 
+## Schema Generation
+
+- [x] Add a manual deterministic generator, source inventory, SHA-256 drift checks, and compileable TL/TL-B metadata fixtures #tl #tlb #tests #docs
+- [ ] Migrate the complete pinned upstream TL/TL-B source set to typed generated codecs without hiding parser gaps as opaque payloads #tl #tlb #tests
+
 ## High-Level SDK Capability Coverage
 
 - [ ] Track LiteClient workflow coverage #liteclient #network #contracts #tests #docs
