@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "Low-level TON smart-contract provider and message helpers."
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

@@ -8,6 +8,9 @@ repository.workspace = true
 keywords = ["ton", "blockchain", "tlb", "proc-macro", "sdk"]
 categories = ["development-tools::procedural-macro-helpers"]
 
+[lints]
+workspace = true
+
 [lib]
 proc-macro = true
 

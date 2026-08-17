@@ -72,3 +72,9 @@ tokio-tower = "0.6.0"
 tokio-util = { version = "0.7.16", features = ["codec"] }
 tower = { version = "0.5", features = ["make", "util"] }
 ureq = { version = "3.1.2", features = ["socks-proxy"] }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+complexity = { level = "warn", priority = -1 }
+style = { level = "warn", priority = -1 }
+perf = { level = "warn", priority = -1 }
