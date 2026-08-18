@@ -13,3 +13,6 @@ pub mod types;
 
 #[cfg(any())]
 mod tests;
+
+#[cfg(test)]
+mod connect_tests;

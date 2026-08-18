@@ -19,7 +19,7 @@ postponed work moves to `# BACKLOG`.
     - [x] Document contract-facing account state, run method, send message, and transaction workflow behavior for LiteClient providers #liteclient #contracts #docs
     - [-] Complete connect, block lookup, and raw query acceptance coverage #liteclient #network #tests #docs
       - [x] Add offline acceptance tests for block lookup request construction and raw query byte preservation #liteclient #network #tests
-      - [ ] Add connect-path acceptance coverage without live credentials #liteclient #network #tests
+      - [x] Add connect-path acceptance coverage without live credentials #liteclient #network #tests
   - [ ] Map typed LiteClient helpers to current local LiteAPI schema coverage and accepted protocol evidence #liteclient #tl #docs
   - [-] Add fixture-backed tests for typed LiteClient payload decoding and error behavior #liteclient #tvm #tlb #tests
     - [x] Add offline tests for typed success decoding, unexpected response rejection, lookup result decoding, and malformed BoC decode errors #liteclient #tvm #tlb #tests
