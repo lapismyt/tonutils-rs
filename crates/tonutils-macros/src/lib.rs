@@ -36,7 +36,7 @@ fn expand_struct(
     let field_specs = field_specs(fields)?;
     let store_fields = field_specs.iter().map(|field| {
         let access = &field.access;
-        field.store_tokens(quote!(&self.#access))
+        field.store_tokens(&quote!(&self.#access))
     });
     let load_fields = field_specs.iter().map(|field| {
         let binding = &field.binding;
@@ -101,7 +101,7 @@ fn expand_enum(name: &Ident, variants: &[syn::Variant]) -> Result<proc_macro2::T
         };
         let store_fields = specs.iter().map(|field| {
             let binding = &field.binding;
-            field.store_tokens(quote!(#binding))
+            field.store_tokens(&quote!(#binding))
         });
         store_arms.push(quote! {
             #pattern => {
@@ -166,7 +166,7 @@ struct FieldSpec {
 }
 
 impl FieldSpec {
-    fn store_tokens(&self, value: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    fn store_tokens(&self, value: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         if self.referenced {
             return quote!(::tonutils_tlb::store_ref_tlb(builder, #value)?;);
         }
@@ -197,14 +197,13 @@ fn field_specs(fields: &Fields) -> Result<Vec<FieldSpec>> {
                 .ident
                 .clone()
                 .unwrap_or_else(|| format_ident!("field_{index}"));
-            let access = field
-                .ident
-                .as_ref()
-                .map(|ident| quote!(#ident))
-                .unwrap_or_else(|| {
+            let access = field.ident.as_ref().map_or_else(
+                || {
                     let index = syn::Index::from(index);
                     quote!(#index)
-                });
+                },
+                |ident| quote!(#ident),
+            );
             Ok(FieldSpec {
                 binding,
                 access,
@@ -339,7 +338,7 @@ fn tlb_tag(attrs: &[Attribute]) -> Result<Option<String>> {
                         tag = Some(
                             normalize_tag_literal(&lit.value())
                                 .map_err(|message| syn::Error::new(lit.span(), message))?,
-                        )
+                        );
                     }
                     _ => return Err(meta.error("tag must be a string literal")),
                 }

@@ -1,5 +1,10 @@
 use tl_proto::{TlRead, TlResult};
 
+/// Reads a TL value, returning `None` when decoding fails.
+///
+/// # Errors
+///
+/// This helper currently converts all decoding errors into `None`.
 pub fn lossy_read<'tl, T: TlRead<'tl>>(packet: &'tl [u8]) -> TlResult<Option<T>> {
     let mut slice = packet;
     let result = T::read_from(&mut slice);
@@ -10,6 +15,15 @@ pub fn lossy_read<'tl, T: TlRead<'tl>>(packet: &'tl [u8]) -> TlResult<Option<T>>
     }
 }
 
+/// Formats a byte string as UTF-8.
+///
+/// # Panics
+///
+/// Panics when `bytes` is not valid UTF-8.
+///
+/// # Errors
+///
+/// Returns the formatter's error when writing fails.
 pub fn fmt_string(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
     write!(
         f,
@@ -18,10 +32,20 @@ pub fn fmt_string(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), std::
     )
 }
 
+/// Formats bytes as hexadecimal.
+///
+/// # Errors
+///
+/// Returns the formatter's error when writing fails.
 pub fn fmt_bytes(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
     write!(f, "0x{}", hex::encode(bytes))
 }
 
+/// Formats an optional byte slice as hexadecimal.
+///
+/// # Errors
+///
+/// Returns the formatter's error when writing fails.
 pub fn fmt_opt_bytes<T: AsRef<[u8]>>(
     bytes: &Option<T>,
     f: &mut std::fmt::Formatter,
@@ -41,9 +65,14 @@ pub mod struct_as_bytes {
     }
 
     pub fn write<P: TlPacket, T: TlWrite>(v: &T, packet: &mut P) {
-        tl_proto::serialize(v).write_to(packet)
+        tl_proto::serialize(v).write_to(packet);
     }
 
+    /// Reads a TL value from a packet.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying TL decoding error.
     pub fn read<'tl, T: TlRead<'tl>>(packet: &'tl [u8]) -> TlResult<T> {
         let mut slice = packet;
         <&'tl [u8]>::read_from(&mut slice).and_then(|x| tl_proto::deserialize(x))

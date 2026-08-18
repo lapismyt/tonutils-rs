@@ -44,6 +44,7 @@ pub struct RawWrappedRequest {
 }
 
 impl RawWrappedRequest {
+    #[must_use]
     pub fn into_lite_query(self) -> LiteQueryRaw {
         let mut data = Vec::new();
         if let Some(wait_masterchain_seqno) = self.wait_masterchain_seqno {

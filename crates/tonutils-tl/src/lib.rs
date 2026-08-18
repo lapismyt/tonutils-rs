@@ -1,4 +1,4 @@
-//! TL schema types and LiteAPI serialization.
+//! TL schema types and `LiteAPI` serialization.
 
 #[path = "tl/mod.rs"]
 pub mod tl;
