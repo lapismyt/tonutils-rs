@@ -294,7 +294,7 @@ impl LiteBalancer {
         Ok((peer_idx, start))
     }
 
-    #[cfg(any())]
+    #[cfg(test)]
     pub(super) async fn execute_request_for_test(
         &mut self,
         only_archive: bool,
