@@ -1,3 +1,5 @@
+#![allow(clippy::unreadable_literal)]
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;

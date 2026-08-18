@@ -332,7 +332,15 @@ fn generated_path_string(schema: &Schema) -> String {
 
 fn hex_digest(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    digest.iter().fold(
+        String::with_capacity(digest.len() * 2),
+        |mut output, byte| {
+            use std::fmt::Write;
+
+            write!(output, "{byte:02x}").expect("writing to a String cannot fail");
+            output
+        },
+    )
 }
 
 #[cfg(test)]

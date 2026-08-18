@@ -74,12 +74,14 @@ impl From<ConfigPublicKey> for [u8; 32] {
 }
 
 impl ConfigPublicKey {
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8; 32] {
         match self {
             ConfigPublicKey::Ed25519 { key } => key,
         }
     }
 
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; 32] {
         *self.as_bytes()
     }
@@ -101,27 +103,34 @@ impl DerefMut for LiteServerAddress {
 
 impl From<i32> for LiteServerAddress {
     fn from(v: i32) -> Self {
-        Self(Ipv4Addr::from(v as u32))
+        Self(Ipv4Addr::from(v.cast_unsigned()))
     }
 }
 
 impl From<LiteServerAddress> for i32 {
     fn from(v: LiteServerAddress) -> Self {
-        u32::from(v.0) as i32
+        u32::from(v.0).cast_signed()
     }
 }
 
 impl ConfigLiteServer {
+    #[must_use]
     pub fn socket_addr(&self) -> SocketAddrV4 {
         SocketAddrV4::new(*self.ip, self.port)
     }
 
+    #[must_use]
     pub fn public_key(&self) -> [u8; 32] {
         self.id.to_bytes()
     }
 }
 
 impl ConfigGlobal {
+    /// Returns the configured liteserver at `index`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::LiteServerIndexOutOfBounds`] when `index` is not configured.
     pub fn liteserver(&self, index: usize) -> Result<&ConfigLiteServer, ConfigError> {
         self.liteservers
             .get(index)
@@ -131,12 +140,18 @@ impl ConfigGlobal {
             })
     }
 
+    /// Returns the first configured liteserver.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::EmptyLiteServers`] when no liteservers are configured.
     pub fn first_liteserver(&self) -> Result<&ConfigLiteServer, ConfigError> {
         self.liteservers
             .first()
             .ok_or(ConfigError::EmptyLiteServers)
     }
 
+    #[must_use]
     pub fn select_liteservers(
         &self,
         limit: usize,
@@ -152,10 +167,16 @@ impl ConfigGlobal {
 }
 
 impl LiteServerBlacklist {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Parses liteserver indexes and public keys from `tokens`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a token is not a valid index or 32-byte public key.
     pub fn parse_tokens<'a>(
         tokens: impl IntoIterator<Item = &'a str>,
     ) -> Result<Self, LiteServerBlacklistParseError> {
@@ -170,10 +191,12 @@ impl LiteServerBlacklist {
         Ok(blacklist)
     }
 
+    #[must_use]
     pub fn contains(&self, index: usize, liteserver: &ConfigLiteServer) -> bool {
         self.indexes.contains(&index) || self.ids.contains(&liteserver.public_key())
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.indexes.is_empty() && self.ids.is_empty()
     }

@@ -1,4 +1,6 @@
-//! Tests for network_config module
+//! Tests for the `network_config` module.
+#![allow(clippy::cast_possible_wrap, clippy::ip_constant)]
+#![allow(clippy::unreadable_literal, clippy::uninlined_format_args)]
 
 use super::*;
 use base64::Engine;

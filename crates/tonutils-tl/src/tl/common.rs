@@ -33,6 +33,7 @@ impl From<&str> for String {
 }
 
 impl String {
+    #[must_use]
     pub fn new(str: std::string::String) -> Self {
         Self(str.into_bytes())
     }
@@ -57,14 +58,21 @@ impl Display for Int256 {
 }
 
 impl Int256 {
+    #[must_use]
     pub fn to_hex(&self) -> std::string::String {
         hex::encode(self.0)
     }
 
+    /// Parses a hexadecimal 256-bit integer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`hex::FromHexError`] when `s` is not exactly 32 bytes of hexadecimal data.
     pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
         Ok(Int256(<[u8; 32]>::from_hex(s)?))
     }
 
+    #[must_use]
     pub fn random() -> Self {
         Self(rand::random())
     }

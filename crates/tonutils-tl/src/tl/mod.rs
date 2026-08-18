@@ -1,9 +1,11 @@
-//! Type Language (TL) structures for TON ADNL and LiteAPI traffic.
+#![allow(clippy::doc_markdown)]
+
+//! Type Language (TL) structures for TON ADNL and `LiteAPI` traffic.
 //!
 //! This module is available with the `tl` feature and contains the handwritten
 //! request, response, common identifier, and ADNL message types currently used
 //! by the crate. Serialization is backed by `tl-proto`, while local tests check
-//! implemented constructor ids against the checked-in LiteAPI schema snapshot.
+//! implemented constructor ids against the checked-in `LiteAPI` schema snapshot.
 //!
 //! TL constructor ids are 32-bit little-endian values on the wire. When adding
 //! or changing constructors, update the local schema text, keep tests covering

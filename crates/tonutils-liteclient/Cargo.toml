@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "TON LiteAPI client and liteserver balancer."
 
+[lints]
+workspace = true
+
 [features]
 default = ["network-config"]
 network-config = ["dep:tonutils-network-config"]
