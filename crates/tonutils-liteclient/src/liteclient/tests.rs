@@ -614,6 +614,38 @@ async fn query_raw_without_request_timeout_preserves_existing_behavior() {
     assert_eq!(client.query_raw([7]).await.unwrap(), vec![7]);
 }
 
+#[cfg(feature = "network-config")]
+#[tokio::test]
+async fn config_connection_errors_are_reported_before_network_io() {
+    use std::str::FromStr;
+    use tonutils_network_config::ConfigGlobal;
+
+    let empty = ConfigGlobal::from_str(r#"{"liteservers":[]}"#).unwrap();
+    let error = match super::client::LiteClient::connect_first(&empty).await {
+        Ok(_) => panic!("empty config must fail before network I/O"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        LiteError::TlError(TlError::ParseError(message))
+            if message.contains("network config has no liteservers")
+    ));
+
+    let config = ConfigGlobal::from_str(
+        r#"{"liteservers":[{"ip":16777343,"port":8001,"id":{"@type":"pub.ed25519","key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}]}"#,
+    )
+    .unwrap();
+    let error = match super::client::LiteClient::connect_config(&config, 1).await {
+        Ok(_) => panic!("invalid liteserver index must fail before network I/O"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        LiteError::TlError(TlError::ParseError(message))
+            if message.contains("liteserver index 1 is out of bounds")
+    ));
+}
+
 #[tokio::test]
 async fn query_typed_decodes_success_response_and_rejects_unexpected_type() {
     let info = tonutils_tl::response::MasterchainInfo {

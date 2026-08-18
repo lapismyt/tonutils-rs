@@ -527,7 +527,7 @@ pub fn decode_merkle_update_boc(raw: impl AsRef<[u8]>) -> Result<MerkleUpdate> {
     MerkleUpdate::from_exotic_cell(boc.root).context("failed to decode MERKLE_UPDATE exotic cell")
 }
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests {
     use super::*;
     use num_bigint::BigUint;

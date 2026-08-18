@@ -34,3 +34,6 @@ tonutils-network-config = { path = "../tonutils-network-config", version = "2.0.
 tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
 tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
 tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
+
+[dev-dependencies]
+num-bigint.workspace = true

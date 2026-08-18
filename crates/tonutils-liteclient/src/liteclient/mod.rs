@@ -11,5 +11,5 @@ mod response;
 pub mod server;
 pub mod types;
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests;

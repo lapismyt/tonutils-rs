@@ -46,7 +46,7 @@ impl LiteClient {
         })
     }
 
-    #[cfg(any())]
+    #[cfg(test)]
     pub(crate) fn from_service<S>(service: S) -> Self
     where
         S: tower::Service<RawWrappedRequest, Response = Vec<u8>, Error = LiteError>
@@ -114,7 +114,7 @@ impl LiteClient {
         self.request_timeout = None;
     }
 
-    #[cfg(any())]
+    #[cfg(test)]
     pub(crate) fn has_rate_limiter(&self) -> bool {
         self.rate_limiter.is_some()
     }
