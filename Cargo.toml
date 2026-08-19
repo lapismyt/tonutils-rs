@@ -15,6 +15,7 @@ members = [
     "crates/tonutils-tlb",
     "crates/tonutils-schema-gen",
     "crates/tonutils-tvm",
+    "crates/tonutils",
     "crates/tonutils-wallet",
 ]
 default-members = [
