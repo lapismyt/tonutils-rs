@@ -1,5 +1,5 @@
 use super::*;
-use crate::{TlbDeserialize, TlbSerialize};
+use crate::{DepthBalanceInfo, TlbDeserialize, TlbSerialize};
 use tonutils_tvm::Builder;
 
 #[test]
@@ -152,4 +152,48 @@ fn hash_update_uses_eight_bit_constructor_tag() {
     let cell = update.to_cell().unwrap();
     assert_eq!(cell.bit_len(), 8 + 256 + 256);
     assert_eq!(HashUpdate::from_cell(cell).unwrap(), update);
+}
+
+#[test]
+fn shard_state_unsplit_decodes_stable_fields_and_preserves_raw_children() {
+    let empty = Builder::new().build().unwrap();
+    let state = ShardStateUnsplitData {
+        global_id: -239,
+        shard_id: ShardIdent {
+            shard_pfx_bits: 60,
+            workchain_id: 0,
+            shard_prefix: 0x8000_0000_0000_0000,
+        },
+        seq_no: 1,
+        vert_seq_no: 2,
+        gen_utime: 1_700_000_000,
+        gen_lt: 3,
+        min_ref_mc_seqno: 4,
+        out_msg_queue_info: empty.clone(),
+        before_split: true,
+        accounts: ShardAccounts {
+            accounts: tonutils_tvm::HashmapAugE::empty(
+                256,
+                DepthBalanceInfo {
+                    split_depth: 0,
+                    balance: CurrencyCollection::grams(0u64.into()),
+                },
+            ),
+        },
+        overload_history: 5,
+        underload_history: 6,
+        total_balance: CurrencyCollection::grams(7u64.into()),
+        total_validator_fees: CurrencyCollection::grams(8u64.into()),
+        libraries: empty,
+        master_ref: None,
+        custom: None,
+    };
+
+    let cell = state.to_cell().unwrap();
+    assert_eq!(
+        ShardStateUnsplitData::from_cell(cell.clone()).unwrap(),
+        state
+    );
+    let wrapper = ShardStateUnsplit { cell };
+    assert_eq!(wrapper.decode_typed().unwrap(), state);
 }
