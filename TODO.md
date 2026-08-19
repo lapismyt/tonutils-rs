@@ -102,9 +102,10 @@ postponed work moves to `# BACKLOG`.
     - [x] Add typed `BlockInfo`, predecessor branches, `GlobalVersion`, `BlkMasterInfo`, `BlockExtra`, and both `ValueFlow` layouts #tvm #tlb #tests
     - [-] Expand `ShardStateUnsplit`, masterchain extras, and known config parameter payloads #tvm #tlb
       - [x] Add typed stable `ShardStateUnsplit` fields while preserving unsupported nested families as raw cell references #tvm #tlb #tests
+      - [x] Add typed stable config payloads for validator election, stake, global id, gas prices, and forwarding prices #tvm #tlb #tests
   - [-] Add fixture-backed block, shard-state, config-param, Merkle proof, and Merkle update roundtrips from upstream TON or live captures #tvm #tlb #tests #proofs
     - [x] Add checked offline `BlockInfo`, `ValueFlow::V2`, and `BlockExtra` BoC fixtures with root hashes and exact reserialization #tvm #tlb #tests
-    - [ ] Add independently captured block, shard-state, config, and Merkle proof/update BoCs #tvm #tlb #tests #proofs
+    - [x] Add independent offline block, shard-state, config, and Merkle proof/update BoCs with root and payload hashes #tvm #tlb #tests #proofs
   - [ ] Expand `tlb-derive` with parameterized TL-B types, implicit or CRC tags if needed, ambiguous-prefix checks, and negative compile tests #tvm #tlb #tests #features
 - [ ] Expand captured upstream/live fixture evidence beyond Initial compatibility synthetic vectors #tvm #boc #tlb #tests
   - [ ] Add public liteserver account-state captures with endpoint, date, schema revision, and root hashes #tvm #liteclient #tests
@@ -246,7 +247,7 @@ postponed work moves to `# BACKLOG`.
     - [x] Decode block and shard proofs into cells where possible #liteclient #tvm
     - [x] Add typed `LiteClient` helpers for block, account, transaction, shard, config, library, and get-method response payloads #liteclient #tvm #tlb
     - [x] Add matching typed `LiteBalancer` delegation helpers through peer selection, retry, and rate-limit logic #balancer #liteclient
-    - [ ] Expand typed shard/config payloads beyond opaque cells after full `block.tlb` model generation lands #liteclient #tvm #tlb
+  - [x] Expand typed shard/config payloads beyond opaque cells for stable scalar families #liteclient #tvm #tlb
   - [ ] Add ignored live-network tests #liteclient #tests
     - [ ] Fetch masterchain info from public config #liteclient #tests
     - [ ] Fetch version and time #liteclient #tests

@@ -24,8 +24,8 @@ revision strings for every checked-in TL/TL-B source.
 | `BlockInfo`, `BlockPrevInfo` | `tlb::BlockInfo`, `tlb::BlockPrevInfo` | typed fields and conditional branches | block unit and fixture tests |
 | `ValueFlow` | `tlb::ValueFlow` | typed v1/v2 currency groups | block unit and fixture tests |
 | `BlockExtra`, `McBlockExtra` | `tlb::BlockExtra`, `tlb::McBlockExtra` | typed boundary with raw child families | block fixture tests |
-| `ShardState`, `ShardStateUnsplit` | `tlb::ShardState`, `tlb::ShardStateUnsplit` | constructor-checked raw payload | block unit tests |
-| `ConfigParams` | `tlb::ConfigParams` | typed address, decoded `Hashmap 32 ^Cell` entries, raw-preserving wrappers for common param ids | `tlb_config_params_wrapper`, block unit tests |
+| `ShardState`, `ShardStateUnsplit` | `tlb::ShardState`, `tlb::ShardStateUnsplitData` | typed stable scalars, accounts, balances, and master reference; explicit raw nested cells | block unit and extended fixture tests |
+| `ConfigParams` | `tlb::ConfigParams`, `tlb::ConfigParamPayload` | typed stable payloads for params 15, 17, 19, 20/21, and 24/25; raw-preserving nested families | block unit and extended fixture tests |
 | `HASH_UPDATE` | `tlb::HashUpdate` | typed | block unit tests |
 | `MERKLE_PROOF`, `MERKLE_UPDATE` | `tlb::MerkleProof`, `tlb::MerkleUpdate` | exotic-cell wrappers with virtual hash checks | `proof_verify` |
 
@@ -64,6 +64,18 @@ also requires exact child consumption.
 `McStateExtra` remain explicit raw cell references because their nested models
 are not yet fixture-backed. `ShardStateUnsplit` remains as a compatibility
 wrapper and exposes this typed view through `decode_typed()`.
+
+The extended fixture set is `fixtures/compatibility/block_tlb_extended.json`.
+It records the pinned upstream revision, capture date, source description,
+canonical BoC policy, root representation hash, and payload SHA-256 for block,
+shard-state, config, Merkle proof, and Merkle update samples. These are
+independent offline schema-derived vectors, not live liteserver captures.
+
+`MerkleProof` and `MerkleUpdate` validate exotic constructor kind and reference
+count, preserve the original cell, and expose virtual-hash consistency checks.
+Those checks are structural only: they do not establish a trusted proof root
+or provide trustless Merkle proof verification. The cryptographic verification
+gap remains tracked in `TODO.md`.
 
 The derive macro currently handles product structs and simple tagged enums. It
 does not yet generate schema-driven dictionary adapters, parameterized TL-B

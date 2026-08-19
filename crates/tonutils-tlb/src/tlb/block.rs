@@ -7,8 +7,8 @@
 //! verification.
 
 use crate::{
-    CurrencyCollection, Result, ShardAccounts, TlbDeserialize, TlbError, TlbSerialize, expect_tag,
-    load_ref_tlb, store_ref_tlb, store_tag,
+    CurrencyCollection, Grams, Result, ShardAccounts, TlbDeserialize, TlbError, TlbSerialize,
+    expect_tag, load_ref_tlb, store_ref_tlb, store_tag,
 };
 use std::sync::Arc;
 use tonutils_tvm::{BitKey, Builder, Cell, HashmapE, Slice};
@@ -971,6 +971,81 @@ pub struct ConfigParam {
     pub value: ConfigParamValue,
 }
 
+/// Stable, typed payloads for config parameters whose schema is self-contained.
+///
+/// Parameters with dictionaries, validator sets, or version-dependent nested
+/// families remain available through [`ConfigParamValue`] as raw cells.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigParamPayload {
+    /// Config parameter 15.
+    ValidatorElection {
+        validators_elected_for: u32,
+        elections_start_before: u32,
+        elections_end_before: u32,
+        stake_held_for: u32,
+    },
+    /// Config parameter 17.
+    ValidatorStake {
+        min_stake: Grams,
+        max_stake: Grams,
+        min_total_stake: Grams,
+        max_stake_factor: u32,
+    },
+    /// Config parameter 19.
+    GlobalId(i32),
+    /// Config parameters 20 and 21.
+    GasLimits(GasLimitsPrices),
+    /// Config parameters 24 and 25.
+    ForwardPrices(MsgForwardPrices),
+}
+
+/// Known `GasLimitsPrices` constructor variants.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GasLimitsPrices {
+    /// `gas_prices#dd`.
+    Basic {
+        gas_price: u64,
+        gas_limit: u64,
+        gas_credit: u64,
+        block_gas_limit: u64,
+        freeze_due_limit: u64,
+        delete_due_limit: u64,
+    },
+    /// `gas_prices_ext#de`.
+    Extended {
+        gas_price: u64,
+        gas_limit: u64,
+        special_gas_limit: u64,
+        gas_credit: u64,
+        block_gas_limit: u64,
+        freeze_due_limit: u64,
+        delete_due_limit: u64,
+    },
+    /// `gas_flat_pfx#d1`.
+    FlatPrefix {
+        flat_gas_limit: u64,
+        flat_gas_price: u64,
+        other: Box<Self>,
+    },
+}
+
+/// `msg_forward_prices#ea` payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MsgForwardPrices {
+    /// Lump-sum forwarding price.
+    pub lump_price: u64,
+    /// Per-bit forwarding price.
+    pub bit_price: u64,
+    /// Per-cell forwarding price.
+    pub cell_price: u64,
+    /// IHR price factor.
+    pub ihr_price_factor: u32,
+    /// First forwarding fraction.
+    pub first_frac: u16,
+    /// Subsequent forwarding fraction.
+    pub next_frac: u16,
+}
+
 /// Config parameter families needed by block/config/proof-adjacent APIs.
 ///
 /// Exact deep schemas remain intentionally raw-preserving until fixture-backed
@@ -989,6 +1064,8 @@ pub enum ConfigParamValue {
     Param17(Arc<Cell>),
     /// Config parameter 18.
     Param18(Arc<Cell>),
+    /// Config parameter 19.
+    Param19(Arc<Cell>),
     /// Config parameter 20.
     Param20(Arc<Cell>),
     /// Config parameter 21.
@@ -1110,6 +1187,7 @@ impl ConfigParamValue {
             15 => Self::Param15(raw),
             17 => Self::Param17(raw),
             18 => Self::Param18(raw),
+            19 => Self::Param19(raw),
             20 => Self::Param20(raw),
             21 => Self::Param21(raw),
             24 => Self::Param24(raw),
@@ -1120,6 +1198,228 @@ impl ConfigParamValue {
             _ => Self::Unknown { id, raw },
         }
     }
+}
+
+impl ConfigParam {
+    /// Decodes a stable, self-contained payload when this parameter is known.
+    ///
+    /// `Ok(None)` means that the parameter is intentionally still represented
+    /// as a raw cell because its nested schema is dictionary- or revision-
+    /// dependent.
+    pub fn decode_typed(&self) -> Result<Option<ConfigParamPayload>> {
+        let raw = match &self.value {
+            ConfigParamValue::Param15(raw)
+            | ConfigParamValue::Param17(raw)
+            | ConfigParamValue::Param19(raw)
+            | ConfigParamValue::Param20(raw)
+            | ConfigParamValue::Param21(raw)
+            | ConfigParamValue::Param24(raw)
+            | ConfigParamValue::Param25(raw) => raw.clone(),
+            ConfigParamValue::Unknown { .. }
+            | ConfigParamValue::Param0(_)
+            | ConfigParamValue::Param1(_)
+            | ConfigParamValue::Param2(_)
+            | ConfigParamValue::Param18(_)
+            | ConfigParamValue::Param32(_)
+            | ConfigParamValue::Param34(_)
+            | ConfigParamValue::Param36(_) => return Ok(None),
+        };
+
+        let decoded = match self.id {
+            15 => {
+                let (
+                    validators_elected_for,
+                    elections_start_before,
+                    elections_end_before,
+                    stake_held_for,
+                ) = load_validator_election(&raw)?;
+                ConfigParamPayload::ValidatorElection {
+                    validators_elected_for,
+                    elections_start_before,
+                    elections_end_before,
+                    stake_held_for,
+                }
+            }
+            17 => {
+                let mut slice = Slice::new(raw);
+                let payload = ConfigParamPayload::ValidatorStake {
+                    min_stake: Grams::load_tlb(&mut slice)?,
+                    max_stake: Grams::load_tlb(&mut slice)?,
+                    min_total_stake: Grams::load_tlb(&mut slice)?,
+                    max_stake_factor: slice.load_u32()?,
+                };
+                if slice.remaining_bits() != 0 || slice.remaining_refs() != 0 {
+                    return Err(TlbError::CustomSchema {
+                        schema: "ConfigParam17",
+                        message: "trailing bits or references".to_string(),
+                    });
+                }
+                payload
+            }
+            19 => ConfigParamPayload::GlobalId(load_global_id(&raw)?),
+            20 | 21 => ConfigParamPayload::GasLimits(GasLimitsPrices::from_cell(raw)?),
+            24 | 25 => ConfigParamPayload::ForwardPrices(MsgForwardPrices::from_cell(raw)?),
+            _ => return Ok(None),
+        };
+        Ok(Some(decoded))
+    }
+}
+
+impl TlbSerialize for GasLimitsPrices {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        match self {
+            Self::Basic {
+                gas_price,
+                gas_limit,
+                gas_credit,
+                block_gas_limit,
+                freeze_due_limit,
+                delete_due_limit,
+            } => {
+                builder.store_uint(0xddu8)?;
+                for value in [
+                    gas_price,
+                    gas_limit,
+                    gas_credit,
+                    block_gas_limit,
+                    freeze_due_limit,
+                    delete_due_limit,
+                ] {
+                    builder.store_u64(*value)?;
+                }
+            }
+            Self::Extended {
+                gas_price,
+                gas_limit,
+                special_gas_limit,
+                gas_credit,
+                block_gas_limit,
+                freeze_due_limit,
+                delete_due_limit,
+            } => {
+                builder.store_uint(0xdeu8)?;
+                for value in [
+                    gas_price,
+                    gas_limit,
+                    special_gas_limit,
+                    gas_credit,
+                    block_gas_limit,
+                    freeze_due_limit,
+                    delete_due_limit,
+                ] {
+                    builder.store_u64(*value)?;
+                }
+            }
+            Self::FlatPrefix {
+                flat_gas_limit,
+                flat_gas_price,
+                other,
+            } => {
+                builder.store_uint(0xd1u8)?;
+                builder.store_u64(*flat_gas_limit)?;
+                builder.store_u64(*flat_gas_price)?;
+                other.store_tlb(builder)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for GasLimitsPrices {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        match slice.load_uint::<u8>()? {
+            0xdd => Ok(Self::Basic {
+                gas_price: slice.load_u64()?,
+                gas_limit: slice.load_u64()?,
+                gas_credit: slice.load_u64()?,
+                block_gas_limit: slice.load_u64()?,
+                freeze_due_limit: slice.load_u64()?,
+                delete_due_limit: slice.load_u64()?,
+            }),
+            0xde => Ok(Self::Extended {
+                gas_price: slice.load_u64()?,
+                gas_limit: slice.load_u64()?,
+                special_gas_limit: slice.load_u64()?,
+                gas_credit: slice.load_u64()?,
+                block_gas_limit: slice.load_u64()?,
+                freeze_due_limit: slice.load_u64()?,
+                delete_due_limit: slice.load_u64()?,
+            }),
+            0xd1 => Ok(Self::FlatPrefix {
+                flat_gas_limit: slice.load_u64()?,
+                flat_gas_price: slice.load_u64()?,
+                other: Box::new(Self::load_tlb(slice)?),
+            }),
+            actual => Err(TlbError::TagMismatch {
+                constructor: "GasLimitsPrices",
+                expected_bits: "dd|de|d1",
+                actual_bits: format!("{actual:02x}"),
+            }),
+        }
+    }
+}
+
+impl TlbSerialize for MsgForwardPrices {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_uint(0xeau8)?;
+        builder.store_u64(self.lump_price)?;
+        builder.store_u64(self.bit_price)?;
+        builder.store_u64(self.cell_price)?;
+        builder.store_u32(self.ihr_price_factor)?;
+        builder.store_uint(self.first_frac)?;
+        builder.store_uint(self.next_frac)?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for MsgForwardPrices {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        let tag = slice.load_uint::<u8>()?;
+        if tag != 0xea {
+            return Err(TlbError::TagMismatch {
+                constructor: "MsgForwardPrices",
+                expected_bits: "ea",
+                actual_bits: format!("{tag:02x}"),
+            });
+        }
+        Ok(Self {
+            lump_price: slice.load_u64()?,
+            bit_price: slice.load_u64()?,
+            cell_price: slice.load_u64()?,
+            ihr_price_factor: slice.load_u32()?,
+            first_frac: slice.load_uint()?,
+            next_frac: slice.load_uint()?,
+        })
+    }
+}
+
+fn load_validator_election(cell: &Arc<Cell>) -> Result<(u32, u32, u32, u32)> {
+    let mut slice = Slice::new(cell.clone());
+    let values = (
+        slice.load_u32()?,
+        slice.load_u32()?,
+        slice.load_u32()?,
+        slice.load_u32()?,
+    );
+    if slice.remaining_bits() != 0 || slice.remaining_refs() != 0 {
+        return Err(TlbError::CustomSchema {
+            schema: "ConfigParam15",
+            message: "trailing bits or references".to_string(),
+        });
+    }
+    Ok(values)
+}
+
+fn load_global_id(cell: &Arc<Cell>) -> Result<i32> {
+    let mut slice = Slice::new(cell.clone());
+    let value = slice.load_int(32)? as i32;
+    if slice.remaining_bits() != 0 || slice.remaining_refs() != 0 {
+        return Err(TlbError::CustomSchema {
+            schema: "ConfigParam19",
+            message: "trailing bits or references".to_string(),
+        });
+    }
+    Ok(value)
 }
 
 fn load_hash(slice: &mut Slice) -> Result<[u8; 32]> {

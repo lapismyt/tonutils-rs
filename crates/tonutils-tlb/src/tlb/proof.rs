@@ -16,6 +16,11 @@ pub struct MerkleProof {
 }
 
 impl MerkleProof {
+    /// Decodes an exotic Merkle proof from a standalone cell.
+    pub fn from_cell(cell: Arc<Cell>) -> Result<Self> {
+        Self::from_exotic_cell(cell)
+    }
+
     /// Decodes and validates the proof cell shape without checking trust roots.
     pub fn from_exotic_cell(cell: Arc<Cell>) -> Result<Self> {
         match cell.exotic_kind() {
@@ -39,6 +44,11 @@ impl MerkleProof {
     pub fn verify_virtual_hash(&self) -> bool {
         self.virtual_root.hash() == self.virtual_hash
     }
+
+    /// Returns the original exotic cell for canonical BoC serialization.
+    pub fn to_cell(&self) -> Arc<Cell> {
+        self.cell.clone()
+    }
 }
 
 /// Wrapper for an exotic Merkle update cell.
@@ -61,6 +71,11 @@ pub struct MerkleUpdate {
 }
 
 impl MerkleUpdate {
+    /// Decodes an exotic Merkle update from a standalone cell.
+    pub fn from_cell(cell: Arc<Cell>) -> Result<Self> {
+        Self::from_exotic_cell(cell)
+    }
+
     /// Decodes and validates the update cell shape without checking trust roots.
     pub fn from_exotic_cell(cell: Arc<Cell>) -> Result<Self> {
         match cell.exotic_kind() {
@@ -88,5 +103,10 @@ impl MerkleUpdate {
     /// Verifies that child root hashes match the stored virtual hashes.
     pub fn verify_virtual_hashes(&self) -> bool {
         self.old.hash() == self.old_hash && self.new.hash() == self.new_hash
+    }
+
+    /// Returns the original exotic cell for canonical BoC serialization.
+    pub fn to_cell(&self) -> Arc<Cell> {
+        self.cell.clone()
     }
 }
