@@ -1,0 +1,71 @@
+{
+  "schema_revision": "upstream:3d478cbde854be03a18ab2a59f8fc3c565cf7d14;sha256:d940a095d86f76d8c1dd43424767383b920952b1c89831ee03fc0ab9a90b6b23;constructors:395",
+  "fixtures": [
+    {
+      "name": "typed-block-wrapper-empty-children",
+      "source": "independent offline BoC fixture generated from the pinned upstream block.tlb layout",
+      "capture_date": "2026-08-19",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb@3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+      "decoded_type": "Block",
+      "root_hash": "b53be2d7849ef9313cadea0e4874fc267b164ef09972e4931b0be87ec6b9f9d2",
+      "payload_sha256": "18ab34064be0c91224a88776409cc5cf14fa4e5a71a9992d7c45f4bb440a03ea",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c72010102010010010000041011ef55aaffffff1100000000"
+    },
+    {
+      "name": "typed-shard-state-unsplit-stable-fields",
+      "source": "independent offline BoC fixture generated from the pinned upstream block.tlb layout",
+      "capture_date": "2026-08-19",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb@3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+      "decoded_type": "ShardStateUnsplit",
+      "root_hash": "07565d3b7b541947939af06236649997ed86c84739213fe27a5becc13606c7d3",
+      "payload_sha256": "15c9b31c1f391761078aa5a47c5d42b19766caf35b597a703fcc9db8cad1f082",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c72010104010050030000000300100127000000000000000500000000000000061070841000035b9023afe2ffffff113c00000000800000000000000000000001000000026553f100000000000000000300000004a0000102"
+    },
+    {
+      "name": "typed-config-gas-prices",
+      "source": "independent offline BoC fixture generated from gas_prices#dd",
+      "capture_date": "2026-08-19",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb@3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+      "decoded_type": "GasLimitsPrices",
+      "root_hash": "5c65fd23333fe8544bdf9a1730cbfca84f8e5de549fb56de839f7e746c0b459e",
+      "payload_sha256": "fd6064774ff59950fd6c81e41be5a11b15a778a893c7dd257ddcbdb51c91f8c8",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c72010101010033000062dd000000000000000100000000000000020000000000000003000000000000000400000000000000050000000000000006"
+    },
+    {
+      "name": "typed-config-forward-prices",
+      "source": "independent offline BoC fixture generated from msg_forward_prices#ea",
+      "capture_date": "2026-08-19",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb@3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+      "decoded_type": "MsgForwardPrices",
+      "root_hash": "b75a489d720a84b45c71d12f7360983ca8ee0e9488f044c091bc6ba506574485",
+      "payload_sha256": "59997e91363db0e225ede75cc81c10e34319b8fa9923770c0abb391b15672901",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c72010101010023000042ea0000000000000001000000000000000200000000000000030000000400050006"
+    },
+    {
+      "name": "typed-merkle-proof",
+      "source": "independent offline exotic-cell BoC fixture using the pinned MerkleProof descriptor",
+      "capture_date": "2026-08-19",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb@3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+      "decoded_type": "MERKLE_PROOF",
+      "root_hash": "c4090e1912b84dabee7b62c4ea9ef268c0a198c81855aacb2ba458d59a2f9a88",
+      "payload_sha256": "8ff6f50c8c9323583795609bd65a625db33832d20b1a1b394794987bc50c54f1",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c7201010201002801000009460396a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7000000"
+    },
+    {
+      "name": "typed-merkle-update",
+      "source": "independent offline exotic-cell BoC fixture using the pinned MerkleUpdate descriptor",
+      "capture_date": "2026-08-19",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb@3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+      "decoded_type": "MERKLE_UPDATE",
+      "root_hash": "68ee9909f0e6dc8d39ecaf7880f07e7fa5e92d0df0e61f1acbacc8f6574e7f05",
+      "payload_sha256": "3918f90c63be26404021498aa41ecbc673d05aaead2e31c3467b2238f714f1e6",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c7201010201004b0100000a8a0496a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc796a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7000000000000"
+    }
+  ]
+}

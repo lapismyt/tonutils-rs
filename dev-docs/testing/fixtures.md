@@ -24,12 +24,16 @@ Every fixture should document:
 - Block proofs.
 - Get-method results.
 
-Typed block-model fixtures are stored in `fixtures/compatibility/block_models.json`.
+Typed block-model fixtures are stored in `fixtures/compatibility/block_models.json`
+and `fixtures/compatibility/block_tlb_extended.json`.
 Each entry records schema revision, source, capture date, source/endpoint note,
 decoded type, root hash, canonical reserialization rule, payload SHA-256, and
 BoC. The harness checks `BoC -> root hash -> typed decode -> semantic equality
 -> exact canonical BoC` for `BlockInfo`, `ValueFlow::V2`, and `BlockExtra`.
-The `fixtures/compatibility/manifest.json` file records pending live-capture
+The extended set also covers `Block`, `ShardStateUnsplit`, stable ConfigParam
+payloads, `MERKLE_PROOF`, and `MERKLE_UPDATE`; its exotic-cell checks are
+structural and are not trustless proof verification. The
+`fixtures/compatibility/manifest.json` file records pending live-capture
 gaps for account, block, config, shard-state, and Merkle proof/update payloads;
 network access is never required by the normal offline test suite.
 

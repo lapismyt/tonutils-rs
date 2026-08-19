@@ -22,6 +22,10 @@ wire formats, invariants, source priorities, and crate mapping belong here.
 12. [Blockchain data model](blockchain/data-model.md)
 13. [Blockchain TL-B coverage](blockchain/tlb-coverage.md)
 14. [Block, config, and proof TL-B slice](blockchain/block-config-proof.md)
+
+The block TL-B slice is pinned to upstream revision
+`3d478cbde854be03a18ab2a59f8fc3c565cf7d14`; typed-family fixture metadata is
+tracked in `fixtures/compatibility/block_tlb_extended.json`.
 15. [LiteClient request flow](liteclient/request-flow.md)
 16. [LiteClient rate limiting](liteclient/rate-limiting.md)
 17. [LiteClient workflow coverage](liteclient/workflow-coverage.md)

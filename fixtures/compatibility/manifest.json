@@ -17,17 +17,24 @@
       "live_capture": "pending"
     },
     {
+      "name": "extended-block-tlb-families",
+      "decoded_type": "Block / ShardStateUnsplit / ConfigParam / MERKLE_PROOF / MERKLE_UPDATE",
+      "evidence_kind": "offline_independent",
+      "path": "block_tlb_extended.json",
+      "live_capture": "pending"
+    },
+    {
       "name": "config-params-and-shard-state",
       "decoded_type": "ConfigParams / ShardState",
-      "evidence_kind": "typed_model_pending_fixture",
-      "path": null,
+      "evidence_kind": "offline_independent",
+      "path": "block_tlb_extended.json",
       "live_capture": "pending"
     },
     {
       "name": "merkle-proof-update",
       "decoded_type": "MERKLE_PROOF / MERKLE_UPDATE",
-      "evidence_kind": "structural_model_pending_fixture",
-      "path": null,
+      "evidence_kind": "offline_independent",
+      "path": "block_tlb_extended.json",
       "live_capture": "pending"
     }
   ]

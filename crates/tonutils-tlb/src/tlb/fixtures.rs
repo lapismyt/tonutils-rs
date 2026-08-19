@@ -489,12 +489,16 @@ mod offline_fixture_tests {
 #[cfg(test)]
 mod compatibility_checked_fixture_tests {
     use super::*;
+    use crate::block::{
+        Block, BlockExtra, BlockInfo, GasLimitsPrices, GlobalVersion, MsgForwardPrices,
+        ShardStateUnsplitData,
+    };
     use num_bigint::BigUint;
     use serde::Deserialize;
     use sha2::{Digest, Sha256};
     use std::fmt::Debug;
     use std::sync::Arc;
-    use tonutils_tvm::{Address, Builder, Cell, HashmapE, boc_to_hex, hex_to_boc};
+    use tonutils_tvm::{Address, Builder, Cell, HashmapAugE, HashmapE, boc_to_hex, hex_to_boc};
 
     #[derive(Debug, Deserialize)]
     struct FixtureSet {
@@ -936,5 +940,103 @@ mod compatibility_checked_fixture_tests {
             custom: None,
         };
         assert_fixture(find(&set, "typed-block-extra"), "BlockExtra", extra);
+    }
+
+    #[test]
+    fn compatibility_extended_block_fixtures_cover_typed_families() {
+        let set = fixture_set(include_str!(
+            "../../../../fixtures/compatibility/block_tlb_extended.json"
+        ));
+        let empty = Builder::new().build().unwrap();
+        assert_fixture(
+            find(&set, "typed-block-wrapper-empty-children"),
+            "Block",
+            Block {
+                global_id: -239,
+                info: empty.clone(),
+                value_flow: empty.clone(),
+                state_update: empty.clone(),
+                extra: empty.clone(),
+            },
+        );
+        let accounts = ShardAccounts {
+            accounts: HashmapAugE::empty(
+                256,
+                DepthBalanceInfo {
+                    split_depth: 0,
+                    balance: CurrencyCollection::grams(0u64.into()),
+                },
+            ),
+        };
+        assert_fixture(
+            find(&set, "typed-shard-state-unsplit-stable-fields"),
+            "ShardStateUnsplit",
+            ShardStateUnsplitData {
+                global_id: -239,
+                shard_id: ShardIdent {
+                    shard_pfx_bits: 60,
+                    workchain_id: 0,
+                    shard_prefix: 0x8000_0000_0000_0000,
+                },
+                seq_no: 1,
+                vert_seq_no: 2,
+                gen_utime: 1_700_000_000,
+                gen_lt: 3,
+                min_ref_mc_seqno: 4,
+                out_msg_queue_info: empty.clone(),
+                before_split: true,
+                accounts,
+                overload_history: 5,
+                underload_history: 6,
+                total_balance: CurrencyCollection::grams(7u64.into()),
+                total_validator_fees: CurrencyCollection::grams(8u64.into()),
+                libraries: empty,
+                master_ref: None,
+                custom: None,
+            },
+        );
+        assert_fixture(
+            find(&set, "typed-config-gas-prices"),
+            "GasLimitsPrices",
+            GasLimitsPrices::Basic {
+                gas_price: 1,
+                gas_limit: 2,
+                gas_credit: 3,
+                block_gas_limit: 4,
+                freeze_due_limit: 5,
+                delete_due_limit: 6,
+            },
+        );
+        assert_fixture(
+            find(&set, "typed-config-forward-prices"),
+            "MsgForwardPrices",
+            MsgForwardPrices {
+                lump_price: 1,
+                bit_price: 2,
+                cell_price: 3,
+                ihr_price_factor: 4,
+                first_frac: 5,
+                next_frac: 6,
+            },
+        );
+
+        for name in ["typed-merkle-proof", "typed-merkle-update"] {
+            let fixture = find(&set, name);
+            let payload = hex::decode(&fixture.boc_hex).unwrap();
+            assert_eq!(
+                hex::encode(Sha256::digest(&payload)),
+                fixture.payload_sha256
+            );
+            let cell = hex_to_boc(&fixture.boc_hex).unwrap();
+            assert_eq!(hex::encode(cell.hash()), fixture.root_hash);
+            assert_eq!(boc_to_hex(&cell, false).unwrap(), fixture.boc_hex);
+            if name.ends_with("proof") {
+                let proof = MerkleProof::from_exotic_cell(cell).unwrap();
+                assert!(proof.verify_virtual_hash());
+            } else {
+                let update = MerkleUpdate::from_exotic_cell(cell).unwrap();
+                assert!(update.verify_virtual_hashes());
+            }
+        }
     }
 }
