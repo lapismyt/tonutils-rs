@@ -231,8 +231,7 @@ pub struct DecodedTransactionList {
     pub ids: Vec<BlockIdExt>,
     /// Raw transactions BoC bytes.
     pub raw_transactions: Vec<u8>,
-    /// Transactions decoded from the BoC root when the payload contains a
-    /// single transaction root.
+    /// Transactions decoded from the BoC roots.
     pub transactions: Vec<Transaction>,
 }
 
@@ -241,8 +240,7 @@ pub struct DecodedTransactionList {
 pub struct DecodedBlockTransactionsExt {
     /// Original TL response.
     pub raw: BlockTransactionsExt,
-    /// Transactions decoded from the BoC root when the payload contains a
-    /// single transaction root.
+    /// Transactions decoded from the BoC roots.
     pub transactions: Vec<Transaction>,
     /// Decoded proof BoC when present.
     pub proof: Option<DecodedBoc>,
@@ -401,11 +399,14 @@ pub(crate) fn decode_optional_config(raw: &[u8]) -> Result<Option<DecodedConfigP
     }
 }
 
-pub(crate) fn decode_single_transaction_list(raw: &[u8]) -> Result<Vec<Transaction>> {
+pub(crate) fn decode_transaction_list(raw: &[u8]) -> Result<Vec<Transaction>> {
     if raw.is_empty() {
         Ok(Vec::new())
     } else {
-        decode_transaction_boc(raw).map(|transaction| vec![transaction])
+        deserialize_boc_roots(raw)?
+            .into_iter()
+            .map(|root| Transaction::from_cell(root).context("failed to decode Transaction TL-B"))
+            .collect()
     }
 }
 

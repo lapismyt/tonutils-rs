@@ -31,14 +31,20 @@ The ignored integration tests in `tests/live_workflows.rs` exercise:
 
 - `getMasterchainInfo`;
 - `getVersion` and `getTime`;
-- `run_get_method` for `seqno` on the contract configured by
-  `TON_CONTRACT_ADDRESS`.
+- `run_get_method` for `seqno` on the configured public contract.
+- `listBlockTransactionsExt` for the latest masterchain block, including
+  multi-root transaction BoC decoding and the `incomplete` flag;
+- four sequential `getTransactions` calls of three transactions each for
+  `TON_CONTRACT_ADDRESS` (or the stable fallback contract), including cursor
+  progression and transaction/account validation.
 
 They use a public TON global config supplied through `TON_GLOBAL_CONFIG_JSON`.
 `TON_LS_INDEX` selects the liteserver, defaulting to `0`; the get-method test
-requires `TON_CONTRACT_ADDRESS`. If either required environment variable is
-absent, the relevant test reports a clear skip and succeeds without network
-access.
+and the four-page transaction test use `TON_CONTRACT_ADDRESS` or the stable
+mainnet example contract. If the config variable is absent, the tests report a
+clear skip and succeed without network access. The transaction-history test
+also reports a clear failure when the configured address has no usable latest
+transaction cursor.
 
 Run explicitly with:
 
