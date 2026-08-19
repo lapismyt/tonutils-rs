@@ -100,7 +100,8 @@ postponed work moves to `# BACKLOG`.
   - [x] Sync the complete upstream `crypto/block/block.tlb` file at commit `3d478cbde854be03a18ab2a59f8fc3c565cf7d14` with source hashes and constructor drift tests #tvm #tlb #docs #tests
   - [-] Replace raw-preserving block, shard-state, config, and proof wrappers with generated or handwritten typed models where stable #tvm #tlb #proofs
     - [x] Add typed `BlockInfo`, predecessor branches, `GlobalVersion`, `BlkMasterInfo`, `BlockExtra`, and both `ValueFlow` layouts #tvm #tlb #tests
-    - [ ] Expand `ShardStateUnsplit`, masterchain extras, and known config parameter payloads #tvm #tlb
+    - [-] Expand `ShardStateUnsplit`, masterchain extras, and known config parameter payloads #tvm #tlb
+      - [x] Add typed stable `ShardStateUnsplit` fields while preserving unsupported nested families as raw cell references #tvm #tlb #tests
   - [-] Add fixture-backed block, shard-state, config-param, Merkle proof, and Merkle update roundtrips from upstream TON or live captures #tvm #tlb #tests #proofs
     - [x] Add checked offline `BlockInfo`, `ValueFlow::V2`, and `BlockExtra` BoC fixtures with root hashes and exact reserialization #tvm #tlb #tests
     - [ ] Add independently captured block, shard-state, config, and Merkle proof/update BoCs #tvm #tlb #tests #proofs

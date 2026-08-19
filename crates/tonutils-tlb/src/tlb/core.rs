@@ -10,7 +10,7 @@ pub use tonutils_macros::{Tlb, Tlb as TlbDerive};
 pub use block::{
     BlkMasterInfo, Block, BlockExtra, BlockIdExtTlb, BlockInfo, BlockPrevInfo, ConfigParams,
     ExtBlkRef, GlobalVersion, HashUpdate, McBlockExtra, MerkleProof, MerkleUpdate, ShardIdent,
-    ShardState, ShardStateUnsplit, ValueFlow, ValueFlowFees, ValueFlowMain,
+    ShardState, ShardStateUnsplit, ShardStateUnsplitData, ValueFlow, ValueFlowFees, ValueFlowMain,
 };
 pub use message::{
     AccStatusChange, Anycast, CommonMsgInfo, CommonMsgInfoRelaxed, CurrencyCollection, Grams,

@@ -58,6 +58,13 @@ also requires exact child consumption.
 
 ## Known Limits
 
+`ShardStateUnsplitData` now decodes the stable scalar fields, typed
+`ShardAccounts`, balances, and optional `BlkMasterInfo` directly from the
+`shard_state#9023afe2` layout. `OutMsgQueueInfo`, `LibDescr` dictionaries, and
+`McStateExtra` remain explicit raw cell references because their nested models
+are not yet fixture-backed. `ShardStateUnsplit` remains as a compatibility
+wrapper and exposes this typed view through `decode_typed()`.
+
 The derive macro currently handles product structs and simple tagged enums. It
 does not yet generate schema-driven dictionary adapters, parameterized TL-B
 types, implicit CRC tags, ambiguous-prefix decision trees, or trybuild-style

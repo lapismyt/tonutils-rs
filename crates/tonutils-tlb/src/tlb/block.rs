@@ -7,8 +7,8 @@
 //! verification.
 
 use crate::{
-    CurrencyCollection, Result, TlbDeserialize, TlbError, TlbSerialize, expect_tag, load_ref_tlb,
-    store_ref_tlb, store_tag,
+    CurrencyCollection, Result, ShardAccounts, TlbDeserialize, TlbError, TlbSerialize, expect_tag,
+    load_ref_tlb, store_ref_tlb, store_tag,
 };
 use std::sync::Arc;
 use tonutils_tvm::{BitKey, Builder, Cell, HashmapE, Slice};
@@ -717,6 +717,178 @@ pub enum ShardState {
 pub struct ShardStateUnsplit {
     /// Original unsplit shard-state cell.
     pub cell: Arc<Cell>,
+}
+
+/// Typed fields of `shard_state#9023afe2`.
+///
+/// `OutMsgQueueInfo`, `LibDescr` and `McStateExtra` do not have typed models
+/// yet, so their cell boundaries are preserved explicitly rather than being
+/// folded into one opaque shard-state payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShardStateUnsplitData {
+    /// Global network id.
+    pub global_id: i32,
+    /// Shard identifier.
+    pub shard_id: ShardIdent,
+    /// Horizontal sequence number.
+    pub seq_no: u32,
+    /// Vertical sequence number.
+    pub vert_seq_no: u32,
+    /// Generation Unix timestamp.
+    pub gen_utime: u32,
+    /// Generation logical time.
+    pub gen_lt: u64,
+    /// Minimum referenced masterchain sequence number.
+    pub min_ref_mc_seqno: u32,
+    /// Raw `OutMsgQueueInfo` reference until that family is typed.
+    pub out_msg_queue_info: Arc<Cell>,
+    /// Whether the shard state is before a split.
+    pub before_split: bool,
+    /// Typed shard-account dictionary.
+    pub accounts: ShardAccounts,
+    /// Overload history counter.
+    pub overload_history: u64,
+    /// Underload history counter.
+    pub underload_history: u64,
+    /// Total shard balance.
+    pub total_balance: CurrencyCollection,
+    /// Total validator fees.
+    pub total_validator_fees: CurrencyCollection,
+    /// Raw `HashmapE 256 LibDescr` reference until `LibDescr` is typed.
+    pub libraries: Arc<Cell>,
+    /// Optional masterchain reference.
+    pub master_ref: Option<BlkMasterInfo>,
+    /// Raw optional `McStateExtra` reference until that family is typed.
+    pub custom: Option<Arc<Cell>>,
+}
+
+impl ShardStateUnsplit {
+    /// Decodes the stable fields of the shard state while preserving
+    /// unsupported nested families at their schema-defined cell boundaries.
+    pub fn decode_typed(&self) -> Result<ShardStateUnsplitData> {
+        ShardStateUnsplitData::from_cell(self.cell.clone())
+    }
+}
+
+impl TlbSerialize for ShardStateUnsplitData {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_u32(SHARD_STATE_TAG)?;
+        builder.store_int(self.global_id as i64, 32)?;
+        self.shard_id.store_tlb(builder)?;
+        builder.store_u32(self.seq_no)?;
+        builder.store_u32(self.vert_seq_no)?;
+        builder.store_u32(self.gen_utime)?;
+        builder.store_u64(self.gen_lt)?;
+        builder.store_u32(self.min_ref_mc_seqno)?;
+        builder.store_ref(self.out_msg_queue_info.clone())?;
+        builder.store_bit(self.before_split)?;
+        store_ref_tlb(builder, &self.accounts)?;
+
+        let extra = ShardStateUnsplitExtra {
+            overload_history: self.overload_history,
+            underload_history: self.underload_history,
+            total_balance: self.total_balance.clone(),
+            total_validator_fees: self.total_validator_fees.clone(),
+            libraries: self.libraries.clone(),
+            master_ref: self.master_ref.clone(),
+        };
+        store_ref_tlb(builder, &extra)?;
+        builder.store_bit(self.custom.is_some())?;
+        if let Some(custom) = &self.custom {
+            builder.store_ref(custom.clone())?;
+        }
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for ShardStateUnsplitData {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        let tag = slice.load_u32()?;
+        if tag != SHARD_STATE_TAG {
+            return Err(TlbError::TagMismatch {
+                constructor: "ShardStateUnsplit",
+                expected_bits: "9023afe2",
+                actual_bits: format!("{tag:08x}"),
+            });
+        }
+        let global_id = slice.load_int(32)? as i32;
+        let shard_id = ShardIdent::load_tlb(slice)?;
+        let seq_no = slice.load_u32()?;
+        let vert_seq_no = slice.load_u32()?;
+        let gen_utime = slice.load_u32()?;
+        let gen_lt = slice.load_u64()?;
+        let min_ref_mc_seqno = slice.load_u32()?;
+        let out_msg_queue_info = slice.load_reference()?;
+        let before_split = slice.load_bit()?;
+        let accounts = load_ref_tlb(slice, "ShardAccounts")?;
+        let extra: ShardStateUnsplitExtra = load_ref_tlb(slice, "ShardStateUnsplitExtra")?;
+        let custom = if slice.load_bit()? {
+            Some(slice.load_reference()?)
+        } else {
+            None
+        };
+        Ok(Self {
+            global_id,
+            shard_id,
+            seq_no,
+            vert_seq_no,
+            gen_utime,
+            gen_lt,
+            min_ref_mc_seqno,
+            out_msg_queue_info,
+            before_split,
+            accounts,
+            overload_history: extra.overload_history,
+            underload_history: extra.underload_history,
+            total_balance: extra.total_balance,
+            total_validator_fees: extra.total_validator_fees,
+            libraries: extra.libraries,
+            master_ref: extra.master_ref,
+            custom,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShardStateUnsplitExtra {
+    overload_history: u64,
+    underload_history: u64,
+    total_balance: CurrencyCollection,
+    total_validator_fees: CurrencyCollection,
+    libraries: Arc<Cell>,
+    master_ref: Option<BlkMasterInfo>,
+}
+
+impl TlbSerialize for ShardStateUnsplitExtra {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_u64(self.overload_history)?;
+        builder.store_u64(self.underload_history)?;
+        self.total_balance.store_tlb(builder)?;
+        self.total_validator_fees.store_tlb(builder)?;
+        builder.store_ref(self.libraries.clone())?;
+        builder.store_bit(self.master_ref.is_some())?;
+        if let Some(master_ref) = &self.master_ref {
+            master_ref.store_tlb(builder)?;
+        }
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for ShardStateUnsplitExtra {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(Self {
+            overload_history: slice.load_u64()?,
+            underload_history: slice.load_u64()?,
+            total_balance: CurrencyCollection::load_tlb(slice)?,
+            total_validator_fees: CurrencyCollection::load_tlb(slice)?,
+            libraries: slice.load_reference()?,
+            master_ref: if slice.load_bit()? {
+                Some(BlkMasterInfo::load_tlb(slice)?)
+            } else {
+                None
+            },
+        })
+    }
 }
 
 impl TlbSerialize for ShardStateUnsplit {
