@@ -2,6 +2,11 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -52,3 +57,29 @@ jobs:
             echo 'The retired full feature must not be used; validate every crate with --workspace --all-features instead.' >&2
             exit 1
           fi
+
+  live-tests:
+    name: Live liteserver smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Load public TON global config
+        run: |
+          {
+            echo 'TON_GLOBAL_CONFIG_JSON<<TON_GLOBAL_CONFIG_JSON_EOF'
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-all-errors --retry-delay 2 \
+              https://ton.org/global.config.json
+            echo 'TON_GLOBAL_CONFIG_JSON_EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Run live workflow smoke tests
+        run: cargo test -p tonutils-liteclient --test live_workflows -- --ignored --nocapture
