@@ -1897,6 +1897,7 @@ dependencies = [
  "futures",
  "hex",
  "log",
+ "num-bigint",
  "pin-project",
  "rand",
  "thiserror",

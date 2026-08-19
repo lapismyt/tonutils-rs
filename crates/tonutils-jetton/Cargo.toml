@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "TON jetton payloads, metadata, and get-method decoders."
 
+[lints]
+workspace = true
+
 [features]
 default = []
 provider = ["dep:tonutils-contracts"]

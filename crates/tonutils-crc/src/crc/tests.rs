@@ -119,7 +119,7 @@ fn test_crc16_vs_crc32_same_data() {
     let crc32 = CRC32.checksum(data);
 
     // CRC16 and CRC32 should produce different results
-    assert_ne!(crc16 as u32, crc32);
+    assert_ne!(u32::from(crc16), crc32);
 }
 
 #[test]

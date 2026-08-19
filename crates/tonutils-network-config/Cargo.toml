@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "TON global network configuration parsing."
 
+[lints]
+workspace = true
+
 [dependencies]
 base64.workspace = true
 hex.workspace = true

@@ -1,6 +1,6 @@
 use super::*;
 
-#[cfg(any())]
+#[cfg(test)]
 #[allow(clippy::module_inception)]
 mod tests {
     use super::*;
@@ -671,6 +671,56 @@ mod tests {
                 .map(|stats| (stats.total_requests, stats.current_requests)),
             Some((1, 0))
         );
+    }
+
+    #[tokio::test]
+    async fn core_liteclient_helpers_have_balancer_delegation_parity() {
+        let info = tonutils_tl::response::MasterchainInfo {
+            last: test_block_id(42),
+            state_root_hash: Int256([3; 32]),
+            init: ZeroStateIdExt {
+                workchain: -1,
+                root_hash: Int256([4; 32]),
+                file_hash: Int256([5; 32]),
+            },
+        };
+        let mut info_balancer = LiteBalancer::new(
+            vec![recording_response_client(
+                Arc::new(Mutex::new(Vec::new())),
+                tonutils_tl::response::Response::MasterchainInfo(info.clone()),
+            )],
+            Duration::from_secs(1),
+        );
+        info_balancer.alive_peers.write().await.insert(0);
+        assert_eq!(info_balancer.get_masterchain_info().await.unwrap(), info);
+
+        let mut time_balancer = LiteBalancer::new(
+            vec![recording_response_client(
+                Arc::new(Mutex::new(Vec::new())),
+                tonutils_tl::response::Response::CurrentTime(tonutils_tl::response::CurrentTime {
+                    now: 123,
+                }),
+            )],
+            Duration::from_secs(1),
+        );
+        time_balancer.alive_peers.write().await.insert(0);
+        assert_eq!(time_balancer.get_time().await.unwrap(), 123);
+
+        let version = tonutils_tl::response::Version {
+            mode: 1,
+            version: 2,
+            capabilities: 3,
+            now: 4,
+        };
+        let mut version_balancer = LiteBalancer::new(
+            vec![recording_response_client(
+                Arc::new(Mutex::new(Vec::new())),
+                tonutils_tl::response::Response::Version(version.clone()),
+            )],
+            Duration::from_secs(1),
+        );
+        version_balancer.alive_peers.write().await.insert(0);
+        assert_eq!(version_balancer.get_version().await.unwrap(), version);
     }
 
     #[tokio::test]

@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "Manual deterministic generator and inventory checker for checked-in TON schemas."
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "tonutils-schema-gen"
 path = "src/main.rs"

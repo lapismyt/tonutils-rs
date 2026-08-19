@@ -257,7 +257,7 @@ impl<S> Layer<S> for UnwrapErrorLayer {
     }
 }
 
-#[cfg(any())]
+#[cfg(test)]
 mod tests {
     use tower::{Layer, Service, service_fn};
 

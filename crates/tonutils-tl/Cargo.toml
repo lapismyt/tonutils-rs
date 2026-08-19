@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "TL schema types and LiteAPI serialization for TON."
 
+[lints]
+workspace = true
+
 [dependencies]
 derivative.workspace = true
 hex.workspace = true

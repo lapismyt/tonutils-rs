@@ -20,11 +20,11 @@ postponed work moves to `# BACKLOG`.
     - [-] Complete connect, block lookup, and raw query acceptance coverage #liteclient #network #tests #docs
       - [x] Add offline acceptance tests for block lookup request construction and raw query byte preservation #liteclient #network #tests
       - [x] Add connect-path acceptance coverage without live credentials #liteclient #network #tests
-  - [ ] Map typed LiteClient helpers to current local LiteAPI schema coverage and accepted protocol evidence #liteclient #tl #docs
+  - [x] Map typed LiteClient helpers to current local LiteAPI schema coverage and accepted protocol evidence #liteclient #tl #docs
   - [-] Add fixture-backed tests for typed LiteClient payload decoding and error behavior #liteclient #tvm #tlb #tests
     - [x] Add offline tests for typed success decoding, unexpected response rejection, lookup result decoding, and malformed BoC decode errors #liteclient #tvm #tlb #tests
-    - [ ] Add checked upstream or live-captured fixtures for representative block/account/proof payloads #liteclient #tvm #tlb #tests
-  - [ ] Add ignored live-network smoke tests for public config workflows #liteclient #network #tests
+    - [x] Add checked offline fixtures with source metadata for representative block/account/proof payloads #liteclient #tvm #tlb #tests
+  - [x] Add ignored live-network smoke tests for public config workflows #liteclient #network #tests
 - [ ] Track LiteBalancer workflow coverage #balancer #liteclient #network #tests #docs
   - [-] Define expected success and failure behavior for peer selection, retry, archival routing, and raw query delegation #balancer #network #tests #docs
     - [x] Document contract-facing account state, get-method, external-message, and transaction delegation parity with LiteClient #balancer #contracts #docs
@@ -37,7 +37,7 @@ postponed work moves to `# BACKLOG`.
     - [ ] Add reconnect state-machine coverage after peer descriptor recovery is implemented #balancer #network #tests
   - [-] Keep LiteBalancer typed helper coverage synchronized with LiteClient helper coverage #balancer #liteclient #docs
     - [x] Add offline parity checks for representative typed helper routing through peer selection, retry, and local decode error paths #balancer #liteclient #tests
-    - [ ] Keep adding representative parity checks when LiteClient typed helper coverage expands #balancer #liteclient #tests
+    - [x] Keep adding representative parity checks when LiteClient typed helper coverage expands #balancer #liteclient #tests
 - [-] Maintain RPS limiting for rented liteserver quotas as a first-class SDK capability #balancer #liteclient #network #perf #tests
   - [x] Add API-level configuration for global and per-peer RPS caps #balancer #liteclient
   - [x] Enforce limiter in LiteClient and LiteBalancer request paths with clear error/throttle semantics #balancer #liteclient #network

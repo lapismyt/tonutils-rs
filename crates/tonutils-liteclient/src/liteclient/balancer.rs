@@ -58,11 +58,11 @@ macro_rules! balanced_call {
 mod archive;
 mod execute;
 mod helpers;
-#[cfg(any())]
+#[cfg(test)]
 mod reliability_tests;
 mod selection;
 mod state;
-#[cfg(any())]
+#[cfg(test)]
 mod tests;
 mod types;
 
