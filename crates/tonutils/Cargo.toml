@@ -1,0 +1,35 @@
+[package]
+name = "tonutils"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A runtime facade for the pure-Rust TON SDK."
+readme = "../../README.md"
+keywords = ["ton", "blockchain", "liteclient", "tvm", "sdk"]
+categories = ["api-bindings", "cryptography::cryptocurrencies", "network-programming"]
+
+[lints]
+workspace = true
+
+[features]
+default = ["adnl-tcp", "liteclient-network-config"]
+adnl-tcp = ["tonutils-adnl/tcp"]
+liteclient-network-config = ["tonutils-liteclient/network-config"]
+jetton-provider = ["tonutils-jetton/provider"]
+nft-provider = ["tonutils-nft/provider"]
+wallet-provider = ["tonutils-wallet/provider"]
+
+[dependencies]
+tonutils-adnl = { path = "../tonutils-adnl", version = "2.0.0", default-features = false }
+tonutils-contracts = { path = "../tonutils-contracts", version = "2.0.0" }
+tonutils-crc = { path = "../tonutils-crc", version = "2.0.0" }
+tonutils-jetton = { path = "../tonutils-jetton", version = "2.0.0", default-features = false }
+tonutils-liteclient = { path = "../tonutils-liteclient", version = "2.0.0", default-features = false }
+tonutils-metadata = { path = "../tonutils-metadata", version = "2.0.0" }
+tonutils-network-config = { path = "../tonutils-network-config", version = "2.0.0" }
+tonutils-nft = { path = "../tonutils-nft", version = "2.0.0", default-features = false }
+tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
+tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
+tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
+tonutils-wallet = { path = "../tonutils-wallet", version = "2.0.0", default-features = false }

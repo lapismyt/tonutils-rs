@@ -1,8 +1,10 @@
 # TONUtils Rust Workspace
 
-TONUtils is a pure-Rust TON SDK workspace. Version 2.0 removes the monolithic
-`tonutils` facade: depend only on the focused `tonutils-*` crates your project
-uses.
+[![crates.io](https://img.shields.io/crates/v/tonutils.svg)](https://crates.io/crates/tonutils)
+
+TONUtils is a pure-Rust TON SDK workspace. The `tonutils` runtime facade groups
+the focused `tonutils-*` crates behind one dependency, while each focused crate
+remains available for applications that prefer narrower dependencies.
 
 ## Crates
 
@@ -15,21 +17,27 @@ uses.
 
 ## Install
 
+Add the facade with Cargo:
+
+```bash
+cargo add tonutils
+```
+
+Or add it directly to `Cargo.toml`:
+
 ```toml
 [dependencies]
-tonutils-tvm = "2.0.0"
-tonutils-tlb = "2.0.0"
+tonutils = "2"
 ```
 
 ```rust
-use tonutils_tvm::{Builder, serialize_boc};
+use tonutils::{Builder, serialize_boc};
 ```
 
-For LiteAPI applications, add `tonutils-liteclient` and, when global config
-parsing is needed, enable its default `network-config` feature or add
-`tonutils-network-config` directly. Wallet, jetton, and NFT payload APIs work
-offline by default; their provider extensions use the respective `provider`
-feature.
+The facade exports runtime crates as `tonutils::tvm`, `tonutils::tlb`,
+`tonutils::liteclient`, and so on. Its default features enable ADNL TCP and
+LiteAPI network-config support; provider integrations can be enabled with
+`jetton-provider`, `nft-provider`, and `wallet-provider`.
 
 ## Development
 
