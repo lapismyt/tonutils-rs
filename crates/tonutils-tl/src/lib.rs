@@ -7,6 +7,11 @@
 //!
 //! Schema changes should be backed by upstream TON schema evidence and a
 //! deterministic round-trip or constructor-id test.
+//!
+//! This crate is offline and does not open sockets. Pair it with
+//! [`tonutils_liteclient`](https://docs.rs/tonutils-liteclient) for live
+//! LiteAPI transport and with [`tonutils_tlb`](https://docs.rs/tonutils-tlb)
+//! for cell-backed TL-B values.
 
 #[path = "tl/mod.rs"]
 pub mod tl;

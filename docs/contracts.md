@@ -1,4 +1,4 @@
-# Contracts
+# TON Smart-Contract Reads and Get-Methods in Rust
 
 `tonutils-contracts` provides low-level building blocks for TON contract
 integrations: `ContractProvider`, raw get-method execution and result decoding,

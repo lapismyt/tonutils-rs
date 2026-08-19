@@ -9,6 +9,10 @@
 //! and references, dictionaries model Hashmap encodings, and [`TvmStack`]
 //! represents get-method values. See the book's TVM chapter for the limits of
 //! exotic cells, proof handling, and schema coverage.
+//!
+//! All builders, parsers, and serializers are offline. Live account or
+//! get-method data must be supplied by a provider such as
+//! [`tonutils_liteclient`](https://docs.rs/tonutils-liteclient).
 
 #[path = "tvm/mod.rs"]
 pub mod tvm;

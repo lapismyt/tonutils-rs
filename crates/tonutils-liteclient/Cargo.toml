@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "TON LiteAPI client and liteserver balancer."
+readme = "../../README.md"
+documentation = "https://docs.rs/tonutils-liteclient"
+keywords = ["ton", "liteapi", "liteserver", "adnl", "blockchain"]
+categories = ["network-programming", "cryptography::cryptocurrencies"]
 
 [package.metadata.docs.rs]
 all-features = true

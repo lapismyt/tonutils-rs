@@ -6,6 +6,7 @@ license.workspace = true
 repository.workspace = true
 description = "A runtime facade for the pure-Rust TON SDK."
 readme = "../../README.md"
+documentation = "https://docs.rs/tonutils"
 
 [package.metadata.docs.rs]
 all-features = true

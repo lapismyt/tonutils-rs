@@ -1,4 +1,4 @@
-# Wallets
+# TON Wallets in Rust: Addresses, Signing, and Offline Messages
 
 `tonutils-wallet` provides offline Wallet V4R2 and V5R1 mnemonic, state-init,
 signing, and transfer-payload APIs. Enable its `provider` feature only when

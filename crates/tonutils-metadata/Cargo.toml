@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "TEP-64 metadata parsing helpers for TON."
+readme = "../../README.md"
+documentation = "https://docs.rs/tonutils-metadata"
+keywords = ["ton", "metadata", "tep-64", "blockchain", "tvm"]
+categories = ["encoding", "cryptography::cryptocurrencies"]
 
 [package.metadata.docs.rs]
 all-features = true

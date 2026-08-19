@@ -17,6 +17,10 @@
 //! `metadata`, `network_config`, `nft`, `tl`, `tlb`, `tvm`, and `wallet` modules.
 //! Network trust and proof assumptions remain the responsibility of the
 //! application.
+//!
+//! Start with the [project guide](https://lapismyt.github.io/tonutils-rs/) for
+//! feature selection and offline/live workflow boundaries. CLI, proc-macro,
+//! and schema-generation binaries remain separate packages.
 
 #![allow(ambiguous_glob_reexports)]
 

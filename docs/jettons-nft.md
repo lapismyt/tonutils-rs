@@ -1,4 +1,4 @@
-# Jettons, NFTs, and Metadata
+# TON Jettons, NFTs, and TEP Metadata in Rust
 
 Audience: applications that inspect or construct TEP-62 NFT and TEP-74 jetton
 payloads. Prerequisites: familiarity with `tonutils-tvm` and a live provider

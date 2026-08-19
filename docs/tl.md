@@ -1,4 +1,4 @@
-# TL And LiteAPI
+# TON TL and LiteAPI Serialization in Rust
 
 The `tl` feature exposes Type Language structures used by ADNL and LiteAPI.
 The crate keeps local schema files under `src/tl/schemas/` and maps the

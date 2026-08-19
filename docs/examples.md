@@ -1,4 +1,4 @@
-# Examples
+# tonutils-rs Examples: Offline and Live TON Workflows
 
 Examples are compiled with explicit feature requirements in `Cargo.toml`. They
 include offline TVM/TL-B examples and live-network examples. Live-network
