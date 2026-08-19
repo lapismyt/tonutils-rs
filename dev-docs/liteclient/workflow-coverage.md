@@ -2,7 +2,8 @@
 
 This page records the Phase 2 LiteClient acceptance boundary. The workflow is
 offline-first: normal tests use service fakes and deterministic BoC fixtures;
-network smoke tests are explicitly ignored and require opt-in configuration.
+network smoke tests remain explicitly ignored and are also exercised by the CI
+workflow against a public TON liteserver configuration.
 
 ## Offline Acceptance
 
@@ -50,6 +51,19 @@ Run explicitly with:
 ```text
 TON_GLOBAL_CONFIG_JSON='<global-config-json>' cargo test -p tonutils-liteclient --test live_workflows -- --ignored --nocapture
 ```
+
+The `live-tests` GitHub Actions job runs the same command on pushes to `main`,
+pull requests targeting `main`, and manual `workflow_dispatch` runs. It loads
+`https://ton.org/global.config.json` at runtime, passes the JSON through
+`GITHUB_ENV`, and does not require repository secrets. The job uses the
+existing default `TON_LS_INDEX=0` and the stable mainnet contract configured by
+`live_workflows.rs` unless an environment override is added later.
+
+Because the tests depend on public internet access and an available public
+liteserver, a run can fail transiently because of DNS, HTTP, routing, endpoint
+availability, or liteserver load. Such failures do not necessarily indicate a
+LiteClient regression; inspect the job logs and rerun the workflow when the
+public service is temporarily unavailable.
 
 Live captures are not required in CI. Captured block/account/proof payloads
 from a public liteserver remain a follow-up evidence tier and must record the

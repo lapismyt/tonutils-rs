@@ -82,6 +82,12 @@ liteServer.runMethodResult mode:# id:tonNode.blockIdExt shardblk:tonNode.blockId
 
 The `exit_code` is contract execution output, not a transport error.
 
+`runSmcMethod.mode` is a bit field. Bit `2` (`mode & 4`) requests the
+`result` stack BoC in `runMethodResult`; callers that decode or otherwise
+consume result bytes must set this bit. The low-level client keeps `mode`
+explicit so callers can request other response fields or preserve server
+defaults.
+
 ## Transaction Listing
 
 ```tl

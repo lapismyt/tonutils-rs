@@ -45,14 +45,13 @@ Expected flow:
 Expected flow:
 
 1. Load config through the live-network defaults.
-2. Parse `TON_CONTRACT_ADDRESS` or use the documented mainnet default.
-3. When `TON_NETWORK=testnet`, require `TON_CONTRACT_ADDRESS` for default
-   `seqno` get-method examples until a stable testnet contract is documented.
-4. Fetch latest block context.
-5. Build TVM stack.
-6. Run method by name.
-7. Check exit code.
-8. Decode typed stack result.
+2. Require and parse `TON_CONTRACT_ADDRESS`; skip the live example when it is
+   absent.
+3. Fetch latest block context.
+4. Build TVM stack.
+5. Run method by name.
+6. Check exit code.
+7. Decode typed stack result.
 
 ## Send Message
 

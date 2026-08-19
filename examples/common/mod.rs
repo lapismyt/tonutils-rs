@@ -5,9 +5,6 @@ use std::str::FromStr;
 use anyhow::{Context, bail};
 use tonutils_network_config::ConfigGlobal;
 
-pub const DEFAULT_MAINNET_CONTRACT_ADDRESS: &str =
-    "UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
     Mainnet,
@@ -59,26 +56,15 @@ pub fn liteserver_index() -> anyhow::Result<usize> {
     }
 }
 
-pub fn contract_address_or_mainnet_default() -> anyhow::Result<String> {
-    match std::env::var("TON_CONTRACT_ADDRESS") {
-        Ok(address) => Ok(address),
-        Err(std::env::VarError::NotPresent) => Ok(DEFAULT_MAINNET_CONTRACT_ADDRESS.to_owned()),
-        Err(err) => Err(err).context("failed to read TON_CONTRACT_ADDRESS"),
-    }
-}
-
-pub fn get_method_contract_address() -> anyhow::Result<Option<String>> {
+pub fn contract_address() -> anyhow::Result<Option<String>> {
     match std::env::var("TON_CONTRACT_ADDRESS") {
         Ok(address) => Ok(Some(address)),
-        Err(std::env::VarError::NotPresent) if Network::from_env()? == Network::Testnet => {
+        Err(std::env::VarError::NotPresent) => {
             eprintln!(
-                "TON_NETWORK=testnet requires TON_CONTRACT_ADDRESS for get-method examples; \
-                 no stable default testnet seqno contract is defined"
+                "skipping contract example: TON_CONTRACT_ADDRESS is not set; \
+                 provide a contract address to run the example"
             );
             Ok(None)
-        }
-        Err(std::env::VarError::NotPresent) => {
-            Ok(Some(DEFAULT_MAINNET_CONTRACT_ADDRESS.to_owned()))
         }
         Err(err) => Err(err).context("failed to read TON_CONTRACT_ADDRESS"),
     }

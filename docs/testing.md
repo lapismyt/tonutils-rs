@@ -55,9 +55,7 @@ Current live example variables:
 - `TON_GLOBAL_CONFIG_JSON`: full TON global config JSON, overriding public
   config download.
 - `TON_LS_INDEX`: liteserver index for single-peer examples, defaulting to `0`.
-- `TON_CONTRACT_ADDRESS`: account address for contract examples. Mainnet
-  get-method examples default to
-  `UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP`; testnet get-method
+- `TON_CONTRACT_ADDRESS`: account address for contract examples. Contract
   examples require an explicit address and exit successfully when it is absent.
 - `TON_GET_METHOD`: optional get-method name, defaulting to `seqno`.
 - `TON_LITEAPI_REQUEST_HEX`: serialized LiteAPI request bytes for raw queries,
@@ -73,7 +71,7 @@ cargo run -p tonutils-cli -- --network testnet \
   liteclient masterchain-info --ls-index "${TON_LS_INDEX:-0}"
 cargo run -p tonutils-cli -- --network "${TON_NETWORK:-mainnet}" \
   contract run-get-method --ls-index "${TON_LS_INDEX:-0}" \
-  --address "${TON_CONTRACT_ADDRESS:-UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP}" \
+  --address "${TON_CONTRACT_ADDRESS:?set TON_CONTRACT_ADDRESS}" \
   --method "${TON_GET_METHOD:-seqno}"
 ```
 

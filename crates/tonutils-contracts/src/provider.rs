@@ -115,7 +115,13 @@ impl<'a, P: ContractProvider + ?Sized> Contract<'a, P> {
         stack: TvmStack,
     ) -> Result<RunMethodResult, P::Error> {
         self.provider
-            .run_get_method(0, block, self.address.clone(), method_id, stack)
+            .run_get_method(
+                crate::RUN_METHOD_MODE_RETURN_RESULT,
+                block,
+                self.address.clone(),
+                method_id,
+                stack,
+            )
             .await
     }
 
