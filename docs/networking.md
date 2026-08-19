@@ -1,4 +1,4 @@
-# Networking
+# TON Networking in Rust: ADNL, LiteAPI, and Global Config
 
 The current networking surface is native ADNL TCP for LiteAPI liteserver
 connections plus optional public network config parsing. ADNL UDP, DHT,

@@ -14,7 +14,7 @@ use tokio_util::codec::{Decoder, Framed};
 
 use crate::primitives::codec::AdnlCodec;
 
-/// Abstraction over [`AdnlSender`] and [`AdnlReceiver`] to keep things simple
+/// Abstraction over the ADNL send and receive halves to keep things simple.
 #[pin_project]
 pub struct AdnlPeer<T>
 where

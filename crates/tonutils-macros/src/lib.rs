@@ -1,4 +1,12 @@
-//! Proc-macro derive for the `tonutils` TL-B runtime traits.
+//! Procedural derives for the `tonutils-tlb` TL-B runtime traits.
+//!
+//! Most users should depend on [`tonutils_tlb`](https://docs.rs/tonutils-tlb)
+//! and use its re-exported derive workflow. This crate is the implementation
+//! package for the `Tlb` derive and is normally pulled in transitively.
+//!
+//! The crate is a compile-time helper with no runtime or network behavior.
+//! Depend on [`tonutils_tlb`](https://docs.rs/tonutils-tlb) for the public
+//! TL-B traits and feature-gated derive workflow.
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};

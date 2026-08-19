@@ -1,4 +1,4 @@
-# LiteBalancer
+# TON LiteBalancer in Rust: Multi-Peer LiteAPI Requests
 
 `LiteBalancer` is the current multi-peer wrapper around connected
 `LiteClient` instances. It is available with the `liteclient` feature and is

@@ -1,4 +1,4 @@
-# Getting Started
+# Getting Started with the Rust TON SDK
 
 `tonutils` is a native Rust TON SDK. The current public surface is focused on
 LiteAPI access over native ADNL TCP, TL serialization, TON cells/BoC primitives,

@@ -1,4 +1,4 @@
-# LiteClient
+# TON LiteClient in Rust: LiteAPI Queries and Contract Reads
 
 `LiteClient` sends LiteAPI requests directly to TON liteservers over native
 ADNL TCP. It is available with the `liteclient` feature, which also enables TL,

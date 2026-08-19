@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "TL-B data models and serialization for TON."
+readme = "../../README.md"
+documentation = "https://docs.rs/tonutils-tlb"
+keywords = ["ton", "tlb", "serialization", "blockchain", "tvm"]
+categories = ["encoding", "cryptography::cryptocurrencies"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [lints]
 workspace = true

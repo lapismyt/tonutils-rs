@@ -126,7 +126,7 @@ pub struct HighLevelCallArgs {
     pub address: String,
     /// Method name or numeric method id.
     pub method: String,
-    /// Stack argument: null, int:<decimal>, cell:<boc-hex>, slice:<boc-hex>, unsupported:<hex>, tuple:<json-array>, or list:<json-array>.
+    /// Stack argument: `null`, `int:<decimal>`, `cell:<boc-hex>`, `slice:<boc-hex>`, `unsupported:<hex>`, `tuple:<json-array>`, or `list:<json-array>`.
     #[arg(long = "arg", conflicts_with = "stack_json")]
     pub args: Vec<String>,
     /// Inline JSON stack array for scriptable nested input.
@@ -704,7 +704,7 @@ pub enum ContractCommand {
         /// Numeric method id.
         #[arg(long, conflicts_with = "method", required_unless_present = "method")]
         method_id: Option<u64>,
-        /// Stack argument: null, int:<decimal>, cell:<boc-hex>, slice:<boc-hex>, unsupported:<hex>, tuple:<json-array>, or list:<json-array>.
+        /// Stack argument: `null`, `int:<decimal>`, `cell:<boc-hex>`, `slice:<boc-hex>`, `unsupported:<hex>`, `tuple:<json-array>`, or `list:<json-array>`.
         #[arg(long = "arg", conflicts_with = "stack_json")]
         args: Vec<String>,
         /// Inline JSON stack array for scriptable nested input.

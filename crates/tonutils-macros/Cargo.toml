@@ -2,11 +2,16 @@
 name = "tonutils-macros"
 version.workspace = true
 edition.workspace = true
-description = "Procedural macros for tonutils TL-B and contract helpers."
 license.workspace = true
 repository.workspace = true
-keywords = ["ton", "blockchain", "tlb", "proc-macro", "sdk"]
+description = "Procedural macros for tonutils TL-B and contract helpers."
+readme = "../../README.md"
+documentation = "https://docs.rs/tonutils-macros"
+keywords = ["ton", "tlb", "proc-macro", "blockchain", "sdk"]
 categories = ["development-tools::procedural-macro-helpers"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [lints]
 workspace = true

@@ -1,4 +1,4 @@
-//! Thanks to https://github.com/tonstack/lite-client
+//! Thanks to <https://github.com/tonstack/lite-client>
 
 pub mod balancer;
 pub mod boc;

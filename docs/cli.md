@@ -1,4 +1,4 @@
-# CLI
+# tonutils CLI: TON Queries, BoC Tools, and Schema Checks
 
 The CLI is designed for shell scripts. Structured command results are written to
 stdout. Diagnostics and connection warnings are written to stderr.

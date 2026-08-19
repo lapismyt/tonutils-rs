@@ -1,3 +1,10 @@
+//! Deterministic checker for checked-in TON TL and TL-B schemas.
+//!
+//! The binary compares generated summaries and the schema inventory with the
+//! source files committed in the workspace. It does not fetch upstream data or
+//! modify a live network. Run `cargo run -p tonutils-schema-gen -- check` from
+//! the repository root when validating schema changes.
+
 use std::{
     collections::HashSet,
     fmt::Write as _,

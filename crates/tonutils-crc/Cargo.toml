@@ -5,6 +5,13 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "CRC helpers for TON protocols."
+readme = "../../README.md"
+documentation = "https://docs.rs/tonutils-crc"
+keywords = ["ton", "crc", "blockchain", "protocol"]
+categories = ["encoding", "cryptography::cryptocurrencies"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [lints]
 workspace = true

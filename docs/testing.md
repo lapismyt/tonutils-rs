@@ -1,4 +1,4 @@
-# Testing
+# Testing tonutils-rs: Offline Checks and Live-Network Workflows
 
 The repository keeps deterministic checks separate from live-network workflows.
 Local checks should not require secrets, public liteserver availability, or

@@ -1,4 +1,4 @@
-//! Thanks to https://github.com/tonstack/adnl-rs
+//! Thanks to <https://github.com/tonstack/adnl-rs>
 
 pub mod crypto;
 pub mod helper_types;

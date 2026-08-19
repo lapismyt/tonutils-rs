@@ -39,7 +39,7 @@ impl String {
     }
 }
 
-/// int256 8*[ int ] = Int256;
+/// TL schema declaration: `int256 8*[ int ] = Int256;`.
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq, Default, Hash)]
 pub struct Int256(#[derivative(Debug(format_with = "fmt_bytes"))] pub [u8; 32]);
