@@ -307,6 +307,7 @@ postponed work moves to `# BACKLOG`.
 
 - [-] Make TVM stack encoding compatible with LiteAPI `runSmcMethod` #contracts #tvm
   - [x] Encode root `VmStack.depth` as 24 bits for empty-stack live get-method calls #contracts #tvm #tests
+  - [x] Add ignored live smoke test for empty-stack `seqno` get-method calls #contracts #tests
   - [-] Verify non-empty stack BoC shape against TON node expectations #contracts #tests
     - [x] Add checked synthetic offline fixtures for non-empty scalar, deep chain, tuple/list, huge integer, cell/slice, and unsupported stack BoCs #contracts #tests
     - [x] Add ignored live smoke test for non-empty stack get-method calls #contracts #tests

@@ -79,7 +79,7 @@ async fn live_run_get_method_smoke() {
         .expect("getMasterchainInfo must return a typed response");
     let stack = client
         .run_get_method_typed(
-            0,
+            tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
             info.last,
             address,
             method_name_to_id("seqno"),

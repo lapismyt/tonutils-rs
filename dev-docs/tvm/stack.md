@@ -34,6 +34,9 @@ Tuples and lists can nest. Implementation must avoid the four-reference direct-c
 ## LiteAPI Relation
 
 `liteServer.runSmcMethod` sends `params:bytes` and receives `result:mode.2?bytes`. These bytes must match TON stack serialization, not an arbitrary SDK-local format.
+The caller must set `mode.2` (numeric mode bit `4`) when it needs the result
+BoC; result-consuming high-level helpers do this, while raw APIs leave the
+mode under caller control.
 The root `VmStack` cell starts with `depth:(## 24)`, followed by the stack list
 payload when depth is non-zero. Empty get-method calls therefore serialize to a
 BoC whose root cell contains exactly 24 zero bits and no references.

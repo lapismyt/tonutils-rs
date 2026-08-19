@@ -424,7 +424,7 @@ impl Cli {
                 let method_id = tonutils_contracts::method_name_to_id(method);
                 let result = client
                     .run_get_method(
-                        0,
+                        tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
                         last_block.clone(),
                         Address::from_str(address)?,
                         method_id,
@@ -619,7 +619,7 @@ impl Cli {
                     .context("run-get-method-typed requires --method or --method-id")?;
                 let stack = client
                     .run_get_method_typed(
-                        0,
+                        tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
                         block.clone(),
                         Address::from_str(address)?,
                         method_id,

@@ -62,6 +62,12 @@ Important result fields:
 
 Non-zero `exit_code` is a contract result, not a transport failure.
 
+The LiteAPI result stack is optional and is returned only when
+`runSmcMethod.mode` has bit `2` set (`mode = 4`). The high-level `Contract`
+helpers and CLI get-method commands set this result flag before decoding the
+returned stack. Low-level APIs retain their explicit `mode` argument and do
+not override caller-selected response flags.
+
 ## High-Level API Design
 
 The `contracts` module provides `Contract<'a, P>` over any `ContractProvider`.
