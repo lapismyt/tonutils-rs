@@ -64,6 +64,6 @@ Fixtures should include metadata files or comments explaining:
 
 ## Missing Work
 
-- Add `dev-docs/sources.md` or generated source metadata.
+- Add `docs/reference/sources.md` or generated source metadata.
 - Add schema sync command.
 - Add fixture metadata format.

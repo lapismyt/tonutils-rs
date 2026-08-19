@@ -58,5 +58,5 @@ The facade exports runtime crates as `tonutils::tvm`, `tonutils::tlb`,
 and LiteAPI network-config support; provider integrations can be enabled with
 `jetton-provider`, `nft-provider`, and `wallet-provider`.
 
-Protocol fixtures and internal design notes live in `dev-docs/`. Proof payload
+Protocol fixtures and internal design notes live in `docs/reference/`. Proof payload
 preservation is not equivalent to trust-level proof verification.

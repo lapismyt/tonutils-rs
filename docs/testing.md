@@ -6,7 +6,7 @@ external network access.
 
 Audience: contributors adding code, fixtures, examples, or documentation that
 could affect compile targets. Use this guide together with `AGENTS.md` for
-change workflow and `dev-docs/testing/fixtures.md` for fixture metadata rules.
+change workflow and `docs/reference/testing/fixtures.md` for fixture metadata rules.
 
 ## Local Checks
 

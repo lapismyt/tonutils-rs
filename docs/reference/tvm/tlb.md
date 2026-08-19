@@ -479,7 +479,7 @@ TL-B tests should be layered:
 - Require exact consumption for complete model decodes and referenced child
   values.
 - Keep generated or macro-expanded code deterministic and formatted.
-- Keep TL-B schema source tracking in `dev-docs/operations/source-tracking.md`
+- Keep TL-B schema source tracking in `docs/reference/operations/source-tracking.md`
   or in the model-specific documentation added with each schema family.
 
 ## Missing Work

@@ -25,9 +25,11 @@ done
 
 # Keep implementation notes in the same book, but make their purpose explicit.
 while IFS= read -r rel_path; do copy_markdown "$rel_path"; done < <(
-    find "$repo_root/dev-docs" -type f -name '*.md' -printf '%p\n' \
+    find "$repo_root/docs/reference" -type f -name '*.md' -printf '%p\n' \
         | sed "s|^$repo_root/||" | sort
 )
+
+copy_markdown docs/reference/schema-inventory.tsv
 
 for rel_path in CONTRIBUTING.md CODE_OF_CONDUCT.md SECURITY.md; do
     if [[ -f "$repo_root/$rel_path" ]]; then copy_markdown "$rel_path"; fi
@@ -81,61 +83,61 @@ cat > "$book_src/SUMMARY.md" <<'SUMMARY'
 
 ## Architecture and feature model
 
-- [Architecture](dev-docs/architecture/overview.md)
-- [Features](dev-docs/architecture/features.md)
-- [Error model](dev-docs/architecture/errors.md)
-- [Public API inventory](dev-docs/api/public-api.md)
-- [Examples policy](dev-docs/api/examples.md)
+- [Architecture](docs/reference/architecture/overview.md)
+- [Features](docs/reference/architecture/features.md)
+- [Error model](docs/reference/architecture/errors.md)
+- [Public API inventory](docs/reference/api/public-api.md)
+- [Examples policy](docs/reference/api/examples.md)
 
 ## TVM, TL-B, and BoC
 
-- [Addresses](dev-docs/tvm/addresses.md)
-- [Cells](dev-docs/tvm/cells.md)
-- [BoC](dev-docs/tvm/boc.md)
-- [Dictionaries](dev-docs/tvm/dictionaries.md)
-- [Stack](dev-docs/tvm/stack.md)
-- [TL-B](dev-docs/tvm/tlb.md)
-- [Schema language](dev-docs/tl/schema-language.md)
+- [Addresses](docs/reference/tvm/addresses.md)
+- [Cells](docs/reference/tvm/cells.md)
+- [BoC](docs/reference/tvm/boc.md)
+- [Dictionaries](docs/reference/tvm/dictionaries.md)
+- [Stack](docs/reference/tvm/stack.md)
+- [TL-B](docs/reference/tvm/tlb.md)
+- [Schema language](docs/reference/tl/schema-language.md)
 
 ## LiteAPI, ADNL, and network
 
-- [LiteAPI](dev-docs/tl/lite-api.md)
-- [Request flow](dev-docs/liteclient/request-flow.md)
-- [Proofs](dev-docs/liteclient/proofs.md)
-- [Workflow coverage](dev-docs/liteclient/workflow-coverage.md)
-- [Balancer](dev-docs/liteclient/balancer.md)
-- [Rate limiting](dev-docs/liteclient/rate-limiting.md)
-- [ADNL over TCP](dev-docs/network/adnl-tcp.md)
-- [ADNL over UDP](dev-docs/network/adnl-udp.md)
-- [DHT](dev-docs/network/dht.md)
-- [Overlays](dev-docs/network/overlays.md)
-- [Global config](dev-docs/network/global-config.md)
+- [LiteAPI](docs/reference/tl/lite-api.md)
+- [Request flow](docs/reference/liteclient/request-flow.md)
+- [Proofs](docs/reference/liteclient/proofs.md)
+- [Workflow coverage](docs/reference/liteclient/workflow-coverage.md)
+- [Balancer](docs/reference/liteclient/balancer.md)
+- [Rate limiting](docs/reference/liteclient/rate-limiting.md)
+- [ADNL over TCP](docs/reference/network/adnl-tcp.md)
+- [ADNL over UDP](docs/reference/network/adnl-udp.md)
+- [DHT](docs/reference/network/dht.md)
+- [Overlays](docs/reference/network/overlays.md)
+- [Global config](docs/reference/network/global-config.md)
 
 ## Blockchain and contracts
 
-- [Blockchain data model](dev-docs/blockchain/data-model.md)
-- [Messages](dev-docs/blockchain/messages.md)
-- [Sharding](dev-docs/blockchain/sharding.md)
-- [Config parameters](dev-docs/blockchain/config-params.md)
-- [Block config proofs](dev-docs/blockchain/block-config-proof.md)
-- [Contract messages](dev-docs/contracts/messages.md)
-- [Get-methods](dev-docs/contracts/get-methods.md)
-- [Wallet V4R2 mnemonics](dev-docs/contracts/wallet-v4r2-mnemonics.md)
-- [Wallet V5R1](dev-docs/contracts/wallet-v5r1.md)
-- [TEP metadata](dev-docs/contracts/tep-metadata.md)
+- [Blockchain data model](docs/reference/blockchain/data-model.md)
+- [Messages](docs/reference/blockchain/messages.md)
+- [Sharding](docs/reference/blockchain/sharding.md)
+- [Config parameters](docs/reference/blockchain/config-params.md)
+- [Block config proofs](docs/reference/blockchain/block-config-proof.md)
+- [Contract messages](docs/reference/contracts/messages.md)
+- [Get-methods](docs/reference/contracts/get-methods.md)
+- [Wallet V4R2 mnemonics](docs/reference/contracts/wallet-v4r2-mnemonics.md)
+- [Wallet V5R1](docs/reference/contracts/wallet-v5r1.md)
+- [TEP metadata](docs/reference/contracts/tep-metadata.md)
 
 ## Testing, fixtures, and operations
 
-- [Testing strategy](dev-docs/testing/strategy.md)
-- [Fixtures](dev-docs/testing/fixtures.md)
-- [Benchmarks](dev-docs/testing/benchmarks.md)
-- [Diagnostics](dev-docs/operations/diagnostics.md)
-- [Source tracking](dev-docs/operations/source-tracking.md)
+- [Testing strategy](docs/reference/testing/strategy.md)
+- [Fixtures](docs/reference/testing/fixtures.md)
+- [Benchmarks](docs/reference/testing/benchmarks.md)
+- [Diagnostics](docs/reference/operations/diagnostics.md)
+- [Source tracking](docs/reference/operations/source-tracking.md)
 
 ## Schema inventory and research
 
-- [Schema inventory](dev-docs/schema-inventory.tsv)
-- [Mempool research](dev-docs/research/mempool.md)
+- [Schema inventory](docs/reference/schema-inventory.tsv)
+- [Mempool research](docs/reference/research/mempool.md)
 
 # Project policies
 

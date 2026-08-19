@@ -53,7 +53,7 @@ jobs:
 
       - name: Reject retired full feature commands
         run: |
-          if rg -n -- '--features[[:space:]]+full|-F[[:space:]]+full' .github/workflows docs dev-docs; then
+          if rg -n -- '--features[[:space:]]+full|-F[[:space:]]+full' .github/workflows docs; then
             echo 'The retired full feature must not be used; validate every crate with --workspace --all-features instead.' >&2
             exit 1
           fi

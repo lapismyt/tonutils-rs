@@ -3,7 +3,7 @@
 This file follows the `todo-md/todo-md` format and is the detailed tracker for
 work that should not be hidden in prose. Active work is currently prioritized
 around idiomatic high-level LiteClient, LiteBalancer, contract, wallet,
-`ROADMAP.md` explains the phase intent at a higher level; `dev-docs/` records
+`ROADMAP.md` explains the phase intent at a higher level; `docs/reference/` records
 protocol facts and source evidence. Completed work moves to `# DONE`;
 postponed work moves to `# BACKLOG`.
 
@@ -83,7 +83,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Decode TEP-64 snake and chunked content cells with canonical bounds checks #metadata #tvm #tests
   - [x] Decode on-chain and off-chain URI content forms while preserving unsupported raw cells #metadata #tvm #tests
   - [x] Add raw-preserving fallback types for unknown keys, malformed values, and future TEP extensions #metadata #contracts
-  - [x] Document metadata wire formats, known limits, and unsupported content forms in `dev-docs/` #metadata #docs
+  - [x] Document metadata wire formats, known limits, and unsupported content forms in `docs/reference/` #metadata #docs
 - [x] Add jetton metadata support for TEP-74 wrappers #metadata #jettons #contracts #tests
   - [x] Decode typed jetton master get-method output needed for metadata lookup #jettons #contracts #tvm
   - [x] Map TEP-64 jetton metadata keys into typed Rust fields with raw unknown-key preservation #metadata #jettons
@@ -114,7 +114,7 @@ postponed work moves to `# BACKLOG`.
 
 ## Documentation
 
-- [ ] Expand `dev-docs` into a complete internal TON reference #docs
+- [ ] Expand `docs/reference` into a complete internal TON reference #docs
   - [ ] Add exact source links and schema revision notes for every protocol document #docs
     - [ ] Record upstream TON commit or schema date used for each sync #docs #tl
     - [ ] Record docs.ton.org pages used for each conceptual section #docs
@@ -479,12 +479,12 @@ postponed work moves to `# BACKLOG`.
 # DONE
 
 - [x] Establish protocol-compatible Address and ordinary BoC baseline #tvm #boc #address #tests #docs
-  - [x] Document supported raw and user-friendly address formats in `dev-docs/tvm/addresses.md` #tvm #address #docs
+  - [x] Document supported raw and user-friendly address formats in `docs/reference/tvm/addresses.md` #tvm #address #docs
   - [x] Add strict raw `workchain:hash` parsing and formatting helpers #tvm #address
   - [x] Support user-friendly base64 and base64url input with and without padding #tvm #address
   - [x] Preserve bounceable, non-bounceable, and test-only flags through parsing and explicit formatting helpers #tvm #address
   - [x] Add address validation tests for invalid tag, checksum, length, workchain, and hash input #tvm #address #tests
-  - [x] Document ordinary-cell BoC support, index table handling, cache-bit rejection, and missing exotic-cell work in `dev-docs/tvm/boc.md` #tvm #boc #docs
+  - [x] Document ordinary-cell BoC support, index table handling, cache-bit rejection, and missing exotic-cell work in `docs/reference/tvm/boc.md` #tvm #boc #docs
   - [x] Decode ordinary generic BoC index tables when present #tvm #boc
   - [x] Reject cache-bit BoCs with a precise unsupported-feature error #tvm #boc
   - [x] Add BoC regression tests for indexed decode, malformed index table, CRC mismatch, invalid root/reference indexes, trailing bytes, and string roundtrips #tvm #boc #tests
@@ -529,9 +529,9 @@ postponed work moves to `# BACKLOG`.
   - [x] Add fixture-backed transaction-description BoCs for ordinary, tick-tock, split, and merge constructors #tvm #tlb #tests
 - [x] Smoke-test live account proof BoC structural diagnostics for multi-root proof payloads #cli #liteclient #proofs #tests
 - [x] Create `AGENTS.md` #docs
-- [x] Create initial `dev-docs` directory #docs
-- [x] Restructure `dev-docs` into subsystem directories #docs
-- [x] Add `dev-docs/README.md` table of contents #docs
+- [x] Create initial `docs/reference` directory #docs
+- [x] Restructure `docs/reference` into subsystem directories #docs
+- [x] Add `docs/reference/README.md` table of contents #docs
 - [x] Add architecture, TL, network, TVM, LiteClient, contracts, research, and testing documentation sections #docs
 - [x] Add blockchain, crypto, API, and operations documentation sections #docs
 - [x] Create todo-md compliant `TODO.md` #docs

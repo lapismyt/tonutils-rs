@@ -1,4 +1,14 @@
-# TON Development Documentation
+# Internal reference
+
+This section is for maintainers, contributors, and AI agents working on
+tonutils-rs internals. It records implementation details and protocol evidence
+that are useful when changing the SDK, but it is not the recommended starting
+point for users learning the public API.
+
+The task-oriented pages in `docs/` are the public guides and form the first
+section of the mdBook. Use them for installation, feature selection, and common
+workflows; use this reference for design constraints, wire formats, invariants,
+fixtures, source tracking, and follow-up work.
 
 This directory is the internal technical reference for implementing `tonutils`. It is intentionally more implementation-oriented than general TON documentation: each page connects protocol facts to concrete Rust modules, invariants, tests, and missing work.
 
@@ -77,3 +87,8 @@ Use pytoniq and pytoniq-core for capability inspiration or comparison evidence
 after upstream TON facts are established. They are not API or structure parity
 targets. Record any deliberate protocol compatibility deviation in `TODO.md`
 and in the relevant subsystem document.
+
+Public guide entry points include [getting started](../getting-started.md),
+[TVM](../tvm.md), [TL](../tl.md), [LiteClient](../liteclient.md), and
+[testing](../testing.md). These links are reader entry points only; reference
+pages remain in the separate `Internal reference` navigation section.
