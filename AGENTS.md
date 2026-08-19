@@ -2,7 +2,7 @@
 
 This file is the operating handbook for AI agents and automated contributors
 working in `tonutils-rs`. Human-facing project direction lives in
-`README.md`, `ROADMAP.md`, `TODO.md`, `docs/`, and `dev-docs/`.
+`README.md`, `ROADMAP.md`, `TODO.md`, `docs/`, and `docs/reference/`.
 
 ## Rule Hierarchy
 
@@ -23,7 +23,7 @@ Follow these rules in order when instructions conflict:
    matching pytoniq APIs, naming, module structure, or behavior quirks.
 9. Use pytoniq and pytoniq-core only as capability inspiration or comparison
    evidence, never as parity targets or dependency sources.
-10. Keep protocol facts in `dev-docs/` before or alongside implementation.
+10. Keep protocol facts in `docs/reference/` before or alongside implementation.
 11. Keep `TODO.md` current and todo-md compliant when adding, completing, or
    deferring known gaps.
 12. Keep repo-tracked files at or below 1000 lines. When a file approaches the
@@ -33,12 +33,12 @@ Follow these rules in order when instructions conflict:
 ## Safe Development Workflow
 
 1. Inspect first. Read the relevant Rust modules, tests, `docs/`,
-   `dev-docs/`, `ROADMAP.md`, and `TODO.md` before deciding what to change.
+   `docs/reference/`, `ROADMAP.md`, and `TODO.md` before deciding what to change.
 2. Preserve user work. The worktree may be dirty; do not revert unrelated
    changes or generated files unless explicitly asked.
 3. State assumptions in comments, docs, or final notes when protocol evidence
    is incomplete. Do not hide scope expansion.
-4. Update `dev-docs/` before or alongside protocol, serialization, network, or
+4. Update `docs/reference/` before or alongside protocol, serialization, network, or
    trust-model changes.
 5. Add or update `TODO.md` entries for known gaps before implementation when
    the gap affects follow-up work.
@@ -222,10 +222,10 @@ Follow these rules in order when instructions conflict:
 - Public `docs/` pages should be task-oriented and identify audience,
   prerequisites, feature flags, live-network requirements, examples, current
   limits, and related guides.
-- Internal `dev-docs/` pages should describe purpose and scope, wire format or
+- Internal `docs/reference/` pages should describe purpose and scope, wire format or
   data model, invariants and edge cases, crate mapping, tests or fixtures, and
   missing work.
-- `dev-docs/README.md` is the table of contents. Update it whenever internal
+- `docs/reference/README.md` is the table of contents. Update it whenever internal
   docs are added, moved, or removed.
 - Prefer precise protocol terms over vague descriptions. Include constructor
   names, flags, numeric limits, byte order, and known failure modes.
@@ -253,7 +253,7 @@ Follow these rules in order when instructions conflict:
   before handing off.
 - If existing unrelated tests fail, report the exact command and failure
   summary without reverting unrelated work.
-- If protocol sources conflict, document the conflict in `dev-docs/`, choose
+- If protocol sources conflict, document the conflict in `docs/reference/`, choose
   the upstream TON behavior unless there is stronger fixture evidence, and add
   a TODO for unresolved compatibility work.
 - If fixture evidence is missing, add synthetic tests only for local invariants

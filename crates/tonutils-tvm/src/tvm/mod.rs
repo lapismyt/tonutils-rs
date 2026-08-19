@@ -16,7 +16,7 @@
 //! - TVM stack decoding preserves unsupported payloads for lossless diagnostics.
 //!
 //! The surface is still expanding toward full TON compatibility. Consult
-//! `docs/tvm.md`, `dev-docs/tvm/`, and `TODO.md` before changing wire-format
+//! `docs/tvm.md`, `docs/reference/tvm/`, and `TODO.md` before changing wire-format
 //! behavior.
 
 pub mod address;

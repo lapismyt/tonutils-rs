@@ -141,7 +141,7 @@ fn main() -> Result<(), Error> {
             }
             fs::write(&path, contents).map_err(|source| Error::Io { path, source })?;
         }
-        let path = root.join("dev-docs/schema-inventory.tsv");
+        let path = root.join("docs/reference/schema-inventory.tsv");
         fs::write(&path, inventory).map_err(|source| Error::Io { path, source })?;
         return Ok(());
     }
@@ -374,7 +374,7 @@ fn check_outputs(root: &Path, schemas: &[Schema], inventory: &str) -> Result<(),
             return Err(Error::Stale { path });
         }
     }
-    let path = root.join("dev-docs/schema-inventory.tsv");
+    let path = root.join("docs/reference/schema-inventory.tsv");
     let actual = fs::read_to_string(&path).map_err(|source| Error::Io {
         path: path.clone(),
         source,

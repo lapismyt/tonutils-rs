@@ -2,7 +2,7 @@
 
 This roadmap describes the intended development phases for `tonutils-rs`. It
 is a high-level planning document: `TODO.md` is the detailed task tracker, and
-`dev-docs/README.md` is the entry point for protocol evidence and
+`docs/reference/README.md` is the entry point for protocol evidence and
 implementation notes.
 
 ## Direction

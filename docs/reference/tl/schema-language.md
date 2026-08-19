@@ -5,7 +5,7 @@ TL, the Type Language, defines binary wire formats used by TON. Schemas define b
 ## Checked-In Schema Inventory
 
 The manual `tonutils-schema-gen` package records the repository's checked-in TL
-snapshots in `dev-docs/schema-inventory.tsv`. Run
+snapshots in `docs/reference/schema-inventory.tsv`. Run
 `cargo run -p tonutils-schema-gen -- --write` after an intentional schema
 change, or `cargo run -p tonutils-schema-gen -- --check` in CI and before a
 release. The generator hashes source files with SHA-256, emits constructor

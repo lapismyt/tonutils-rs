@@ -8,7 +8,7 @@ coverage for block, config, shard-state, and Merkle proof primitives. The source
 upstream snapshot in `src/tlb/schemas/block.tlb` and a checked
 generated summary in `src/tlb/generated/schema_block.rs`. The schema generator
 also records source hashes, constructor counts, and deterministic revisions in
-`dev-docs/schema-inventory.tsv`.
+`docs/reference/schema-inventory.tsv`.
 
 ## Wire Format And Data Model
 

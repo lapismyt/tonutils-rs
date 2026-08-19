@@ -123,7 +123,7 @@ the user-visible behavior, link related issues when applicable, and call out any
 feature flag, public API, protocol, trust-model, or live-network impact.
 
 Protocol, serialization, network, trust-model, and public API changes should
-include focused tests and relevant updates to `docs/`, `dev-docs/`, or
+include focused tests and relevant updates to `docs/`, `docs/reference/`, or
 `TODO.md`.
 
 ## Protocol Research
@@ -140,7 +140,7 @@ and keep the gap visible in `TODO.md`.
 ## Documentation And TODOs
 
 Keep repository text in English. Update public docs for user-facing behavior,
-internal `dev-docs/` for protocol or implementation details, and `TODO.md` for
+internal `docs/reference/` for protocol or implementation details, and `TODO.md` for
 known gaps, deferred work, or missing fixture evidence.
 
 `TODO.md` follows `todo-md/todo-md` conventions: task lines begin with `- [ ]`,
