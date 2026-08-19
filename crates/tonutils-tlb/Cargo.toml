@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "TL-B data models and serialization for TON."
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
 

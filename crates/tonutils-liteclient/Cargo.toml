@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "TON LiteAPI client and liteserver balancer."
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
 

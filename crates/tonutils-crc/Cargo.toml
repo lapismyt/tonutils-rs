@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "CRC helpers for TON protocols."
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
 

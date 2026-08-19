@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "Command-line tooling for TONUtils Rust crates."
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
 

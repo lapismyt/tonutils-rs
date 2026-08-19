@@ -3,6 +3,20 @@
 //! The focused `tonutils-*` crates remain available independently. This crate
 //! groups their runtime APIs under one dependency while keeping CLI,
 //! procedural macros, and schema-generation tools separate.
+//!
+//! Use the facade when an application spans several runtime layers. Depend on
+//! a focused crate when compile time, feature control, or a small dependency
+//! graph matters. The default features enable ADNL TCP and network-config
+//! support; provider helpers for jettons, NFTs, and wallets are opt-in.
+//!
+//! ```toml
+//! tonutils = { version = "2", features = ["wallet-provider"] }
+//! ```
+//!
+//! The facade re-exports the `adnl`, `contracts`, `crc`, `jetton`, `liteclient`,
+//! `metadata`, `network_config`, `nft`, `tl`, `tlb`, `tvm`, and `wallet` modules.
+//! Network trust and proof assumptions remain the responsibility of the
+//! application.
 
 #![allow(ambiguous_glob_reexports)]
 

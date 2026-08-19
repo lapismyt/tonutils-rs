@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "TON jetton payloads, metadata, and get-method decoders."
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
 

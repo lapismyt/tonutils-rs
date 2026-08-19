@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "Offline TON wallet data, signing, and message helpers."
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
 

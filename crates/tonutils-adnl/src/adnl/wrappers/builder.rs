@@ -4,7 +4,7 @@ use crate::{AdnlAddress, AdnlAesParams, AdnlHandshake};
 
 use crate::helper_types::CryptoRandom;
 
-/// Builder of [`AdnlHandshake`] structure, which then can be transformed into [`crate::AdnlClient`]
+/// Builder of [`AdnlHandshake`] values, which can then create a [`crate::AdnlPeer`].
 pub struct AdnlBuilder {
     aes_params: AdnlAesParams,
 }

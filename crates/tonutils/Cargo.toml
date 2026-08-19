@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "A runtime facade for the pure-Rust TON SDK."
 readme = "../../README.md"
+
+[package.metadata.docs.rs]
+all-features = true
 keywords = ["ton", "blockchain", "liteclient", "tvm", "sdk"]
 categories = ["api-bindings", "cryptography::cryptocurrencies", "network-programming"]
 

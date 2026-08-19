@@ -3,6 +3,9 @@ name = "tonutils-macros"
 version.workspace = true
 edition.workspace = true
 description = "Procedural macros for tonutils TL-B and contract helpers."
+
+[package.metadata.docs.rs]
+all-features = true
 license.workspace = true
 repository.workspace = true
 keywords = ["ton", "blockchain", "tlb", "proc-macro", "sdk"]

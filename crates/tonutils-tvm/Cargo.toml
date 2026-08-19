@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "TON TVM cells, BoC, slices, builders, addresses, and stacks."
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
 

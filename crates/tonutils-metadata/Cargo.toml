@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "TEP-64 metadata parsing helpers for TON."
 
+[package.metadata.docs.rs]
+all-features = true
+
 [lints]
 workspace = true
 

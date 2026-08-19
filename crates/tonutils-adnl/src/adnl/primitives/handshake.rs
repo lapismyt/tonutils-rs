@@ -72,7 +72,7 @@ impl AdnlHandshake {
         AdnlCodec::server(&self.aes_params)
     }
 
-    /// Send handshake over the given transport, build [`AdnlClient`] on top of it
+    /// Send handshake over the given transport and build an [`crate::AdnlPeer`] on top of it.
     pub async fn perform_handshake<T: AsyncReadExt + AsyncWriteExt + Unpin>(
         &self,
         transport: T,
