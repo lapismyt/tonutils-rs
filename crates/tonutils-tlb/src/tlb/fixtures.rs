@@ -838,4 +838,93 @@ mod phase1_checked_fixture_tests {
             },
         );
     }
+
+    #[test]
+    fn phase1_typed_block_fixtures_cover_block_info_value_flow_and_extra() {
+        let set = fixture_set(include_str!(
+            "../../../../fixtures/phase1/block_models.json"
+        ));
+        let previous = ExtBlkRef {
+            end_lt: 11,
+            seq_no: 12,
+            root_hash: [0x11; 32],
+            file_hash: [0x22; 32],
+        };
+        let info = BlockInfo {
+            version: 7,
+            not_master: true,
+            after_merge: false,
+            before_split: true,
+            after_split: false,
+            want_split: true,
+            want_merge: false,
+            key_block: true,
+            vert_seqno_incr: true,
+            flags: 0,
+            seq_no: 13,
+            vert_seq_no: 14,
+            shard: ShardIdent {
+                shard_pfx_bits: 60,
+                workchain_id: 0,
+                shard_prefix: 0x8000_0000_0000_0000,
+            },
+            gen_utime: 15,
+            start_lt: 16,
+            end_lt: 17,
+            gen_validator_list_hash_short: 18,
+            gen_catchain_seqno: 19,
+            min_ref_mc_seqno: 20,
+            prev_key_block_seqno: 21,
+            gen_software: Some(GlobalVersion {
+                version: 22,
+                capabilities: 23,
+            }),
+            master_ref: Some(BlkMasterInfo {
+                master: previous.clone(),
+            }),
+            prev_ref: BlockPrevInfo::Single {
+                prev: previous.clone(),
+            },
+            prev_vert_ref: Some(previous),
+        };
+        assert_fixture(
+            find(&set, "typed-block-info-conditional-fields"),
+            "BlockInfo",
+            info,
+        );
+
+        let collection = |amount: u64| CurrencyCollection::grams(amount.into());
+        let value_flow = ValueFlow::V2 {
+            main: ValueFlowMain {
+                from_prev_blk: collection(1),
+                to_next_blk: collection(2),
+                imported: collection(3),
+                exported: collection(4),
+            },
+            fees_collected: collection(10),
+            burned: collection(11),
+            fees: ValueFlowFees {
+                fees_imported: collection(5),
+                recovered: collection(6),
+                created: collection(7),
+                minted: collection(8),
+            },
+        };
+        assert_fixture(
+            find(&set, "typed-value-flow-v2"),
+            "ValueFlow::V2",
+            value_flow,
+        );
+
+        let child = Builder::new().build().unwrap();
+        let extra = BlockExtra {
+            in_msg_descr: child.clone(),
+            out_msg_descr: child.clone(),
+            account_blocks: child,
+            rand_seed: [0x33; 32],
+            created_by: [0x44; 32],
+            custom: None,
+        };
+        assert_fixture(find(&set, "typed-block-extra"), "BlockExtra", extra);
+    }
 }

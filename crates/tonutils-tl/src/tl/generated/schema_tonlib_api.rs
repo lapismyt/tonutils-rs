@@ -5,6 +5,9 @@
 pub const SCHEMA_PATH: &str = "crates/tonutils-tl/src/tl/schemas/tonlib_api.tl";
 pub const SCHEMA_KIND: &str = "TL";
 pub const SOURCE_SHA256: &str = "1a700a0e3924bd211c967fa9d1f378b925bf9e29dc57c8961ada89cf790f04a2";
+pub const CONSTRUCTOR_COUNT: usize = 220;
+pub const SCHEMA_REVISION: &str =
+    "sha256:1a700a0e3924bd211c967fa9d1f378b925bf9e29dc57c8961ada89cf790f04a2;constructors:220";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConstructorMetadata {

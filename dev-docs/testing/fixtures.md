@@ -23,6 +23,12 @@ Every fixture should document:
 - Block proofs.
 - Get-method results.
 
+Typed block-model fixtures are stored in `fixtures/phase1/block_models.json`.
+Each entry records schema revision, source, capture date, source/endpoint note,
+decoded type, root hash, canonical reserialization rule, and BoC. The harness
+checks `BoC -> root hash -> typed decode -> semantic equality -> exact
+canonical BoC` for `BlockInfo`, `ValueFlow::V2`, and `BlockExtra`.
+
 ## Storage Rules
 
 - Keep binary fixtures small.

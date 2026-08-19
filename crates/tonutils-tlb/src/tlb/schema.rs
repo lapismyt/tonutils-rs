@@ -107,12 +107,21 @@ fn parse_constructor(statement: &str) -> Result<Constructor> {
     let (name, tag, rest) = if lhs.starts_with("_ ") {
         ("_".to_string(), ConstructorTag::Implicit, lhs[1..].trim())
     } else {
-        let name_end = lhs
-            .find(['$', '#'])
-            .ok_or_else(|| schema_error("missing constructor tag"))?;
-        let name = lhs[..name_end].trim().to_string();
-        let (tag, rest) = parse_tag(&lhs[name_end..])?;
-        (name, tag, rest)
+        match lhs.find(['$', '#']) {
+            Some(name_end) => {
+                let name = lhs[..name_end].trim().to_string();
+                let (tag, rest) = parse_tag(&lhs[name_end..])?;
+                (name, tag, rest)
+            }
+            None => {
+                let name_end = lhs.find(char::is_whitespace).unwrap_or(lhs.len());
+                (
+                    lhs[..name_end].to_string(),
+                    ConstructorTag::Implicit,
+                    lhs[name_end..].trim(),
+                )
+            }
+        }
     };
     let fields = parse_fields(rest)?;
     Ok(Constructor {

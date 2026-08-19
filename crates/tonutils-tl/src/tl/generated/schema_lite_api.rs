@@ -5,6 +5,9 @@
 pub const SCHEMA_PATH: &str = "crates/tonutils-tl/src/tl/schemas/lite_api.tl";
 pub const SCHEMA_KIND: &str = "TL";
 pub const SOURCE_SHA256: &str = "a05e782303a1a1753762f08567dd9332be84fee4a135da4a1f4edd9ab038f1e9";
+pub const CONSTRUCTOR_COUNT: usize = 103;
+pub const SCHEMA_REVISION: &str =
+    "sha256:a05e782303a1a1753762f08567dd9332be84fee4a135da4a1f4edd9ab038f1e9;constructors:103";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConstructorMetadata {

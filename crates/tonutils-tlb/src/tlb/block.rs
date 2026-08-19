@@ -6,15 +6,24 @@
 //! bytes and references so callers can inspect hashes before opting into
 //! verification.
 
-use crate::{Result, TlbDeserialize, TlbError, TlbSerialize, expect_tag, store_tag};
+use crate::{
+    CurrencyCollection, Result, TlbDeserialize, TlbError, TlbSerialize, expect_tag, load_ref_tlb,
+    store_ref_tlb, store_tag,
+};
 use std::sync::Arc;
 use tonutils_tvm::{BitKey, Builder, Cell, HashmapE, Slice};
+
+#[path = "proof.rs"]
+mod proof;
+pub use proof::{MerkleProof, MerkleUpdate};
 
 const BLOCK_TAG: u32 = 0x11ef55aa;
 const VALUE_FLOW_TAG: u32 = 0xb8e48dfb;
 const VALUE_FLOW_V2_TAG: u32 = 0x3ebf98b7;
 const SHARD_STATE_TAG: u32 = 0x9023afe2;
 const SPLIT_STATE_TAG: u32 = 0x5f327da5;
+const BLOCK_INFO_TAG: u32 = 0x9bc7a987;
+const GLOBAL_VERSION_TAG: u8 = 0xc4;
 const CONFIG_PARAMS_KEY_BITS: usize = 32;
 
 /// TL-B `shard_ident$00 shard_pfx_bits:(#<= 60) workchain_id:int32 shard_prefix:uint64`.
@@ -145,48 +154,304 @@ pub struct Block {
     pub extra: Arc<Cell>,
 }
 
-/// TL-B `BlockInfo` payload preserved as a raw cell until deep block-info
-/// fields are generated.
+/// TL-B `master_info$_ master:ExtBlkRef = BlkMasterInfo`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlkMasterInfo {
+    /// Referenced masterchain block.
+    pub master: ExtBlkRef,
+}
+
+impl TlbSerialize for BlkMasterInfo {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        self.master.store_tlb(builder)
+    }
+}
+
+impl TlbDeserialize for BlkMasterInfo {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(Self {
+            master: ExtBlkRef::load_tlb(slice)?,
+        })
+    }
+}
+
+/// TL-B `capabilities#c4 version:uint32 capabilities:uint64 = GlobalVersion`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlobalVersion {
+    /// Protocol version.
+    pub version: u32,
+    /// Capability bitset.
+    pub capabilities: u64,
+}
+
+impl TlbSerialize for GlobalVersion {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        builder.store_uint(GLOBAL_VERSION_TAG)?;
+        builder.store_u32(self.version)?;
+        builder.store_u64(self.capabilities)?;
+        Ok(())
+    }
+}
+
+impl TlbDeserialize for GlobalVersion {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        if slice.load_uint::<u8>()? != GLOBAL_VERSION_TAG {
+            return Err(TlbError::TagMismatch {
+                constructor: "GlobalVersion",
+                expected_bits: "c4",
+                actual_bits: "different".to_string(),
+            });
+        }
+        Ok(Self {
+            version: slice.load_u32()?,
+            capabilities: slice.load_u64()?,
+        })
+    }
+}
+
+/// TL-B `BlockPrevInfo`, selected by the `after_merge` flag in `BlockInfo`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BlockPrevInfo {
+    /// `prev_blk_info$_ prev:ExtBlkRef = BlkPrevInfo 0`.
+    Single { prev: ExtBlkRef },
+    /// `prev_blks_info$_ prev1:^ExtBlkRef prev2:^ExtBlkRef = BlkPrevInfo 1`.
+    Split { prev1: ExtBlkRef, prev2: ExtBlkRef },
+}
+
+impl TlbSerialize for BlockPrevInfo {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        match self {
+            Self::Single { prev } => prev.store_tlb(builder),
+            Self::Split { prev1, prev2 } => {
+                store_ref_tlb(builder, prev1)?;
+                store_ref_tlb(builder, prev2)
+            }
+        }
+    }
+}
+
+impl TlbDeserialize for BlockPrevInfo {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        if slice.remaining_refs() == 0 {
+            return Ok(Self::Single {
+                prev: ExtBlkRef::load_tlb(slice)?,
+            });
+        }
+        if slice.remaining_refs() == 2 && slice.remaining_bits() == 0 {
+            return Ok(Self::Split {
+                prev1: load_ref_tlb(slice, "ExtBlkRef")?,
+                prev2: load_ref_tlb(slice, "ExtBlkRef")?,
+            });
+        }
+        Err(TlbError::CustomSchema {
+            schema: "BlockPrevInfo",
+            message: "invalid predecessor reference layout".to_string(),
+        })
+    }
+}
+
+/// TL-B `block_info#9bc7a987 ... = BlockInfo`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockInfo {
-    /// Original `BlockInfo` cell.
-    pub cell: Arc<Cell>,
+    /// Block format version.
+    pub version: u32,
+    /// Whether this is not a masterchain block.
+    pub not_master: bool,
+    /// Whether the block follows a merge.
+    pub after_merge: bool,
+    /// Whether the block precedes a split.
+    pub before_split: bool,
+    /// Whether the block follows a split.
+    pub after_split: bool,
+    /// Whether a split is requested.
+    pub want_split: bool,
+    /// Whether a merge is requested.
+    pub want_merge: bool,
+    /// Whether this is a key block.
+    pub key_block: bool,
+    /// Whether the vertical sequence number increments.
+    pub vert_seqno_incr: bool,
+    /// Block flags; upstream currently constrains this to zero or one.
+    pub flags: u8,
+    /// Horizontal sequence number.
+    pub seq_no: u32,
+    /// Vertical sequence number.
+    pub vert_seq_no: u32,
+    /// Shard identifier.
+    pub shard: ShardIdent,
+    /// Generation Unix timestamp.
+    pub gen_utime: u32,
+    /// Start logical time.
+    pub start_lt: u64,
+    /// End logical time.
+    pub end_lt: u64,
+    /// Short validator-list hash.
+    pub gen_validator_list_hash_short: u32,
+    /// Catchain sequence number.
+    pub gen_catchain_seqno: u32,
+    /// Minimum referenced masterchain sequence number.
+    pub min_ref_mc_seqno: u32,
+    /// Previous key block sequence number.
+    pub prev_key_block_seqno: u32,
+    /// Optional software version, present when flag bit zero is clear.
+    pub gen_software: Option<GlobalVersion>,
+    /// Optional masterchain reference for shardchain blocks.
+    pub master_ref: Option<BlkMasterInfo>,
+    /// Previous block reference selected by `after_merge`.
+    pub prev_ref: BlockPrevInfo,
+    /// Optional previous vertical block reference.
+    pub prev_vert_ref: Option<ExtBlkRef>,
 }
 
 impl TlbSerialize for BlockInfo {
     fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
-        builder.store_cell(&self.cell)?;
+        if self.flags > 1 {
+            return Err(TlbError::NonCanonicalValue {
+                schema: "BlockInfo",
+                reason: "flags must be at most one".to_string(),
+            });
+        }
+        builder.store_u32(BLOCK_INFO_TAG)?;
+        builder.store_u32(self.version)?;
+        builder.store_bit(self.not_master)?;
+        builder.store_bit(self.after_merge)?;
+        builder.store_bit(self.before_split)?;
+        builder.store_bit(self.after_split)?;
+        builder.store_bit(self.want_split)?;
+        builder.store_bit(self.want_merge)?;
+        builder.store_bit(self.key_block)?;
+        builder.store_bit(self.vert_seqno_incr)?;
+        builder.store_uint(self.flags)?;
+        builder.store_uint(self.seq_no)?;
+        builder.store_uint(self.vert_seq_no)?;
+        self.shard.store_tlb(builder)?;
+        builder.store_u32(self.gen_utime)?;
+        builder.store_u64(self.start_lt)?;
+        builder.store_u64(self.end_lt)?;
+        builder.store_u32(self.gen_validator_list_hash_short)?;
+        builder.store_u32(self.gen_catchain_seqno)?;
+        builder.store_u32(self.min_ref_mc_seqno)?;
+        builder.store_u32(self.prev_key_block_seqno)?;
+        if self.flags & 1 == 0 {
+            let software = self.gen_software.as_ref().ok_or(TlbError::CustomSchema {
+                schema: "BlockInfo",
+                message: "gen_software is required when flags bit zero is clear".to_string(),
+            })?;
+            software.store_tlb(builder)?;
+        } else if self.gen_software.is_some() {
+            return Err(TlbError::CustomSchema {
+                schema: "BlockInfo",
+                message: "gen_software must be absent when flags bit zero is set".to_string(),
+            });
+        }
+        if self.not_master {
+            let master_ref = self.master_ref.as_ref().ok_or(TlbError::CustomSchema {
+                schema: "BlockInfo",
+                message: "master_ref is required for a non-master block".to_string(),
+            })?;
+            store_ref_tlb(builder, master_ref)?;
+        } else if self.master_ref.is_some() {
+            return Err(TlbError::CustomSchema {
+                schema: "BlockInfo",
+                message: "master_ref must be absent for a master block".to_string(),
+            });
+        }
+        store_ref_tlb(builder, &self.prev_ref)?;
+        if self.vert_seqno_incr {
+            let prev_vert_ref = self.prev_vert_ref.as_ref().ok_or(TlbError::CustomSchema {
+                schema: "BlockInfo",
+                message: "prev_vert_ref is required when vert_seqno_incr is set".to_string(),
+            })?;
+            store_ref_tlb(builder, prev_vert_ref)?;
+        } else if self.prev_vert_ref.is_some() {
+            return Err(TlbError::CustomSchema {
+                schema: "BlockInfo",
+                message: "prev_vert_ref must be absent when vert_seqno_incr is clear".to_string(),
+            });
+        }
         Ok(())
     }
 }
 
 impl TlbDeserialize for BlockInfo {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        load_u32_tag(slice, "BlockInfo", BLOCK_INFO_TAG)?;
+        let version = slice.load_u32()?;
+        let not_master = slice.load_bit()?;
+        let after_merge = slice.load_bit()?;
+        let before_split = slice.load_bit()?;
+        let after_split = slice.load_bit()?;
+        let want_split = slice.load_bit()?;
+        let want_merge = slice.load_bit()?;
+        let key_block = slice.load_bit()?;
+        let vert_seqno_incr = slice.load_bit()?;
+        let flags = slice.load_uint::<u8>()?;
+        if flags > 1 {
+            return Err(TlbError::NonCanonicalValue {
+                schema: "BlockInfo",
+                reason: "flags must be at most one".to_string(),
+            });
+        }
+        let seq_no = slice.load_uint::<u32>()?;
+        let vert_seq_no = slice.load_uint::<u32>()?;
+        let shard = ShardIdent::load_tlb(slice)?;
+        let gen_utime = slice.load_u32()?;
+        let start_lt = slice.load_u64()?;
+        let end_lt = slice.load_u64()?;
+        let gen_validator_list_hash_short = slice.load_u32()?;
+        let gen_catchain_seqno = slice.load_u32()?;
+        let min_ref_mc_seqno = slice.load_u32()?;
+        let prev_key_block_seqno = slice.load_u32()?;
+        let gen_software = if flags & 1 == 0 {
+            Some(GlobalVersion::load_tlb(slice)?)
+        } else {
+            None
+        };
+        let master_ref = if not_master {
+            Some(load_ref_tlb(slice, "BlkMasterInfo")?)
+        } else {
+            None
+        };
+        let prev_ref = load_ref_tlb(slice, "BlockPrevInfo")?;
+        let prev_vert_ref = if vert_seqno_incr {
+            Some(load_ref_tlb(slice, "ExtBlkRef")?)
+        } else {
+            None
+        };
+        if matches!(
+            (&prev_ref, after_merge),
+            (BlockPrevInfo::Split { .. }, false) | (BlockPrevInfo::Single { .. }, true)
+        ) {
+            return Err(TlbError::CustomSchema {
+                schema: "BlockInfo",
+                message: "predecessor branch does not match after_merge".to_string(),
+            });
+        }
         Ok(Self {
-            cell: consume_remaining_cell(slice)?,
-        })
-    }
-}
-
-/// TL-B `BlockPrevInfo` payload preserved as a raw cell until the predecessor
-/// union is generated.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlockPrevInfo {
-    /// Original `BlockPrevInfo` cell.
-    pub cell: Arc<Cell>,
-}
-
-impl TlbSerialize for BlockPrevInfo {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
-        builder.store_cell(&self.cell)?;
-        Ok(())
-    }
-}
-
-impl TlbDeserialize for BlockPrevInfo {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
-        Ok(Self {
-            cell: consume_remaining_cell(slice)?,
+            version,
+            not_master,
+            after_merge,
+            before_split,
+            after_split,
+            want_split,
+            want_merge,
+            key_block,
+            vert_seqno_incr,
+            flags,
+            seq_no,
+            vert_seq_no,
+            shard,
+            gen_utime,
+            start_lt,
+            end_lt,
+            gen_validator_list_hash_short,
+            gen_catchain_seqno,
+            min_ref_mc_seqno,
+            prev_key_block_seqno,
+            gen_software,
+            master_ref,
+            prev_ref,
+            prev_vert_ref,
         })
     }
 }
@@ -216,11 +481,21 @@ impl TlbDeserialize for Block {
     }
 }
 
-/// TL-B `BlockExtra`, preserved as raw children while generated coverage grows.
+/// TL-B `block_extra$_ ... = BlockExtra`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockExtra {
-    /// Original cell.
-    pub cell: Arc<Cell>,
+    /// Incoming-message descriptor cell.
+    pub in_msg_descr: Arc<Cell>,
+    /// Outgoing-message descriptor cell.
+    pub out_msg_descr: Arc<Cell>,
+    /// Account-block dictionary cell.
+    pub account_blocks: Arc<Cell>,
+    /// Block random seed.
+    pub rand_seed: [u8; 32],
+    /// Creator hash.
+    pub created_by: [u8; 32],
+    /// Optional masterchain extra data.
+    pub custom: Option<McBlockExtra>,
 }
 
 /// TL-B `McBlockExtra` payload preserved as a raw cell.
@@ -247,7 +522,12 @@ impl TlbDeserialize for McBlockExtra {
 
 impl TlbSerialize for BlockExtra {
     fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
-        builder.store_cell(&self.cell)?;
+        builder.store_ref(self.in_msg_descr.clone())?;
+        builder.store_ref(self.out_msg_descr.clone())?;
+        builder.store_ref(self.account_blocks.clone())?;
+        builder.store_bytes(&self.rand_seed)?;
+        builder.store_bytes(&self.created_by)?;
+        store_maybe_ref(builder, &self.custom)?;
         Ok(())
     }
 }
@@ -255,37 +535,160 @@ impl TlbSerialize for BlockExtra {
 impl TlbDeserialize for BlockExtra {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
         Ok(Self {
-            cell: consume_remaining_cell(slice)?,
+            in_msg_descr: slice.load_reference()?,
+            out_msg_descr: slice.load_reference()?,
+            account_blocks: slice.load_reference()?,
+            rand_seed: load_hash(slice)?,
+            created_by: load_hash(slice)?,
+            custom: load_maybe_ref(slice, "McBlockExtra")?,
         })
     }
 }
 
-/// TL-B `ValueFlow`, preserving either v1 or v2 constructor payload.
+/// The first referenced value group in `ValueFlow`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueFlowMain {
+    /// Value carried from the previous block.
+    pub from_prev_blk: CurrencyCollection,
+    /// Value carried to the next block.
+    pub to_next_blk: CurrencyCollection,
+    /// Imported value.
+    pub imported: CurrencyCollection,
+    /// Exported value.
+    pub exported: CurrencyCollection,
+}
+
+impl TlbSerialize for ValueFlowMain {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        self.from_prev_blk.store_tlb(builder)?;
+        self.to_next_blk.store_tlb(builder)?;
+        self.imported.store_tlb(builder)?;
+        self.exported.store_tlb(builder)
+    }
+}
+
+impl TlbDeserialize for ValueFlowMain {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(Self {
+            from_prev_blk: CurrencyCollection::load_tlb(slice)?,
+            to_next_blk: CurrencyCollection::load_tlb(slice)?,
+            imported: CurrencyCollection::load_tlb(slice)?,
+            exported: CurrencyCollection::load_tlb(slice)?,
+        })
+    }
+}
+
+/// The second referenced value group in `ValueFlow`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValueFlowFees {
+    /// Imported fees.
+    pub fees_imported: CurrencyCollection,
+    /// Recovered value.
+    pub recovered: CurrencyCollection,
+    /// Created value.
+    pub created: CurrencyCollection,
+    /// Minted value.
+    pub minted: CurrencyCollection,
+}
+
+impl TlbSerialize for ValueFlowFees {
+    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        self.fees_imported.store_tlb(builder)?;
+        self.recovered.store_tlb(builder)?;
+        self.created.store_tlb(builder)?;
+        self.minted.store_tlb(builder)
+    }
+}
+
+impl TlbDeserialize for ValueFlowFees {
+    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        Ok(Self {
+            fees_imported: CurrencyCollection::load_tlb(slice)?,
+            recovered: CurrencyCollection::load_tlb(slice)?,
+            created: CurrencyCollection::load_tlb(slice)?,
+            minted: CurrencyCollection::load_tlb(slice)?,
+        })
+    }
+}
+
+/// TL-B `ValueFlow`, with both known constructor layouts represented directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueFlow {
     /// `value_flow#b8e48dfb`.
-    V1 { payload: Arc<Cell> },
+    V1 {
+        /// Referenced source values.
+        main: ValueFlowMain,
+        /// Fees collected inline.
+        fees_collected: CurrencyCollection,
+        /// Referenced fee values.
+        fees: ValueFlowFees,
+    },
     /// `value_flow_v2#3ebf98b7`.
-    V2 { payload: Arc<Cell> },
+    V2 {
+        /// Referenced source values.
+        main: ValueFlowMain,
+        /// Fees collected inline.
+        fees_collected: CurrencyCollection,
+        /// Burned value.
+        burned: CurrencyCollection,
+        /// Referenced fee values.
+        fees: ValueFlowFees,
+    },
 }
 
 impl TlbSerialize for ValueFlow {
     fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
         match self {
-            Self::V1 { payload } | Self::V2 { payload } => builder.store_cell(payload)?,
-        };
+            Self::V1 {
+                main,
+                fees_collected,
+                fees,
+            } => {
+                builder.store_u32(VALUE_FLOW_TAG)?;
+                store_ref_tlb(builder, main)?;
+                fees_collected.store_tlb(builder)?;
+                store_ref_tlb(builder, fees)?;
+            }
+            Self::V2 {
+                main,
+                fees_collected,
+                burned,
+                fees,
+            } => {
+                builder.store_u32(VALUE_FLOW_V2_TAG)?;
+                store_ref_tlb(builder, main)?;
+                fees_collected.store_tlb(builder)?;
+                burned.store_tlb(builder)?;
+                store_ref_tlb(builder, fees)?;
+            }
+        }
         Ok(())
     }
 }
 
 impl TlbDeserialize for ValueFlow {
     fn load_tlb(slice: &mut Slice) -> Result<Self> {
-        let cell = consume_remaining_cell(slice)?;
-        let mut tag_slice = Slice::new(cell.clone());
-        let tag = tag_slice.load_u32()?;
+        let tag = slice.load_u32()?;
         match tag {
-            VALUE_FLOW_TAG => Ok(Self::V1 { payload: cell }),
-            VALUE_FLOW_V2_TAG => Ok(Self::V2 { payload: cell }),
+            VALUE_FLOW_TAG => {
+                let main = load_ref_tlb(slice, "ValueFlowMain")?;
+                let fees_collected = CurrencyCollection::load_tlb(slice)?;
+                Ok(Self::V1 {
+                    main,
+                    fees_collected,
+                    fees: load_ref_tlb(slice, "ValueFlowFees")?,
+                })
+            }
+            VALUE_FLOW_V2_TAG => {
+                let main = load_ref_tlb(slice, "ValueFlowMain")?;
+                let fees_collected = CurrencyCollection::load_tlb(slice)?;
+                Ok(Self::V2 {
+                    main,
+                    fees_collected,
+                    burned: CurrencyCollection::load_tlb(slice)?,
+                    fees: load_ref_tlb(slice, "ValueFlowFees")?,
+                })
+            }
             _ => Err(TlbError::TagMismatch {
                 constructor: "ValueFlow",
                 expected_bits: "b8e48dfb|3ebf98b7",
@@ -547,99 +950,25 @@ impl ConfigParamValue {
     }
 }
 
-/// Wrapper for an exotic Merkle proof cell.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MerkleProof {
-    /// Proof cell.
-    pub cell: Arc<Cell>,
-    /// Virtual root hash stored in the exotic descriptor.
-    pub virtual_hash: [u8; 32],
-    /// Virtual root depth stored in the exotic descriptor.
-    pub depth: u16,
-    /// Referenced virtual root.
-    pub virtual_root: Arc<Cell>,
-}
-
-impl MerkleProof {
-    /// Decodes and validates the proof cell shape without checking trust roots.
-    pub fn from_exotic_cell(cell: Arc<Cell>) -> Result<Self> {
-        match cell.exotic_kind() {
-            Some(tonutils_tvm::ExoticCellKind::MerkleProof {
-                proof_hash,
-                proof_depth,
-            }) if cell.reference_count() == 1 => Ok(Self {
-                virtual_hash: *proof_hash,
-                depth: *proof_depth,
-                virtual_root: cell.references()[0].clone(),
-                cell,
-            }),
-            _ => Err(TlbError::CustomSchema {
-                schema: "MERKLE_PROOF",
-                message: "expected exotic Merkle proof cell with one reference".to_string(),
-            }),
-        }
-    }
-
-    /// Verifies that the child root hash matches the stored virtual hash.
-    pub fn verify_virtual_hash(&self) -> bool {
-        self.virtual_root.hash() == self.virtual_hash
-    }
-}
-
-/// Wrapper for an exotic Merkle update cell.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MerkleUpdate {
-    /// Update cell.
-    pub cell: Arc<Cell>,
-    /// Old virtual hash.
-    pub old_hash: [u8; 32],
-    /// New virtual hash.
-    pub new_hash: [u8; 32],
-    /// Old virtual depth.
-    pub old_depth: u16,
-    /// New virtual depth.
-    pub new_depth: u16,
-    /// Old virtual root.
-    pub old: Arc<Cell>,
-    /// New virtual root.
-    pub new: Arc<Cell>,
-}
-
-impl MerkleUpdate {
-    /// Decodes and validates the update cell shape without checking trust roots.
-    pub fn from_exotic_cell(cell: Arc<Cell>) -> Result<Self> {
-        match cell.exotic_kind() {
-            Some(tonutils_tvm::ExoticCellKind::MerkleUpdate {
-                old_hash,
-                new_hash,
-                old_depth,
-                new_depth,
-            }) if cell.reference_count() == 2 => Ok(Self {
-                old_hash: *old_hash,
-                new_hash: *new_hash,
-                old_depth: *old_depth,
-                new_depth: *new_depth,
-                old: cell.references()[0].clone(),
-                new: cell.references()[1].clone(),
-                cell,
-            }),
-            _ => Err(TlbError::CustomSchema {
-                schema: "MERKLE_UPDATE",
-                message: "expected exotic Merkle update cell with two references".to_string(),
-            }),
-        }
-    }
-
-    /// Verifies that child root hashes match the stored virtual hashes.
-    pub fn verify_virtual_hashes(&self) -> bool {
-        self.old.hash() == self.old_hash && self.new.hash() == self.new_hash
-    }
-}
-
 fn load_hash(slice: &mut Slice) -> Result<[u8; 32]> {
     let mut hash = [0; 32];
     hash.copy_from_slice(&slice.load_bytes(32)?);
     Ok(hash)
+}
+
+fn store_maybe_ref<T: TlbSerialize>(builder: &mut Builder, value: &Option<T>) -> Result<()> {
+    builder.store_bit(value.is_some())?;
+    if let Some(value) = value {
+        builder.store_ref(value.to_cell()?)?;
+    }
+    Ok(())
+}
+
+fn load_maybe_ref<T: TlbDeserialize>(slice: &mut Slice, schema: &'static str) -> Result<Option<T>> {
+    if !slice.load_bit()? {
+        return Ok(None);
+    }
+    Ok(Some(load_ref_tlb(slice, schema)?))
 }
 
 fn load_u32_tag(slice: &mut Slice, constructor: &'static str, expected: u32) -> Result<()> {
@@ -674,63 +1003,5 @@ fn store_remaining(slice: &mut Slice, builder: &mut Builder) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{TlbDeserialize, TlbSerialize};
-    use tonutils_tvm::Builder;
-
-    #[test]
-    fn shard_ident_roundtrips_and_checks_bound() {
-        let ident = ShardIdent {
-            shard_pfx_bits: 60,
-            workchain_id: -1,
-            shard_prefix: 0x8000_0000_0000_0000,
-        };
-        let cell = ident.to_cell().unwrap();
-        assert_eq!(ShardIdent::from_cell(cell).unwrap(), ident);
-
-        let invalid = ShardIdent {
-            shard_pfx_bits: 61,
-            workchain_id: 0,
-            shard_prefix: 0,
-        };
-        assert!(invalid.to_cell().is_err());
-    }
-
-    #[test]
-    fn block_wrapper_roundtrips_referenced_children() {
-        let child = Builder::new().build().unwrap();
-        let block = Block {
-            global_id: -239,
-            info: child.clone(),
-            value_flow: child.clone(),
-            state_update: child.clone(),
-            extra: child,
-        };
-
-        let cell = block.to_cell().unwrap();
-        let decoded = Block::from_cell(cell.clone()).unwrap();
-        assert_eq!(decoded, block);
-        assert_eq!(decoded.to_cell().unwrap().hash(), cell.hash());
-    }
-
-    #[test]
-    fn value_flow_rejects_unknown_constructor() {
-        let mut builder = Builder::new();
-        builder.store_u32(0xfeed_beef).unwrap();
-        let err = ValueFlow::from_cell(builder.build().unwrap()).unwrap_err();
-        assert!(matches!(err, TlbError::TagMismatch { .. }));
-    }
-
-    #[test]
-    fn hash_update_uses_eight_bit_constructor_tag() {
-        let update = HashUpdate {
-            old_hash: [0x11; 32],
-            new_hash: [0x22; 32],
-        };
-
-        let cell = update.to_cell().unwrap();
-        assert_eq!(cell.bit_len(), 8 + 256 + 256);
-        assert_eq!(HashUpdate::from_cell(cell).unwrap(), update);
-    }
-}
+#[path = "block_tests.rs"]
+mod tests;
