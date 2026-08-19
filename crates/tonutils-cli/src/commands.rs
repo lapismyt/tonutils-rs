@@ -119,10 +119,22 @@ impl HighLevelBackend {
     ) -> Result<tonutils_tl::response::RunMethodResult> {
         match self {
             HighLevelBackend::Single(client) => Ok(client
-                .run_get_method(0, block, address, method_id, stack)
+                .run_get_method(
+                    tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
+                    block,
+                    address,
+                    method_id,
+                    stack,
+                )
                 .await?),
             HighLevelBackend::Balanced(balancer) => Ok(balancer
-                .run_get_method(0, block, address, method_id, stack)
+                .run_get_method(
+                    tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
+                    block,
+                    address,
+                    method_id,
+                    stack,
+                )
                 .await?),
         }
     }

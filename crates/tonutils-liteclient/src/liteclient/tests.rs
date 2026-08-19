@@ -199,6 +199,42 @@ fn request_response_client(
 }
 
 #[tokio::test]
+async fn contract_get_method_requests_result_stack() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut client = request_response_client(
+        Arc::clone(&requests),
+        Response::RunMethodResult(tonutils_tl::response::RunMethodResult {
+            mode: (),
+            id: test_block_id(),
+            shardblk: test_block_id(),
+            shard_proof: None,
+            proof: None,
+            state_proof: None,
+            init_c7: None,
+            lib_extras: None,
+            exit_code: 0,
+            result: Some(tonutils_tvm::TvmStack::empty().to_boc().unwrap()),
+        }),
+    );
+    let mut contract =
+        tonutils_contracts::Contract::new(&mut client, tonutils_tvm::Address::new(0, [0; 32]));
+
+    contract
+        .run_get_method(test_block_id(), 1, tonutils_tvm::TvmStack::empty())
+        .await
+        .unwrap();
+
+    let request: Request = tl_proto::deserialize(&requests.lock().await[0]).unwrap();
+    match request {
+        Request::RunSmcMethod(request) => assert_eq!(
+            request.mode,
+            tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT
+        ),
+        other => panic!("expected runSmcMethod request, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn liteclient_basic_methods_build_requests_and_decode_responses() {
     let mut client = response_client(Response::MasterchainInfoExt(
         tonutils_tl::response::MasterchainInfoExt {
