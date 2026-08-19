@@ -1,6 +1,6 @@
 # LiteClient Workflow Coverage
 
-This page records the Phase 2 LiteClient acceptance boundary. The workflow is
+This page records the High-level SDK LiteClient acceptance boundary. The workflow is
 offline-first: normal tests use service fakes and deterministic BoC fixtures;
 network smoke tests remain explicitly ignored and are also exercised by the CI
 workflow against a public TON liteserver configuration.

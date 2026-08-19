@@ -97,8 +97,8 @@ cargo check --workspace --all-features
   `TON_GET_METHOD`, calls `run_get_method_by_name` with an empty `TvmStack`,
   and prints exit code plus result size. Set `TON_CONTRACT_ADDRESS`; otherwise
   the example exits successfully without making a get-method request.
-- `tlb_schema_codegen` requires `tvm`. It parses the local Phase 1
-  upstream-derived TL-B schema slice, regenerates the checked summary, and
+- `tlb_schema_codegen` requires `tvm`. It parses the local Initial compatibility
+  upstream-derived TL-B schema snapshot, regenerates the checked summary, and
   prints whether the checked-in output matches.
 - `tvm_boc_decode` requires `tvm`. It builds an offline `Account::None`
   fixture, encodes it as BoC, decodes it, and prints the root hash plus typed
@@ -121,7 +121,7 @@ cargo check --workspace --all-features
 - `tlb_account_state_roundtrip` requires `tvm`. It builds a full account with
   empty `StateInit`, storage, and balance fields, roundtrips it through TL-B,
   and prints the address hash, state, and balance.
-- `tlb_block_wrapper_decode` requires `tvm`. It builds the Phase 1 raw-cell
+- `tlb_block_wrapper_decode` requires `tvm`. It builds the Initial compatibility raw-cell
   `Block` wrapper with deterministic child cells, decodes it, and prints the
   global id plus child hashes.
 - `tlb_config_params_wrapper` requires `tvm`. It builds `ConfigParams` around a

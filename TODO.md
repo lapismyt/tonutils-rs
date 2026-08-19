@@ -97,7 +97,7 @@ postponed work moves to `# BACKLOG`.
 - [ ] Complete blockchain TL-B coverage from upstream `block.tlb` #tvm #tlb #docs #tests
   - [x] Add checked local `src/tlb/schemas/block.tlb` snapshot for currently implemented constructor families #tvm #tlb
   - [x] Add deterministic constructor summary checks for typed and raw-preserving block/config/proof families #tvm #tlb #tests
-  - [ ] Sync the complete upstream `crypto/block/block.tlb` file with source commit/date and full constructor drift tests #tvm #tlb #docs #tests
+  - [x] Sync the complete upstream `crypto/block/block.tlb` file at commit `3d478cbde854be03a18ab2a59f8fc3c565cf7d14` with source hashes and constructor drift tests #tvm #tlb #docs #tests
   - [-] Replace raw-preserving block, shard-state, config, and proof wrappers with generated or handwritten typed models where stable #tvm #tlb #proofs
     - [x] Add typed `BlockInfo`, predecessor branches, `GlobalVersion`, `BlkMasterInfo`, `BlockExtra`, and both `ValueFlow` layouts #tvm #tlb #tests
     - [ ] Expand `ShardStateUnsplit`, masterchain extras, and known config parameter payloads #tvm #tlb
@@ -105,7 +105,7 @@ postponed work moves to `# BACKLOG`.
     - [x] Add checked offline `BlockInfo`, `ValueFlow::V2`, and `BlockExtra` BoC fixtures with root hashes and exact reserialization #tvm #tlb #tests
     - [ ] Add independently captured block, shard-state, config, and Merkle proof/update BoCs #tvm #tlb #tests #proofs
   - [ ] Expand `tlb-derive` with parameterized TL-B types, implicit or CRC tags if needed, ambiguous-prefix checks, and negative compile tests #tvm #tlb #tests #features
-- [ ] Expand captured upstream/live fixture evidence beyond Phase 1 synthetic vectors #tvm #boc #tlb #tests
+- [ ] Expand captured upstream/live fixture evidence beyond Initial compatibility synthetic vectors #tvm #boc #tlb #tests
   - [ ] Add public liteserver account-state captures with endpoint, date, schema revision, and root hashes #tvm #liteclient #tests
   - [ ] Add upstream TON or pytoniq-derived proof BoCs for account, block, shard-state, config, Merkle proof, and Merkle update workflows #tvm #proofs #tests
   - [ ] Cross-check checked-in message and transaction fixtures against independent upstream or pytoniq serialization #tvm #tlb #tests
@@ -487,7 +487,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Reject cache-bit BoCs with a precise unsupported-feature error #tvm #boc
   - [x] Add BoC regression tests for indexed decode, malformed index table, CRC mismatch, invalid root/reference indexes, trailing bytes, and string roundtrips #tvm #boc #tests
   - [x] Add embedded TON Docs address fixtures and schema-derived BoC compatibility fixtures #tvm #boc #address #tests
-  - [x] Add checked-in Phase 1 BoC fixture metadata for account/message/transaction compatibility #tvm #boc #tests
+  - [x] Add checked-in Initial compatibility BoC fixture metadata for account/message/transaction compatibility #tvm #boc #tests
 - [x] Complete remaining TVM primitive compatibility before TL-B macros #tvm #tlb
   - [x] Audit ordinary cell representation hash against TON golden fixtures #tvm #tests
   - [x] Add exotic cell support for pruned branch, library reference, Merkle proof, and Merkle update #tvm #boc
@@ -497,7 +497,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Add `TlbSerialize`, `TlbDeserialize`, `TlbScheme`, and `TlbError` with exact decode semantics #tvm #tlb
   - [x] Map TL-B codec errors to builder, slice, tag, reference, and non-canonical encoding failures #tvm #tlb #tests
   - [x] Add focused tests for tags, `Maybe`, `Either`, refs, `VarUInteger`, and trailing data #tvm #tlb #tests
-- [x] Decide TL-B derive/proc-macro crate shape for Phase 1 #tvm #tlb #features
+- [x] Decide TL-B derive/proc-macro crate shape for Initial compatibility #tvm #tlb #features
   - [x] Add optional feature-gated `tonutils-macros` proc-macro crate for custom TL-B structs #tvm #tlb #features
   - [x] Keep macro support optional and avoid adding compile cost to low-level TVM users #tvm #tlb #features
   - [x] Define schema-driven drift checks against upstream TON TL-B sources #tvm #tlb #tests
@@ -518,12 +518,12 @@ postponed work moves to `# BACKLOG`.
   - [x] Add full transaction descriptions that reference `Maybe ^TrActionPhase` #tvm #tlb
   - [x] Add full top-level `Transaction`, `Account`, `HASH_UPDATE Account`, and transaction message dictionary models #tvm #tlb
   - [x] Add embedded synthetic offline BoC fixtures for implemented message, account, transaction, shard-account, and augmented dictionary models #tvm #tlb #boc #tests
-  - [x] Add deterministic upstream-derived TL-B schema slice and checked generated summary for Phase 1 block/config/proof wrappers #tvm #tlb #tests
+  - [x] Add deterministic upstream-derived TL-B schema slice and checked generated summary for Initial compatibility block/config/proof wrappers #tvm #tlb #tests
   - [x] Add generated-backed `Block`, `ShardState`, `ConfigParams`, Merkle proof, and Merkle update wrapper models for offline BoC inspection #tvm #tlb #proofs
-  - [x] Add LiteClient BoC decode helpers that preserve raw bytes and expose typed Phase 1 views #liteclient #tvm #tlb #boc
+  - [x] Add LiteClient BoC decode helpers that preserve raw bytes and expose typed Initial compatibility views #liteclient #tvm #tlb #boc
   - [x] Add offline CLI BoC/TL-B decode and schema-check commands #cli #tvm #tlb #boc
   - [x] Add offline TL-B schema/codegen, BoC decode, LiteClient account-state decode, and guarded proof verification examples #docs #examples #tvm #liteclient #proofs
-  - [x] Add fixture-backed roundtrip tests that compare checked-in Phase 1 message/account/transaction cell hashes #tvm #tlb #tests
+  - [x] Add fixture-backed roundtrip tests that compare checked-in Initial compatibility message/account/transaction cell hashes #tvm #tlb #tests
   - [x] Add fixture-backed transaction-description BoCs for ordinary, tick-tock, split, and merge constructors #tvm #tlb #tests
 - [x] Smoke-test live account proof BoC structural diagnostics for multi-root proof payloads #cli #liteclient #proofs #tests
 - [x] Create `AGENTS.md` #docs

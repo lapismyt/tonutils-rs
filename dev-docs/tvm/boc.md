@@ -161,7 +161,7 @@ These fixtures are intentionally small hex constants in `src/tvm/boc.rs`. They
 are derived from the TON `serialized_boc#b5ee9c72` layout and cross-check the
 crate's canonical serializer output for supported cases.
 
-Phase 1 TL-B compatibility fixtures in `fixtures/phase1/` add checked-in BoC
+Compatibility TL-B compatibility fixtures in `fixtures/compatibility/` add checked-in BoC
 hex payloads with metadata for message, account, transaction, and
 transaction-description roots. Their tests decode the BoC, compare the root
 representation hash from the cell, decode the declared TL-B type, and require

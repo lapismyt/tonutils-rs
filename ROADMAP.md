@@ -43,11 +43,11 @@ The current priority order is:
    reconnects, backoff, peer scoring, boundary handling, and fixture-backed or
    live-network evidence.
 
-## Phase 1: TVM, BoC, TL, And TL-B Foundation
+## Initial compatibility: TVM, BoC, TL, And TL-B Foundation
 
 Status: closed on 2026-05-09 as the compatibility foundation milestone.
 
-Phase 1 delivered the low-level primitives needed to encode, decode, and model
+Initial compatibility delivered the low-level primitives needed to encode, decode, and model
 TON data without third-party Rust TON SDK crates. It includes cells, slices,
 builders, BoC handling, addresses, dictionaries, TVM stack values, TL and TL-B
 schema support, deterministic schema inventory checks, and an initial typed
@@ -58,11 +58,11 @@ fixtures are complete. The complete typed upstream TL/TL-B migration, deep
 block/config/proof models, and additional independent fixture evidence remain
 active work in `TODO.md`.
 
-## Phase 2: High-Level Contracts And Wallets
+## High-level SDK: High-Level Contracts And Wallets
 
 Status: substantially complete; follow-up validation and coverage remain open.
 
-Phase 2 built ergonomic SDK surfaces on the low-level foundation:
+High-level SDK built ergonomic SDK surfaces on the low-level foundation:
 
 - Provider-bound contract clients, contract blueprints, state-init address
   derivation, account code/data/balance access, and typed get-method stack

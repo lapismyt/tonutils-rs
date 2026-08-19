@@ -297,7 +297,7 @@ model code should add schema context before returning an error where practical.
 
 ## Schema And Macro Direction
 
-Phase 1 macro/schema support is the checked schema workflow in
+Compatibility macro/schema support is the checked schema workflow in
 `src/tlb/schema.rs`:
 
 - users can parse TL-B text with `parse_schema`,
@@ -308,9 +308,9 @@ Phase 1 macro/schema support is the checked schema workflow in
 
 `examples/tlb_schema_codegen.rs` demonstrates this path with a small
 user-defined schema snippet and separately verifies the built-in
-`BLOCK_PHASE1_TLB` summary. The built-in Phase 1 block/config/proof schema
-slice remains in `src/tlb/schemas/block_phase1.tlb`; its checked summary remains
-in `src/tlb/generated/block_phase1.rs`.
+`BLOCK_TLB` summary. The built-in Compatibility block/config/proof schema
+snapshot remains in `src/tlb/schemas/block.tlb`; its checked summary remains
+in `src/tlb/generated/schema_block.rs`.
 
 The checked schema workflow remains the broad upstream-schema path. A separate
 optional `tonutils-macros` proc-macro crate now covers hand-written Rust

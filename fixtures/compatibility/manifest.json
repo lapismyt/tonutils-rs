@@ -1,0 +1,34 @@
+{
+  "schema_revision": "upstream:3d478cbde854be03a18ab2a59f8fc3c565cf7d14;sha256:d940a095d86f76d8c1dd43424767383b920952b1c89831ee03fc0ab9a90b6b23;constructors:395",
+  "canonical_boc_rule": "index table absent; CRC32 absent; root representation hash is checked",
+  "fixtures": [
+    {
+      "name": "account-message-transaction",
+      "decoded_type": "Message Any / Transaction / Account",
+      "evidence_kind": "offline_synthetic",
+      "path": "account_message_transaction.json",
+      "live_capture": "pending"
+    },
+    {
+      "name": "masterchain-shard-block-models",
+      "decoded_type": "BlockInfo / ValueFlow / BlockExtra",
+      "evidence_kind": "offline_synthetic",
+      "path": "block_models.json",
+      "live_capture": "pending"
+    },
+    {
+      "name": "config-params-and-shard-state",
+      "decoded_type": "ConfigParams / ShardState",
+      "evidence_kind": "typed_model_pending_fixture",
+      "path": null,
+      "live_capture": "pending"
+    },
+    {
+      "name": "merkle-proof-update",
+      "decoded_type": "MERKLE_PROOF / MERKLE_UPDATE",
+      "evidence_kind": "structural_model_pending_fixture",
+      "path": null,
+      "live_capture": "pending"
+    }
+  ]
+}

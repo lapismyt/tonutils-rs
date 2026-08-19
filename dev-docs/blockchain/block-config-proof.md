@@ -2,11 +2,11 @@
 
 ## Purpose And Scope
 
-This page records the Phase 1 TL-B coverage for block, config, shard-state,
-and Merkle proof primitives. The source of truth is upstream
+This page records the complete upstream TL-B inventory plus typed Compatibility
+coverage for block, config, shard-state, and Merkle proof primitives. The source of truth is upstream
 `ton-blockchain/ton` `crypto/block/block.tlb`. The crate keeps a small
-upstream-derived slice in `src/tlb/schemas/block_phase1.tlb` and a checked
-generated summary in `src/tlb/generated/block_phase1.rs`. The schema generator
+upstream snapshot in `src/tlb/schemas/block.tlb` and a checked
+generated summary in `src/tlb/generated/schema_block.rs`. The schema generator
 also records source hashes, constructor counts, and deterministic revisions in
 `dev-docs/schema-inventory.tsv`.
 
@@ -30,7 +30,9 @@ Covered constructors include:
 and both `ValueFlow` constructors decode their stable fields directly.
 Unsupported child families remain raw-preserving only at explicit cell
 boundaries, keeping BoC bytes, root hashes, references, and exact
-reserialization stable for LiteClient workflows.
+reserialization stable for LiteClient workflows. The generated inventory covers
+all constructors in the upstream snapshot even where a typed public codec is
+not yet exposed.
 
 ## Invariants And Edge Cases
 
@@ -48,7 +50,7 @@ reserialization stable for LiteClient workflows.
 
 ## Current Crate Mapping
 
-- `src/tlb/schema.rs` parses the Phase 1 schema slice and verifies the checked
+- `src/tlb/schema.rs` parses the complete upstream schema snapshot and verifies the checked
   generated summary.
 - `src/tlb/block.rs` implements ordinary block, block-info, value-flow,
   block-extra, shard-state, and config codecs.
@@ -62,4 +64,4 @@ reserialization stable for LiteClient workflows.
 `ShardStateUnsplit`, `McStateExtra`, config parameter payloads, and masterchain
 extra families remain follow-up work. The current typed block fixtures are
 offline and schema-derived; live or independently captured BoCs remain backlog
-evidence.
+evidence and are listed in the fixture manifest.

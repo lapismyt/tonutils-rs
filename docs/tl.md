@@ -24,10 +24,10 @@ check for implemented constructors, not a full code generator.
 ## TL-B Schema Workflow
 
 The `tvm` feature also exposes a small TL-B schema workflow in
-`tonutils_tlb::schema`. Phase 1 keeps an upstream-derived slice of
+`tonutils_tlb::schema`. Compatibility keeps an upstream-derived slice of
 `ton-blockchain/ton` `crypto/block/block.tlb` at
-`src/tlb/schemas/block_phase1.tlb` and a checked generated summary at
-`src/tlb/generated/block_phase1.rs`.
+`src/tlb/schemas/block.tlb` and a checked generated summary at
+`src/tlb/generated/schema_block.rs`.
 
 Run the deterministic check with:
 
@@ -39,7 +39,7 @@ cargo test --lib tlb::schema
 The current generator parses constructor tags, implicit tags, references,
 grouped references, `Maybe`, `Either`, fixed-width integer/bit expressions,
 `VarUInteger`, `HashmapE`, `HashmapAug`, `HashmapAugE`, and bounded constraint
-text well enough to detect drift in the Phase 1 block/config/proof slice.
+text well enough to detect drift in the Compatibility block/config/proof slice.
 Message, account, and transaction types remain hand-written canonical public
 models; the generated-backed slice covers block, config, shard-state, and
 Merkle proof/update wrappers while deeper model generation remains tracked in

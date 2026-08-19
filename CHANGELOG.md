@@ -12,6 +12,10 @@ not a release tag or release date.
 
 ### Added
 
+- Added a pinned upstream TON TL/TL-B schema snapshot at commit
+  `3d478cbde854be03a18ab2a59f8fc3c565cf7d14`, complete constructor inventory,
+  generated-output hashes, canonical block schema parsing, and payload-hashed
+  compatibility fixtures.
 - Added independent `tonutils-*` crates for ADNL, contracts, CRC, jettons,
   LiteClient, metadata, network configuration, NFTs, TL, TL-B, TVM, wallets,
   macros, and deterministic schema generation.

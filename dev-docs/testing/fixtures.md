@@ -11,7 +11,8 @@ Every fixture should document:
 - upstream commit if known,
 - schema file version,
 - expected decoded structure,
-- whether it is synthetic or captured.
+- whether it is synthetic or captured,
+- SHA-256 of the canonical BoC payload bytes.
 
 ## Fixture Types
 
@@ -23,11 +24,14 @@ Every fixture should document:
 - Block proofs.
 - Get-method results.
 
-Typed block-model fixtures are stored in `fixtures/phase1/block_models.json`.
+Typed block-model fixtures are stored in `fixtures/compatibility/block_models.json`.
 Each entry records schema revision, source, capture date, source/endpoint note,
-decoded type, root hash, canonical reserialization rule, and BoC. The harness
-checks `BoC -> root hash -> typed decode -> semantic equality -> exact
-canonical BoC` for `BlockInfo`, `ValueFlow::V2`, and `BlockExtra`.
+decoded type, root hash, canonical reserialization rule, payload SHA-256, and
+BoC. The harness checks `BoC -> root hash -> typed decode -> semantic equality
+-> exact canonical BoC` for `BlockInfo`, `ValueFlow::V2`, and `BlockExtra`.
+The `fixtures/compatibility/manifest.json` file records pending live-capture
+gaps for account, block, config, shard-state, and Merkle proof/update payloads;
+network access is never required by the normal offline test suite.
 
 ## Storage Rules
 
@@ -98,18 +102,18 @@ decode/encode/hash behavior for the current model surface without claiming that
 the values were captured from a live liteserver or copied from upstream test
 data.
 
-Phase 1 milestone fixtures are also checked in under `fixtures/phase1/` as JSON
+Compatibility milestone fixtures are also checked in under `fixtures/compatibility/` as JSON
 metadata plus small BoC hex payloads. Normal `cargo test --lib` runs remain
 fully offline: tests read these files with `include_str!`, decode the BoCs,
 check source metadata, compare root representation hashes, decode the expected
 TL-B type, and require canonical reserialization back to the exact fixture
 bytes.
 
-Current checked-in Phase 1 files:
+Current checked-in Compatibility files:
 
-- `fixtures/phase1/account_message_transaction.json`: `Message Any`,
+- `fixtures/compatibility/account_message_transaction.json`: `Message Any`,
   `MessageRelaxed Any`, `Transaction`, and `Account` fixtures.
-- `fixtures/phase1/transaction_descriptions.json`: transaction-description
+- `fixtures/compatibility/transaction_descriptions.json`: transaction-description
   fixtures for ordinary, tick-tock, split prepare, split install, merge prepare,
   and merge install constructors.
 

@@ -50,8 +50,6 @@ mod tests {
             ("liteServer.getBlockOutMsgQueueSize", 0x8f6c7779),
             ("liteServer.getDispatchQueueInfo", 0x01e66bf3),
             ("liteServer.getDispatchQueueMessages", 0xbbfd6439),
-            ("liteServer.nonfinal.getValidatorGroups", 0xa59915e3),
-            ("liteServer.nonfinal.getCandidate", 0x300794de),
             ("liteServer.nonfinal.getPendingShardBlocks", 0x5a8ee82c),
         ];
 
@@ -78,7 +76,7 @@ mod tests {
             ("liteServer.allShardsInfo", 0x098fe72d),
             ("liteServer.transactionInfo", 0x0edeed47),
             ("liteServer.transactionList", 0x6f26c60b),
-            ("liteServer.transactionId", 0xab101c41),
+            ("liteServer.transactionId", 0xb12f65af),
             ("liteServer.blockTransactions", 0xbd8cad2b),
             ("liteServer.blockTransactionsExt", 0xfb8ffce4),
             ("liteServer.partialBlockProof", 0x8ed0d2c1),

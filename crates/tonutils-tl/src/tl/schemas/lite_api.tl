@@ -22,7 +22,7 @@ tonNode.zeroStateIdExt workchain:int root_hash:int256 file_hash:int256 = tonNode
 adnl.message.query query_id:int256 query:bytes = adnl.Message;
 adnl.message.answer query_id:int256 answer:bytes = adnl.Message;
 
-liteServer.error code:int message:string = liteServer.Error; 
+liteServer.error code:int message:string = liteServer.Error;
 
 liteServer.accountId workchain:int id:int256 = liteServer.AccountId;
 liteServer.libraryEntry hash:int256 data:bytes = liteServer.LibraryEntry;
@@ -42,13 +42,16 @@ liteServer.allShardsInfo id:tonNode.blockIdExt proof:bytes data:bytes = liteServ
 liteServer.transactionInfo id:tonNode.blockIdExt proof:bytes transaction:bytes = liteServer.TransactionInfo;
 liteServer.transactionList ids:(vector tonNode.blockIdExt) transactions:bytes = liteServer.TransactionList;
 liteServer.transactionMetadata mode:# depth:int initiator:liteServer.accountId initiator_lt:long = liteServer.TransactionMetadata;
-liteServer.transactionId mode:# account:mode.0?int256 lt:mode.1?long hash:mode.2?int256 metadata:mode.8?liteServer.transactionMetadata = liteServer.TransactionId;
+liteServer.transactionId#b12f65af mode:# account:mode.0?int256 lt:mode.1?long hash:mode.2?int256 metadata:mode.8?liteServer.transactionMetadata = liteServer.TransactionId;
 liteServer.transactionId3 account:int256 lt:long = liteServer.TransactionId3;
 liteServer.blockTransactions id:tonNode.blockIdExt req_count:# incomplete:Bool ids:(vector liteServer.transactionId) proof:bytes = liteServer.BlockTransactions;
 liteServer.blockTransactionsExt id:tonNode.blockIdExt req_count:# incomplete:Bool transactions:bytes proof:bytes = liteServer.BlockTransactionsExt;
+
 liteServer.signature node_id_short:int256 signature:bytes = liteServer.Signature;
 liteServer.signatureSet.ordinary#f644a6e6 validator_set_hash:int catchain_seqno:int signatures:(vector liteServer.signature) = liteServer.SignatureSet;
-liteServer.signatureSet.simplex cc_seqno:int validator_set_hash:int signatures:(vector liteServer.signature) session_id:int256 slot:int candidate:bytes = liteServer.SignatureSet;
+liteServer.signatureSet.simplex cc_seqno:int validator_set_hash:int signatures:(vector liteServer.signature)
+    session_id:int256 slot:int candidate:bytes = liteServer.SignatureSet;
+
 liteServer.blockLinkBack to_key_block:Bool from:tonNode.blockIdExt to:tonNode.blockIdExt dest_proof:bytes proof:bytes state_proof:bytes = liteServer.BlockLink;
 liteServer.blockLinkForward to_key_block:Bool from:tonNode.blockIdExt to:tonNode.blockIdExt dest_proof:bytes config_proof:bytes signatures:liteServer.SignatureSet = liteServer.BlockLink;
 liteServer.partialBlockProof complete:Bool from:tonNode.blockIdExt to:tonNode.blockIdExt steps:(vector liteServer.BlockLink) = liteServer.PartialBlockProof;
@@ -65,7 +68,8 @@ liteServer.blockOutMsgQueueSize mode:# id:tonNode.blockIdExt size:long proof:mod
 liteServer.accountDispatchQueueInfo addr:int256 size:long min_lt:long max_lt:long = liteServer.AccountDispatchQueueInfo;
 liteServer.dispatchQueueInfo mode:# id:tonNode.blockIdExt account_dispatch_queues:(vector liteServer.accountDispatchQueueInfo) complete:Bool proof:mode.0?bytes = liteServer.DispatchQueueInfo;
 liteServer.dispatchQueueMessage addr:int256 lt:long hash:int256 metadata:liteServer.transactionMetadata = liteServer.DispatchQueueMessage;
-liteServer.dispatchQueueMessages mode:# id:tonNode.blockIdExt messages:(vector liteServer.dispatchQueueMessage) complete:Bool proof:mode.0?bytes messages_boc:mode.2?bytes = liteServer.DispatchQueueMessages;
+liteServer.dispatchQueueMessages mode:# id:tonNode.blockIdExt messages:(vector liteServer.dispatchQueueMessage) complete:Bool
+    proof:mode.0?bytes messages_boc:mode.2?bytes = liteServer.DispatchQueueMessages;
 
 liteServer.debug.verbosity value:int = liteServer.debug.Verbosity;
 
@@ -107,10 +111,9 @@ liteServer.getShardBlockProof id:tonNode.blockIdExt = liteServer.ShardBlockProof
 liteServer.getOutMsgQueueSizes mode:# wc:mode.0?int shard:mode.0?long = liteServer.OutMsgQueueSizes;
 liteServer.getBlockOutMsgQueueSize mode:# id:tonNode.blockIdExt want_proof:mode.0?true = liteServer.BlockOutMsgQueueSize;
 liteServer.getDispatchQueueInfo mode:# id:tonNode.blockIdExt after_addr:mode.1?int256 max_accounts:int want_proof:mode.0?true = liteServer.DispatchQueueInfo;
-liteServer.getDispatchQueueMessages mode:# id:tonNode.blockIdExt addr:int256 after_lt:long max_messages:int want_proof:mode.0?true one_account:mode.1?true messages_boc:mode.2?true = liteServer.DispatchQueueMessages;
+liteServer.getDispatchQueueMessages mode:# id:tonNode.blockIdExt addr:int256 after_lt:long max_messages:int
+    want_proof:mode.0?true one_account:mode.1?true messages_boc:mode.2?true = liteServer.DispatchQueueMessages;
 
-liteServer.nonfinal.getValidatorGroups mode:# wc:mode.0?int shard:mode.0?long = liteServer.nonfinal.ValidatorGroups;
-liteServer.nonfinal.getCandidate id:liteServer.nonfinal.candidateId = liteServer.nonfinal.Candidate;
 liteServer.nonfinal.getPendingShardBlocks mode:# wc:mode.0?int shard:mode.0?long = liteServer.nonfinal.PendingShardBlocks;
 
 liteServer.queryPrefix = Object;

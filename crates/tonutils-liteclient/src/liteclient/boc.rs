@@ -299,7 +299,7 @@ pub fn decode_account_state_boc(raw: impl AsRef<[u8]>) -> Result<DecodedAccountS
     Ok(DecodedAccountStateBoc { boc, account })
 }
 
-/// Decodes a raw block BoC into the Phase 1 `Block` wrapper.
+/// Decodes a raw block BoC into the Initial compatibility `Block` wrapper.
 pub fn decode_block_boc(raw: impl AsRef<[u8]>) -> Result<DecodedBlockBoc> {
     let boc = DecodedBoc::decode(raw)?;
     let block = Block::from_cell(boc.root.clone()).context("failed to decode Block TL-B")?;
