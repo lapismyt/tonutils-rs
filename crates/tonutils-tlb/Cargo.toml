@@ -20,3 +20,4 @@ tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true

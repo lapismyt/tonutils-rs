@@ -487,10 +487,11 @@ mod offline_fixture_tests {
 }
 
 #[cfg(test)]
-mod phase1_checked_fixture_tests {
+mod compatibility_checked_fixture_tests {
     use super::*;
     use num_bigint::BigUint;
     use serde::Deserialize;
+    use sha2::{Digest, Sha256};
     use std::fmt::Debug;
     use std::sync::Arc;
     use tonutils_tvm::{Address, Builder, Cell, HashmapE, boc_to_hex, hex_to_boc};
@@ -509,6 +510,7 @@ mod phase1_checked_fixture_tests {
         upstream_commit_or_endpoint: String,
         decoded_type: String,
         root_hash: String,
+        payload_sha256: String,
         canonical_reserialization: String,
         boc_hex: String,
     }
@@ -529,6 +531,14 @@ mod phase1_checked_fixture_tests {
         assert!(!fixture.capture_date.is_empty());
         assert!(!fixture.upstream_commit_or_endpoint.is_empty());
         assert_eq!(fixture.decoded_type, expected_type);
+        let payload = hex::decode(&fixture.boc_hex).unwrap();
+        let payload_hash = Sha256::digest(payload);
+        assert_eq!(
+            hex::encode(payload_hash),
+            fixture.payload_sha256,
+            "{}",
+            fixture.name
+        );
         assert!(
             fixture
                 .canonical_reserialization
@@ -736,9 +746,9 @@ mod phase1_checked_fixture_tests {
     }
 
     #[test]
-    fn phase1_account_message_transaction_fixtures_are_checked() {
+    fn compatibility_account_message_transaction_fixtures_are_checked() {
         let set = fixture_set(include_str!(
-            "../../../../fixtures/phase1/account_message_transaction.json"
+            "../../../../fixtures/compatibility/account_message_transaction.json"
         ));
         assert_fixture(
             find(&set, "message-with-referenced-state-init-and-body"),
@@ -763,9 +773,9 @@ mod phase1_checked_fixture_tests {
     }
 
     #[test]
-    fn phase1_transaction_description_fixtures_cover_all_exit_cases() {
+    fn compatibility_transaction_description_fixtures_cover_all_exit_cases() {
         let set = fixture_set(include_str!(
-            "../../../../fixtures/phase1/transaction_descriptions.json"
+            "../../../../fixtures/compatibility/transaction_descriptions.json"
         ));
         assert_fixture(
             find(&set, "ordinary-transaction-description"),
@@ -840,9 +850,9 @@ mod phase1_checked_fixture_tests {
     }
 
     #[test]
-    fn phase1_typed_block_fixtures_cover_block_info_value_flow_and_extra() {
+    fn compatibility_typed_block_fixtures_cover_block_info_value_flow_and_extra() {
         let set = fixture_set(include_str!(
-            "../../../../fixtures/phase1/block_models.json"
+            "../../../../fixtures/compatibility/block_models.json"
         ));
         let previous = ExtBlkRef {
             end_lt: 11,

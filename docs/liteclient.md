@@ -78,7 +78,7 @@ verification is not implemented yet.
 
 `tonutils_liteclient::boc` contains offline decode helpers for LiteClient
 payloads. Each helper preserves the raw BoC bytes and decoded root cell, then
-adds a typed view where Phase 1 models exist:
+adds a typed view where Initial compatibility models exist:
 
 - `decode_account_state_boc` -> `Account`
 - `decode_block_boc` -> generated-backed `Block` wrapper
@@ -103,7 +103,7 @@ fn example(raw_state_boc: &[u8]) -> anyhow::Result<()> {
 }
 ```
 
-## Typed Phase 1 Additions
+## Typed Initial compatibility Additions
 
 Recent typed helpers added to `LiteClient`:
 

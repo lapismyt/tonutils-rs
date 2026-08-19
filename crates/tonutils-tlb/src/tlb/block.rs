@@ -1,4 +1,4 @@
-//! Generated-backed TL-B codecs for Phase 1 block, config, and proof models.
+//! Generated-backed TL-B codecs for Initial compatibility block, config, and proof models.
 //!
 //! These types cover the cell boundaries and constructor tags needed by
 //! LiteClient BoC decoding and offline proof primitive tests. Deep block

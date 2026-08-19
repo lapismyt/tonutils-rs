@@ -1,6 +1,6 @@
 # TEP Metadata Roadmap
 
-This page records the planned metadata parsing work for Phase 2 wrappers.
+This page records the planned metadata parsing work for High-level SDK wrappers.
 Implementation is tracked in `TODO.md`; this document keeps standards and
 scope visible before parser code lands.
 

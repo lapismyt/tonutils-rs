@@ -3,7 +3,7 @@
 ## Purpose And Scope
 
 TON account addresses identify smart-contract accounts. This page documents the
-address behavior currently implemented by `src/tvm/address.rs` for the Phase 1
+address behavior currently implemented by `src/tvm/address.rs` for the Initial compatibility
 TVM foundation slice. It covers internal standard addresses, raw text form,
 user-friendly base64 forms, validation rules, and crate mapping. External
 addresses remain a small value/bit-length helper and are not yet a complete

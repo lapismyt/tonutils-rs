@@ -213,7 +213,7 @@ pub enum BocCommand {
 
 #[derive(Subcommand, Debug)]
 pub enum SchemaCommand {
-    /// Regenerate the Phase 1 TL-B schema summary and compare it with checked-in output.
+    /// Regenerate the Initial compatibility TL-B schema summary and compare it with checked-in output.
     Check,
 }
 
