@@ -525,8 +525,7 @@ impl LiteClient {
         hash: Int256,
     ) -> Result<(Vec<tonutils_tlb::Transaction>, Vec<BlockIdExt>)> {
         let raw = self.get_transactions(count, account, lt, hash).await?;
-        let transactions =
-            decode_single_transaction_list(&raw.transactions).map_err(decode_error)?;
+        let transactions = decode_transaction_list(&raw.transactions).map_err(decode_error)?;
         Ok((transactions, raw.ids))
     }
 
@@ -648,8 +647,7 @@ impl LiteClient {
         let raw = self
             .list_block_transactions_ext(id, count, after, reverse_order, want_proof)
             .await?;
-        let transactions =
-            decode_single_transaction_list(&raw.transactions).map_err(decode_error)?;
+        let transactions = decode_transaction_list(&raw.transactions).map_err(decode_error)?;
         let proof = decode_optional_boc(&raw.proof).map_err(decode_error)?;
         Ok(DecodedBlockTransactionsExt {
             raw,

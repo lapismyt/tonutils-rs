@@ -4,7 +4,7 @@ pub(super) use crate::{
         DecodedAccountState, DecodedAllShardsInfo, DecodedBlockData, DecodedBlockHeader,
         DecodedBlockTransactionsExt, DecodedConfigInfo, DecodedLibrariesWithProof,
         DecodedShardInfo, DecodedTransactionInfo, SimpleAccount, decode_block_boc,
-        decode_optional_boc, decode_optional_config, decode_single_transaction_list,
+        decode_optional_boc, decode_optional_config, decode_transaction_list,
     },
     layers::WrapRawMessagesLayer,
     peer::LitePeer,
