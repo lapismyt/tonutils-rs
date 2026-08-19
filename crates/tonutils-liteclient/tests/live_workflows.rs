@@ -146,8 +146,17 @@ async fn live_get_twelve_contract_transactions_in_four_batches() {
     let Some(mut client) = connect().await else {
         return;
     };
-    let address =
-        std::env::var("TON_CONTRACT_ADDRESS").unwrap_or_else(|_| DEFAULT_CONTRACT.to_owned());
+    let address = match std::env::var("TON_CONTRACT_ADDRESS") {
+        Ok(address) => address,
+        Err(std::env::VarError::NotPresent) => {
+            eprintln!(
+                "skipping live transaction history test: TON_CONTRACT_ADDRESS is not set; \
+                 provide a contract address to inspect transaction history"
+            );
+            return;
+        }
+        Err(error) => panic!("failed to read TON_CONTRACT_ADDRESS: {error}"),
+    };
     let address = Address::from_str(&address).expect("TON_CONTRACT_ADDRESS must be valid");
     let account = address.to_account_id();
     let info = client
