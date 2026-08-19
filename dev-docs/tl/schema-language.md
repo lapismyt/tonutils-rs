@@ -8,8 +8,10 @@ The manual `tonutils-schema-gen` package records the repository's checked-in TL
 snapshots in `dev-docs/schema-inventory.tsv`. Run
 `cargo run -p tonutils-schema-gen -- --write` after an intentional schema
 change, or `cargo run -p tonutils-schema-gen -- --check` in CI and before a
-release. The generator hashes source files with SHA-256 and emits deterministic
-constructor metadata under `crates/tonutils-tl/src/tl/generated/`.
+release. The generator hashes source files with SHA-256, emits constructor
+counts and deterministic schema revisions, and fails on statements without a
+result type instead of silently dropping unsupported syntax. Metadata is
+written under `crates/tonutils-tl/src/tl/generated/`.
 
 These metadata modules are an inventory and compile fixture, not a replacement
 for the handwritten wire codecs yet. Constructor ids and field expressions

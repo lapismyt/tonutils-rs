@@ -1,0 +1,35 @@
+{
+  "schema_revision": "tonutils-rs block.tlb typed slice; local schema hash ac3c7991d6f9875df74800282df934b33054d48102194483d7775d0323e1cdba",
+  "fixtures": [
+    {
+      "name": "typed-block-info-conditional-fields",
+      "source": "offline schema-derived fixture from BlockInfo typed codec",
+      "capture_date": "2026-08-19",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb; pinned local snapshot",
+      "decoded_type": "BlockInfo",
+      "root_hash": "cbe1a6adfa3cfd48e4073d0cb9366a8187a86770abfb945214ab519ec64d03cb",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c720101020100a3010098000000000000000b0000000c1111111111111111111111111111111111111111111111111111111111111111222222222222222222222222222222222222222222222222222222222222222203a09bc7a98700000007ab000000000d0000000e3c0000000080000000000000000000000f0000000000000010000000000000001100000012000000130000001400000015c4000000160000000000000017000000"
+    },
+    {
+      "name": "typed-value-flow-v2",
+      "source": "offline schema-derived fixture from ValueFlow v2 typed codec",
+      "capture_date": "2026-08-19",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb; pinned local snapshot",
+      "decoded_type": "ValueFlow::V2",
+      "root_hash": "31069d9c0f9382895ea147fa335c2ec0d7efdb7133904950c870ffb5a7151efa",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c7201010301001e02000d101081040c2088000d105083041c2108020f3ebf98b710a085a00001"
+    },
+    {
+      "name": "typed-block-extra",
+      "source": "offline schema-derived fixture from BlockExtra typed boundary codec",
+      "capture_date": "2026-08-19",
+      "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb; pinned local snapshot",
+      "decoded_type": "BlockExtra",
+      "root_hash": "88629ffddcae4cefbd7f3a5701949d27bfe15217ee35f5ea5899ac10ed126514",
+      "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
+      "boc_hex": "b5ee9c7201010201004801000003813333333333333333333333333333333333333333333333333333333333333333444444444444444444444444444444444444444444444444444444444444444440000000"
+    }
+  ]
+}

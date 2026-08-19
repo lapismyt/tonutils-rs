@@ -94,6 +94,16 @@ struct Schema {
     constructors: Vec<Constructor>,
 }
 
+impl Schema {
+    fn revision(&self) -> String {
+        format!(
+            "sha256:{};constructors:{}",
+            self.hash,
+            self.constructors.len()
+        )
+    }
+}
+
 #[derive(Debug)]
 struct Constructor {
     name: String,
@@ -187,8 +197,14 @@ fn parse_schema(source: &str, kind: SchemaKind) -> Result<Vec<Constructor>, Stri
 
     statements
         .into_iter()
-        .filter(|statement| statement.contains('='))
-        .map(|statement| parse_constructor(statement, kind))
+        .map(|statement| {
+            if !statement.contains('=') {
+                return Err(format!(
+                    "unsupported schema statement without result type: {statement:?}"
+                ));
+            }
+            parse_constructor(statement, kind)
+        })
         .collect()
 }
 
@@ -215,7 +231,7 @@ fn parse_constructor(statement: &str, kind: SchemaKind) -> Result<Constructor, S
             } else if let Some((name, tag)) = token.split_once('#') {
                 (name.to_owned(), format!("#{tag}"))
             } else {
-                return Err(format!("constructor {token:?} has no TL-B tag"));
+                (token.to_owned(), String::new())
             }
         }
     };
@@ -258,7 +274,15 @@ fn render_module(schema: &Schema) -> String {
         schema.kind.as_str()
     )
     .unwrap();
-    writeln!(out, "pub const SOURCE_SHA256: &str = {:?};\n", schema.hash).unwrap();
+    writeln!(out, "pub const SOURCE_SHA256: &str = {:?};", schema.hash).unwrap();
+    writeln!(
+        out,
+        "pub const CONSTRUCTOR_COUNT: usize = {};",
+        schema.constructors.len()
+    )
+    .unwrap();
+    writeln!(out, "pub const SCHEMA_REVISION: &str =").unwrap();
+    writeln!(out, "    {:?};\n", schema.revision()).unwrap();
     out.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
     out.push_str("pub struct ConstructorMetadata {\n");
     out.push_str("    pub name: &'static str,\n    pub tag: &'static str,\n");
@@ -278,16 +302,17 @@ fn render_module(schema: &Schema) -> String {
 
 fn render_inventory(schemas: &[Schema]) -> String {
     let mut out = String::from(
-        "# Deterministic inventory of checked-in TON schemas\n# path\\tkind\\tsha256\\tconstructors\\tmodule\n",
+        "# Deterministic inventory of checked-in TON schemas\n# path\\tkind\\tsha256\\tconstructors\\trevision\\tmodule\n",
     );
     for schema in schemas {
         writeln!(
             out,
-            "{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}",
             schema.relative_path,
             schema.kind.as_str(),
             schema.hash,
             schema.constructors.len(),
+            schema.revision(),
             generated_path_string(schema),
         )
         .unwrap();
@@ -388,5 +413,12 @@ mod tests {
             },
         ];
         assert!(validate_constructors(&constructors).is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_statement_instead_of_dropping_it() {
+        let error = parse_schema("future_syntax_without_result;", SchemaKind::Tlb)
+            .expect_err("unsupported syntax must fail validation");
+        assert!(error.contains("without result type"));
     }
 }

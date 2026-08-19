@@ -8,9 +8,9 @@ The protocol source of truth is upstream `ton-blockchain/ton`
 `src/tlb/schemas/block.tlb`.
 
 The current snapshot is not yet the complete upstream file. It contains the
-families that are backed by typed codecs or raw-preserving public wrappers. Full
-upstream sync, constructor drift checks for every family, and fixture-backed
-block/shard/config/proof roundtrips remain active TODO items.
+families that are backed by typed codecs or explicit raw-preserving boundaries.
+The schema generator records source hashes, constructor counts, and deterministic
+revision strings for every checked-in TL/TL-B source.
 
 ## Coverage Matrix
 
@@ -21,9 +21,9 @@ block/shard/config/proof roundtrips remain active TODO items.
 | `Transaction`, phases, account blocks | `tlb::transaction::*` | typed | TL-B unit tests, `tlb_transaction_roundtrip`, `tlb_read_tx_data` |
 | `ShardIdent`, `ExtBlkRef`, `BlockIdExt` | `tlb::block::*` | typed | block unit tests |
 | `Block` | `tlb::Block` | typed root with referenced child cells | `tlb_block_wrapper_decode` |
-| `BlockInfo`, `BlockPrevInfo` | `tlb::BlockInfo`, `tlb::BlockPrevInfo` | raw-preserving wrappers | schema summary check |
-| `ValueFlow` | `tlb::ValueFlow` | constructor-checked raw payload | block unit tests |
-| `BlockExtra`, `McBlockExtra` | `tlb::BlockExtra`, `tlb::McBlockExtra` | raw-preserving wrappers | schema summary check |
+| `BlockInfo`, `BlockPrevInfo` | `tlb::BlockInfo`, `tlb::BlockPrevInfo` | typed fields and conditional branches | block unit and fixture tests |
+| `ValueFlow` | `tlb::ValueFlow` | typed v1/v2 currency groups | block unit and fixture tests |
+| `BlockExtra`, `McBlockExtra` | `tlb::BlockExtra`, `tlb::McBlockExtra` | typed boundary with raw child families | block fixture tests |
 | `ShardState`, `ShardStateUnsplit` | `tlb::ShardState`, `tlb::ShardStateUnsplit` | constructor-checked raw payload | block unit tests |
 | `ConfigParams` | `tlb::ConfigParams` | typed address, decoded `Hashmap 32 ^Cell` entries, raw-preserving wrappers for common param ids | `tlb_config_params_wrapper`, block unit tests |
 | `HASH_UPDATE` | `tlb::HashUpdate` | typed | block unit tests |

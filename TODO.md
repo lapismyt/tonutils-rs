@@ -98,8 +98,12 @@ postponed work moves to `# BACKLOG`.
   - [x] Add checked local `src/tlb/schemas/block.tlb` snapshot for currently implemented constructor families #tvm #tlb
   - [x] Add deterministic constructor summary checks for typed and raw-preserving block/config/proof families #tvm #tlb #tests
   - [ ] Sync the complete upstream `crypto/block/block.tlb` file with source commit/date and full constructor drift tests #tvm #tlb #docs #tests
-  - [ ] Replace raw-preserving block, shard-state, config, and proof wrappers with generated or handwritten typed models where stable #tvm #tlb #proofs
-  - [ ] Add fixture-backed block, shard-state, config-param, Merkle proof, and Merkle update roundtrips from upstream TON or live captures #tvm #tlb #tests #proofs
+  - [-] Replace raw-preserving block, shard-state, config, and proof wrappers with generated or handwritten typed models where stable #tvm #tlb #proofs
+    - [x] Add typed `BlockInfo`, predecessor branches, `GlobalVersion`, `BlkMasterInfo`, `BlockExtra`, and both `ValueFlow` layouts #tvm #tlb #tests
+    - [ ] Expand `ShardStateUnsplit`, masterchain extras, and known config parameter payloads #tvm #tlb
+  - [-] Add fixture-backed block, shard-state, config-param, Merkle proof, and Merkle update roundtrips from upstream TON or live captures #tvm #tlb #tests #proofs
+    - [x] Add checked offline `BlockInfo`, `ValueFlow::V2`, and `BlockExtra` BoC fixtures with root hashes and exact reserialization #tvm #tlb #tests
+    - [ ] Add independently captured block, shard-state, config, and Merkle proof/update BoCs #tvm #tlb #tests #proofs
   - [ ] Expand `tlb-derive` with parameterized TL-B types, implicit or CRC tags if needed, ambiguous-prefix checks, and negative compile tests #tvm #tlb #tests #features
 - [ ] Expand captured upstream/live fixture evidence beyond Phase 1 synthetic vectors #tvm #boc #tlb #tests
   - [ ] Add public liteserver account-state captures with endpoint, date, schema revision, and root hashes #tvm #liteclient #tests
