@@ -5,7 +5,7 @@ use tonutils_tvm::{Address, TvmStack};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let Some(address) = common::get_method_contract_address()? else {
+    let Some(address) = common::contract_address()? else {
         return Ok(());
     };
     let method = std::env::var("TON_GET_METHOD").unwrap_or_else(|_| "seqno".to_owned());

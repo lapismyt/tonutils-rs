@@ -30,13 +30,14 @@ The ignored integration tests in `tests/live_workflows.rs` exercise:
 
 - `getMasterchainInfo`;
 - `getVersion` and `getTime`;
-- `run_get_method` for `seqno` on the configured public contract.
+- `run_get_method` for `seqno` on the contract configured by
+  `TON_CONTRACT_ADDRESS`.
 
 They use a public TON global config supplied through `TON_GLOBAL_CONFIG_JSON`.
 `TON_LS_INDEX` selects the liteserver, defaulting to `0`; the get-method test
-uses `TON_CONTRACT_ADDRESS` or the stable mainnet example contract. If the
-config variable is absent, the test reports a clear skip and succeeds without
-network access.
+requires `TON_CONTRACT_ADDRESS`. If either required environment variable is
+absent, the relevant test reports a clear skip and succeeds without network
+access.
 
 Run explicitly with:
 

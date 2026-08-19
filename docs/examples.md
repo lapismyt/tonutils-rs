@@ -30,9 +30,8 @@ Common variables:
 - `TON_GLOBAL_CONFIG_JSON`: full TON global config JSON. Overrides public
   config download.
 - `TON_LS_INDEX`: liteserver index for single-peer examples, defaulting to `0`.
-- `TON_CONTRACT_ADDRESS`: account address for contract examples. Mainnet
-  contract examples default to
-  `UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP`.
+- `TON_CONTRACT_ADDRESS`: account address for contract examples. Contract
+  examples require an explicit address and exit successfully when it is absent.
 - `TON_GET_METHOD`: get-method name, defaulting to `seqno`.
 - `TON_LITEAPI_REQUEST_HEX`: serialized LiteAPI request bytes for raw queries,
   defaulting to serialized `liteServer.getTime`.
@@ -49,7 +48,7 @@ cargo run -p tonutils-cli -- --network "${TON_NETWORK:-mainnet}" \
   liteclient time --ls-index "${TON_LS_INDEX:-2}"
 cargo run -p tonutils-cli -- --network "${TON_NETWORK:-mainnet}" \
   contract run-get-method --ls-index "${TON_LS_INDEX:-0}" \
-  --address "${TON_CONTRACT_ADDRESS:-UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP}" \
+  --address "${TON_CONTRACT_ADDRESS:?set TON_CONTRACT_ADDRESS}" \
   --method "${TON_GET_METHOD:-seqno}"
 ```
 
@@ -76,11 +75,10 @@ cargo check --workspace --all-features
   live-network defaults and optional `TON_CONTRACT_ADDRESS`, fetches latest
   account state, and prints block ids plus raw state length.
 - `contract_get_method` requires `liteclient`, `network-config`, and `cli`. It reads
-  live-network defaults, optional `TON_CONTRACT_ADDRESS`, and optional
+  live-network defaults, `TON_CONTRACT_ADDRESS`, and optional
   `TON_GET_METHOD`, runs an empty-stack get-method, and prints the exit code
-  plus raw result length. With `TON_NETWORK=testnet`, set
-  `TON_CONTRACT_ADDRESS`; otherwise the example exits successfully because no
-  stable default testnet `seqno` contract is defined.
+  plus raw result length. Set `TON_CONTRACT_ADDRESS`; otherwise the example
+  exits successfully without making a get-method request.
 - `litebalancer_failover` requires `liteclient`, `network-config`, and `cli`. It reads
   live-network defaults, connects to all available liteservers from config,
   initializes `LiteBalancer`, performs `get_masterchain_info`, and prints
@@ -95,10 +93,10 @@ cargo check --workspace --all-features
   serializes it into BoC with CRC, deserializes back, and prints basic
   structure metadata.
 - `tvm_stack_run_method` requires `liteclient`, `network-config`, and `cli`. It reads
-  live-network defaults, optional `TON_CONTRACT_ADDRESS`, and optional
+  live-network defaults, `TON_CONTRACT_ADDRESS`, and optional
   `TON_GET_METHOD`, calls `run_get_method_by_name` with an empty `TvmStack`,
-  and prints exit code plus result size. With `TON_NETWORK=testnet`, set
-  `TON_CONTRACT_ADDRESS`.
+  and prints exit code plus result size. Set `TON_CONTRACT_ADDRESS`; otherwise
+  the example exits successfully without making a get-method request.
 - `tlb_schema_codegen` requires `tvm`. It parses the local Phase 1
   upstream-derived TL-B schema slice, regenerates the checked summary, and
   prints whether the checked-in output matches.

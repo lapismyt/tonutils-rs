@@ -2,8 +2,6 @@ use tonutils_liteclient::{client::LiteClient, method_name_to_id};
 use tonutils_network_config::ConfigGlobal;
 use tonutils_tvm::{Address, TvmStack};
 
-const DEFAULT_CONTRACT: &str = "UQBg0E2FCj7kkYWw-2yEcOHs7p1xtnqAoLIYBUG2AJ56eFNP";
-
 fn load_config() -> Option<ConfigGlobal> {
     let json = match std::env::var("TON_GLOBAL_CONFIG_JSON") {
         Ok(json) => json,
@@ -67,12 +65,22 @@ async fn live_get_version_and_time_smoke() {
 #[tokio::test]
 #[ignore = "requires public liteserver configuration, network access, and a contract"]
 async fn live_run_get_method_smoke() {
+    let address = match std::env::var("TON_CONTRACT_ADDRESS") {
+        Ok(address) => address,
+        Err(std::env::VarError::NotPresent) => {
+            eprintln!(
+                "skipping live get-method smoke test: TON_CONTRACT_ADDRESS is not set; \
+                 provide a contract address to run seqno"
+            );
+            return;
+        }
+        Err(error) => panic!("failed to read TON_CONTRACT_ADDRESS: {error}"),
+    };
+    let address =
+        Address::from_str(&address).expect("TON_CONTRACT_ADDRESS must be a valid address");
     let Some(mut client) = connect().await else {
         return;
     };
-    let address =
-        std::env::var("TON_CONTRACT_ADDRESS").unwrap_or_else(|_| DEFAULT_CONTRACT.to_owned());
-    let address = Address::from_str(&address).expect("TON_CONTRACT_ADDRESS must be valid");
     let info = client
         .get_masterchain_info()
         .await
