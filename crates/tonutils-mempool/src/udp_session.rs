@@ -44,6 +44,82 @@ pub fn udp_dht_lookup(
     })
 }
 
+pub fn udp_iterative_dht_lookup(
+    local_addr: std::net::SocketAddr,
+    local_keypair: KeyPair,
+    node_count: i32,
+    rounds: usize,
+    timeout: Duration,
+) -> TypedDiscoveryLookup {
+    Arc::new(move |seeds: Vec<SeedPeer>| {
+        Box::pin(async move {
+            let mut frontier = seeds;
+            let mut discovered = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .min(i32::MAX as u64) as i32;
+            for _ in 0..rounds.max(1) {
+                let responses = join_all(frontier.into_iter().filter_map(|seed| {
+                    let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
+                    let address = seed.address.parse().ok()?;
+                    Some(query_dht_seed(
+                        local_addr,
+                        local_keypair,
+                        remote,
+                        address,
+                        node_count,
+                        timeout,
+                    ))
+                }))
+                .await;
+                frontier = Vec::new();
+                for nodes in responses.into_iter().flatten() {
+                    for node in nodes {
+                        let key = match &node.id {
+                            tonutils_tl::tl::network::PublicKey::Ed25519 { key } => key.0,
+                            _ => continue,
+                        };
+                        if seen.insert(key) {
+                            frontier.extend(tonutils_overlay::select_typed_dht_peers(
+                                [node.clone()],
+                                8,
+                                now,
+                            ));
+                            discovered.push(node);
+                        }
+                    }
+                }
+                if frontier.is_empty() {
+                    break;
+                }
+            }
+            discovered
+        })
+    })
+}
+
+#[allow(clippy::large_types_passed_by_value)]
+async fn query_dht_seed(
+    local_addr: std::net::SocketAddr,
+    local_keypair: KeyPair,
+    remote: AdnlPublicKey,
+    address: std::net::SocketAddr,
+    node_count: i32,
+    timeout: Duration,
+) -> Option<Vec<tonutils_tl::tl::network::DhtNode>> {
+    let mut session = AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
+        .await
+        .ok()?;
+    session
+        .dht_find_node(tonutils_tl::Int256::random(), node_count, timeout)
+        .await
+        .ok()
+        .map(|nodes| nodes.nodes)
+}
+
 pub fn direct_factory(
     local_addr: std::net::SocketAddr,
     local_keypair: KeyPair,

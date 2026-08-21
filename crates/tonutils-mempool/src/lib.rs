@@ -24,7 +24,10 @@ use tonutils_overlay::{
 use tonutils_overlay::{DiscoveryLookup, TypedDiscoveryLookup};
 mod udp_session;
 
-pub use udp_session::{AdnlUdpOverlaySession, channel_factory, direct_factory, udp_dht_lookup};
+pub use udp_session::{
+    AdnlUdpOverlaySession, channel_factory, direct_factory, udp_dht_lookup,
+    udp_iterative_dht_lookup,
+};
 
 /// Hash of a serialized external message.
 pub type MessageHash = [u8; 32];
