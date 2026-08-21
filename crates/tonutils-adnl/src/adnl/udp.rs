@@ -315,7 +315,15 @@ impl AdnlUdpSession {
         if sender != self.remote {
             return Err(AdnlError::InvalidPublicKey);
         }
-        if let Some(signature) = &contents.signature {
+        if let Some(from_short) = &contents.from_short
+            && from_short.id.0 != self.remote_id
+        {
+            return Err(AdnlError::InvalidPublicKey);
+        }
+        let Some(signature) = &contents.signature else {
+            return Err(AdnlError::IntegrityError);
+        };
+        {
             let signature: [u8; 64] = signature
                 .as_slice()
                 .try_into()

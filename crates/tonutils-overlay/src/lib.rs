@@ -366,6 +366,7 @@ pub struct PeerManager {
     scores: Arc<RwLock<HashMap<PeerId, i32>>>,
     shutdown: watch::Sender<bool>,
     overlay: OverlayId,
+    tasks: Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 #[cfg(feature = "runtime")]
@@ -382,6 +383,7 @@ impl PeerManager {
             scores: Arc::new(RwLock::new(HashMap::new())),
             shutdown,
             overlay,
+            tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         })
     }
 
@@ -409,21 +411,26 @@ impl PeerManager {
         self.pool.register_peer(peer).await;
         let pool = self.pool.clone();
         let overlay = self.overlay;
+        let idle_timeout = pool.config.peer_idle_timeout;
         let mut shutdown = self.shutdown.subscribe();
         let sessions = self.sessions.clone();
         let scores = self.scores.clone();
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = shutdown.changed() => break,
-                    packet = async { session.lock().await.receive().await } => {
+                    packet = async {
+                        tokio::time::timeout(idle_timeout, async {
+                            session.lock().await.receive().await
+                        }).await
+                    } => {
                         match packet {
-                            Ok(payload) => {
+                            Ok(Ok(payload)) => {
                                 let packet = OverlayPacket { payload, routing: RoutingMetadata::new(overlay, peer) };
                                 if pool.ingest(packet).await.is_err() { break; }
                                 scores.write().await.entry(peer).and_modify(|score| *score += 1);
                             }
-                            Err(_) => {
+                            Ok(Err(_)) | Err(_) => {
                                 let _ = pool.report_status(PeerStatus::Failed { peer }).await;
                                 break;
                             }
@@ -439,6 +446,7 @@ impl PeerManager {
                 .entry(peer)
                 .and_modify(|score| *score -= 1);
         });
+        self.tasks.lock().await.push(task);
     }
 
     pub async fn add_session_with_reconnect(
@@ -456,8 +464,9 @@ impl PeerManager {
         let scores = self.scores.clone();
         let pool = self.pool.clone();
         let overlay = self.overlay;
+        let idle_timeout = pool.config.peer_idle_timeout;
         let mut shutdown = self.shutdown.subscribe();
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let mut current = session;
             loop {
                 let shared = Arc::new(tokio::sync::Mutex::new(current));
@@ -466,14 +475,18 @@ impl PeerManager {
                 loop {
                     tokio::select! {
                         _ = shutdown.changed() => return,
-                        packet = async { shared.lock().await.receive().await } => {
+                        packet = async {
+                            tokio::time::timeout(idle_timeout, async {
+                                shared.lock().await.receive().await
+                            }).await
+                        } => {
                             match packet {
-                                Ok(payload) => {
+                                Ok(Ok(payload)) => {
                                     let packet = OverlayPacket { payload, routing: RoutingMetadata::new(overlay, peer) };
                                     if pool.ingest(packet).await.is_err() { return; }
                                     scores.write().await.entry(peer).and_modify(|score| *score += 1);
                                 }
-                                Err(_) => {
+                                Ok(Err(_)) | Err(_) => {
                                     break;
                                 }
                             }
@@ -516,6 +529,7 @@ impl PeerManager {
                 current = session;
             }
         });
+        self.tasks.lock().await.push(task);
     }
 
     pub async fn broadcast(&self, payload: Arc<[u8]>) -> usize {
@@ -549,6 +563,14 @@ impl PeerManager {
 
     pub fn shutdown(&self) {
         let _ = self.shutdown.send(true);
+    }
+
+    pub async fn shutdown_wait(&self) {
+        self.shutdown();
+        let tasks = std::mem::take(&mut *self.tasks.lock().await);
+        for task in tasks {
+            let _ = task.await;
+        }
     }
 }
 
@@ -775,7 +797,7 @@ mod tests {
         assert!(reconnecting);
         tokio::time::sleep(Duration::from_millis(5)).await;
         assert_eq!(manager.peer_count().await, 1);
-        manager.shutdown();
+        manager.shutdown_wait().await;
     }
 
     #[test]
