@@ -242,12 +242,7 @@ pub fn select_typed_dht_peers(
         let TlPublicKey::Ed25519 { key } = record.id else {
             continue;
         };
-        let peer = PeerId::from_bytes(
-            Sha256::digest(tl_proto::serialize(TlPublicKey::Ed25519 {
-                key: key.clone(),
-            }))
-            .into(),
-        );
+        let peer = PeerId::from_bytes(key.0);
         for address in record.addr_list.addrs {
             let Address::Udp { ip, port } = address else {
                 continue;
@@ -828,6 +823,7 @@ mod tests {
         signed.signature = signature.to_bytes().to_vec();
         let peers = select_typed_dht_peers([signed.clone(), signed], 8, 2);
         assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].peer.as_bytes(), key.verifying_key().to_bytes());
         assert_eq!(peers[0].address, "127.0.0.1:30303");
     }
 }

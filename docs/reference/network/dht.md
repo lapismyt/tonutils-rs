@@ -37,7 +37,9 @@ lookup constructors. `tonutils-adnl::AdnlUdpSession::dht_find_node` sends a
 query over authenticated UDP, decodes the boxed `dht.nodes` answer, and keeps
 only nodes with usable addresses, non-expired versions, and valid Ed25519
 signatures. `DiscoveryConfig::discover_typed` then applies deterministic
-deduplication and explicit seed fallback.
+deduplication and explicit seed fallback. `tonutils-mempool::udp_dht_lookup`
+supplies this typed lookup from validated UDP seeds with bounded parallel
+queries.
 
 `DiscoveryRecord` remains a compatibility abstraction for callers that already
 have signed records. Full iterative Kademlia-style lookup, DHT value lookup,

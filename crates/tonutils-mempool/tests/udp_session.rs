@@ -30,8 +30,10 @@ async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
     )
     .await
     .unwrap();
-    let adapter = AdnlUdpOverlaySession::connect(
+    let overlay = OverlayId::from_name(b"mempool");
+    let adapter = AdnlUdpOverlaySession::connect_for_overlay(
         PeerId::from_bytes([3; 32]),
+        overlay,
         receiver_addr,
         sender_addr,
         receiver_key,
@@ -54,6 +56,12 @@ async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
     manager.add_session(Box::new(adapter)).await;
     let mut events = Box::pin(scanner.events());
     let _receiver = scanner.spawn_overlay_receiver(manager.pool());
+    let mut overlay_payload = Vec::new();
+    overlay_payload.extend_from_slice(&0x75252420u32.to_le_bytes());
+    overlay_payload.extend_from_slice(&overlay.as_bytes());
+    overlay_payload.extend(tl_proto::serialize(OverlayBroadcast::Unicast {
+        data: vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3],
+    }));
     sender
         .send_contents(PacketContents {
             rand1: vec![1; 7],
@@ -61,9 +69,7 @@ async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
             from: None,
             from_short: None,
             message: Some(Message::Custom {
-                data: tl_proto::serialize(OverlayBroadcast::Unicast {
-                    data: vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3],
-                }),
+                data: overlay_payload,
             }),
             messages: None,
             address: None,
