@@ -360,19 +360,23 @@ postponed work moves to `# BACKLOG`.
 
 ## DHT, Overlay, QUIC, And Mempool
 
-- [ ] Research and implement native ADNL UDP #network #adnl
+- [-] Research and implement native ADNL UDP #network #adnl
+  - [x] Add bounded encrypted datagram codec and malformed/trailing packet tests #network #tests
   - [ ] Document packet format and channel negotiation #network #docs
   - [ ] Add UDP codec tests #network #tests
   - [ ] Add NAT and address list considerations #network
-- [ ] Implement DHT discovery #dht #network
+- [-] Implement DHT discovery #dht #network
+  - [x] Add signed discovery records, verification, and explicit seed fallback #dht #crypto #tests
+  - [x] Extract and validate bootstrap endpoints from caller/global config JSON #dht #network #tests
   - [ ] Add DHT TL types #dht #tl
-  - [ ] Verify node signatures #dht #crypto
   - [ ] Resolve liteservers and overlay peers through DHT #dht
 - [-] Implement overlay protocol #overlay #network
   - [x] Add bounded overlay peer/routing/status primitives #overlay #tests
+  - [x] Add transport-neutral sessions, parallel receive loops, scoring, and shutdown #overlay #network #tests
   - [ ] Add overlay node and peer exchange types from upstream schemas #overlay #tl
   - [ ] Add overlay query transport and live peer bootstrap #overlay
   - [x] Add bounded broadcast hook for mempool #overlay #mempool
+  - [ ] Connect scanner bootstrap to canonical ADNL UDP channels #adnl #overlay #mempool
 - [ ] Implement native Rust QUIC transport #quic #network
   - [ ] Define optional feature gating without native runtime dependencies #quic #features
   - [ ] Add peer and session lifecycle handling #quic #network
@@ -385,6 +389,8 @@ postponed work moves to `# BACKLOG`.
   - [x] Add stream API for pending messages #mempool
   - [x] Add bounded backpressure and fast-path filtering #mempool #perf
   - [x] Add offline structural tests before live network tests #mempool #tests
+  - [x] Add lazy decode, dedup TTL/eviction, diagnostics, and overlay receive adapter #mempool #tests
+  - [x] Add merged bootstrap builder and async global-config resolution #mempool #network #tests
   - [ ] Add canonical external-message fixtures and LiteServer inclusion tracking #mempool #tests #network
 
 ## CLI And Shell Automation

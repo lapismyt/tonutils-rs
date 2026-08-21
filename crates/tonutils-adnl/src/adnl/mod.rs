@@ -5,11 +5,16 @@ pub mod helper_types;
 pub mod primitives;
 pub mod wrappers;
 
+#[cfg(feature = "udp")]
+pub mod udp;
+
 #[cfg(test)]
 mod tests;
 
 pub use helper_types::{AdnlAddress, AdnlAesParams, AdnlConnectionInfo, AdnlError};
 pub use primitives::codec::AdnlCodec;
 pub use primitives::handshake::AdnlHandshake;
+#[cfg(feature = "udp")]
+pub use udp::{AdnlUdpPeer, AdnlUdpSocket};
 pub use wrappers::builder::AdnlBuilder;
 pub use wrappers::peer::AdnlPeer;

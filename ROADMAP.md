@@ -100,16 +100,18 @@ surface expansion:
 ## Phase 4: Performance, Extended Protocols, And Ecosystem Coverage
 
 The initial `tonutils-overlay` and `tonutils-mempool` primitives now provide
-offline-safe bounded peer/event handling and a Rust stream for deduplicated
-pending external messages. Live DHT bootstrap, canonical overlay wire schemas,
-and LiteServer inclusion tracking remain protocol-evidence work in `TODO.md`.
+offline-safe bounded peer/event handling, signed discovery-record validation,
+transport-neutral session lifecycle management, and a Rust stream for
+deduplicated pending external messages with lazy decoding and TTL eviction.
+Live DHT wire bootstrap, canonical overlay wire schemas, and LiteServer
+inclusion tracking remain protocol-evidence work in `TODO.md`.
 
 After protocol coverage and reliability are established:
 
 - Add benchmarks and allocation audits for ADNL, TL, TVM, BoC, and balancer
   hot paths.
-- Implement native Rust ADNL UDP, DHT, overlay, and QUIC transports with
-  captured fixtures and later live-network tests.
+- Complete native Rust ADNL UDP channel negotiation, DHT, and canonical
+  overlay transports with captured fixtures and later live-network tests.
 - Define peer and session lifecycle handling for QUIC, including stream and
   datagram semantics, rate limiting, and backpressure.
 - Integrate QUIC with block-sync, fast-sync, and overlay communication paths.

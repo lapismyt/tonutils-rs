@@ -136,6 +136,8 @@ pub enum AdnlError {
     },
     #[error("Integrity error")]
     IntegrityError,
+    #[error("replayed UDP packet")]
+    ReplayDetected,
     #[error("Too short packet (32 bytes min)")]
     TooShortPacket,
     #[error("Too long packet (4 MiB max)")]

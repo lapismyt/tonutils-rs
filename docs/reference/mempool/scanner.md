@@ -15,17 +15,33 @@ LiteServer block/indexing queries.
 
 The raw BoC is held in `Arc<[u8]>`, so event consumers and broadcast peers can
 share ownership without copying the payload. The bounded event queue provides
-backpressure. Deduplication is sharded by the first hash byte; eviction is not
-yet implemented, so deployments must bound scanner lifetime or add a future
-TTL/size policy.
+backpressure. Deduplication is sharded by the first hash byte and evicted by
+the configured TTL and bounded shard capacity. `MempoolMetrics` exposes accepted,
+duplicate, rejected, and broadcast-failure counters.
 
 ## Fast and slow paths
 
 The fast path checks size, minimum envelope length, and (by default) the BoC
-magic `b5ee9c72`, hashes the raw bytes, inserts the hash into a shard, and
-publishes immediately. Destination and body decoding are intentionally absent
-from this path. A future slow worker can decode TL-B, persist observations,
-query LiteServer, and call `mark_included`.
+magic `b5ee9c72`, validates an external `Message` by default, hashes the raw
+bytes, inserts the hash into a shard, and publishes immediately.
+`MempoolConfig::validate_message` can be disabled only for structural/raw
+transport tests. `LazyExternalMessage` decodes the stored BoC through
+`tonutils-tvm` and `tonutils-tlb` on demand. Consumers can persist
+observations, query LiteServer, and call `mark_included` independently.
+
+## Bootstrap and startup
+
+`MempoolScannerBuilder::start` merges explicit `SeedPeer` values, caller-owned
+`ConfigGlobal` liteserver endpoints, optional raw global-config JSON, and the
+mainnet or testnet global-config URL. HTTP downloading is performed by the
+builder, while `tonutils-network-config` remains an offline parser. Duplicate
+`(peer, address)` pairs and malformed socket addresses are rejected before the
+overlay manager starts; no validated peer is a startup error.
+
+The current startup creates the bounded `PeerManager` and receive adapter. It
+does not yet open canonical ADNL channels or issue DHT/overlay queries. QUIC,
+inclusion tracking, and consumer-defined retry policy remain outside this
+crate's current live scope.
 
 ## Reference comparison
 
@@ -36,7 +52,8 @@ uses `Stream` and does not expose a WebSocket compatibility layer.
 
 ## Current gaps
 
-Live overlay bootstrap, canonical external-message TL/TL-B extraction,
-destination decoding, TTL-based dedup eviction, and LiteServer inclusion
-tracking need upstream schemas, fixtures, and live-network tests before being
-described as complete.
+Canonical external-message envelope fixtures, protocol-specific overlay
+constructors, ADNL channel negotiation, and LiteServer inclusion tracking still
+need upstream schemas, fixtures, and live-network tests. The ignored tests in
+`tests/live.rs` validate the mainnet/testnet seed environment contract only;
+they do not claim a live network connection.

@@ -19,6 +19,7 @@ workspace = true
 [features]
 default = ["tcp"]
 tcp = ["dep:futures", "dep:pin-project", "dep:tokio", "dep:tokio-util"]
+udp = ["dep:futures", "dep:pin-project", "dep:tokio", "dep:tokio-util"]
 
 [dependencies]
 aes.workspace = true

@@ -32,7 +32,12 @@ Typical lookup:
 
 ## Crate Mapping
 
-No DHT implementation exists yet. Future modules should live under `src/dht` or `src/network/dht` and depend on ADNL UDP.
+`tonutils-overlay` currently models the discovery boundary with
+`DiscoveryRecord`, `DiscoveryConfig`, `SeedPeer`, and
+`select_discovery_peers`. Records are verified with Ed25519 before selection;
+when no valid DHT record is available, explicit seed peers are returned. The
+actual TON DHT TL query/response transport still belongs above this boundary
+and must be implemented from checked upstream schemas.
 
 ## Required Tests
 

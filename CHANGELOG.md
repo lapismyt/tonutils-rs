@@ -16,6 +16,14 @@ not a release tag or release date.
   `tonutils-mempool` low-latency Rust `Stream` API for deduplicated pending
   external-message events. Live DHT bootstrap and inclusion tracking remain
   explicitly incomplete.
+- Added protocol-facing transport extensions: opt-in ADNL UDP datagram
+  framing, signed discovery records, explicit seed fallback, and
+  transport-neutral overlay sessions with peer lifecycle scoring.
+- Added mempool TTL/size-bounded sharded deduplication, diagnostics counters,
+  lazy TL-B decoding, and an overlay receive-loop adapter. QUIC remains an
+  extension point and is not implemented.
+- Added `MempoolScannerBuilder` bootstrap merging for explicit seeds, offline
+  global-config data, and bounded async mainnet/testnet config downloads.
 
 ### Added
 
