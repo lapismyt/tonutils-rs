@@ -2410,6 +2410,7 @@ dependencies = [
  "reqwest",
  "sha2 0.10.9",
  "thiserror",
+ "tl-proto",
  "tokio",
  "tonutils-adnl",
  "tonutils-network-config",

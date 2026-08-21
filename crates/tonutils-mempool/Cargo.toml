@@ -26,4 +26,5 @@ tonutils-overlay = { path = "../tonutils-overlay", version = "2.0.0" }
 tonutils-network-config = { path = "../tonutils-network-config", version = "2.0.0" }
 tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
 tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
+tl-proto.workspace = true
 tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
