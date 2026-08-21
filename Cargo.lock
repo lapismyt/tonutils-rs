@@ -2406,12 +2406,15 @@ version = "2.0.0"
 dependencies = [
  "futures",
  "log",
+ "rand 0.8.7",
  "reqwest",
  "sha2 0.10.9",
  "thiserror",
  "tokio",
+ "tonutils-adnl",
  "tonutils-network-config",
  "tonutils-overlay",
+ "tonutils-tl",
  "tonutils-tlb",
  "tonutils-tvm",
 ]
@@ -2457,9 +2460,12 @@ version = "2.0.0"
 dependencies = [
  "ed25519-dalek",
  "futures",
+ "log",
  "sha2 0.10.9",
  "thiserror",
+ "tl-proto",
  "tokio",
+ "tonutils-tl",
 ]
 
 [[package]]
@@ -2476,6 +2482,7 @@ name = "tonutils-tl"
 version = "2.0.0"
 dependencies = [
  "derivative",
+ "ed25519-dalek",
  "hex",
  "rand 0.8.7",
  "thiserror",

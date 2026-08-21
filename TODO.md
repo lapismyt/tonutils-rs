@@ -362,13 +362,14 @@ postponed work moves to `# BACKLOG`.
 
 - [-] Research and implement native ADNL UDP #network #adnl
   - [x] Add bounded encrypted datagram codec and malformed/trailing packet tests #network #tests
+  - [x] Add upstream-derived direct packet and AES-channel packet primitives with sequence checks #network #tests
   - [ ] Document packet format and channel negotiation #network #docs
   - [ ] Add UDP codec tests #network #tests
   - [ ] Add NAT and address list considerations #network
 - [-] Implement DHT discovery #dht #network
   - [x] Add signed discovery records, verification, and explicit seed fallback #dht #crypto #tests
   - [x] Extract and validate bootstrap endpoints from caller/global config JSON #dht #network #tests
-  - [ ] Add DHT TL types #dht #tl
+  - [x] Add upstream-derived ADNL/DHT/overlay TL packet types and round-trip fixtures #dht #tl #tests
   - [ ] Resolve liteservers and overlay peers through DHT #dht
 - [-] Implement overlay protocol #overlay #network
   - [x] Add bounded overlay peer/routing/status primitives #overlay #tests
@@ -391,6 +392,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Add offline structural tests before live network tests #mempool #tests
   - [x] Add lazy decode, dedup TTL/eviction, diagnostics, and overlay receive adapter #mempool #tests
   - [x] Add merged bootstrap builder and async global-config resolution #mempool #network #tests
+  - [x] Run mainnet/testnet DHT live probes with the existing live-test workflow #mempool #network #tests #ci
   - [ ] Add canonical external-message fixtures and LiteServer inclusion tracking #mempool #tests #network
 
 ## CLI And Shell Automation

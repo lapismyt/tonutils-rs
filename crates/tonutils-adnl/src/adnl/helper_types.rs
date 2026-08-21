@@ -148,6 +148,10 @@ pub enum AdnlError {
     EndOfStream,
     #[error("Invalid public key")]
     InvalidPublicKey,
+    #[error("Invalid ADNL packet")]
+    InvalidPacket,
+    #[error("Malformed ADNL packet: {0}")]
+    MalformedPacket(String),
 }
 
 /// Information about connected peers.

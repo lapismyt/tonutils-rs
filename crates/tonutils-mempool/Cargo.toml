@@ -14,13 +14,16 @@ categories = ["network-programming", "cryptography::cryptocurrencies"]
 workspace = true
 
 [dependencies]
+tonutils-adnl = { path = "../tonutils-adnl", version = "2.0.0", features = ["udp"] }
 futures.workspace = true
 log.workspace = true
 reqwest.workspace = true
+rand.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tonutils-overlay = { path = "../tonutils-overlay", version = "2.0.0" }
 tonutils-network-config = { path = "../tonutils-network-config", version = "2.0.0" }
 tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
+tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
 tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }

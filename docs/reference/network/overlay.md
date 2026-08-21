@@ -13,8 +13,8 @@ connection.
   sessions, and peer status events.
 - `DiscoveryConfig::discover` applies a timeout-bounded DHT-first callback and
   deterministic seed fallback.
-- `tonutils-adnl` owns the opt-in UDP datagram codec; it does not silently turn
-  UDP into a stream or implement QUIC.
+- `tonutils-adnl` owns the opt-in UDP direct packet, channel packet, and
+  authenticated `AdnlUdpSession` primitives; it does not implement QUIC.
 
 ## Fast-path model
 
@@ -36,7 +36,9 @@ a packet was included in a block.
 
 The pending-message behavior is compared conceptually with
 [`yungwine/ton-mempool`](https://github.com/yungwine/ton-mempool). The Python
-project's WebSocket interface is not part of this crate. Canonical DHT/overlay
-TL constructors and production peer bootstrap remain TODO items until protocol
-evidence is checked in; the session trait is a transport boundary, not an ADNL
-handshake implementation.
+project's WebSocket interface is not part of this crate. Canonical ADNL/DHT/
+overlay TL constructors, direct UDP live probing, channel create/confirm state
+transitions, and transport-to-stream delivery are covered by checked fixtures
+and localhost tests. Iterative DHT routing, overlay certificate/peer exchange
+validation, and production mempool broadcast selection remain TODO items; the
+session trait still lets applications supply those higher-level policies.

@@ -42,13 +42,17 @@ UDP ADNL must handle:
 
 ## Crate Design
 
-`tonutils-adnl` exposes `AdnlUdpPeer` and `AdnlUdpSocket` behind the opt-in
-`udp` feature. They keep one encrypted ADNL frame per datagram, enforce a
-64 KiB datagram bound, reject trailing bytes and replayed ciphertexts in a
-bounded window, and provide Tokio send/receive operations with timeouts. The
-helpers deliberately do not claim to implement channel negotiation,
-fragmentation, or NAT traversal; those concerns belong to the session and
-protocol layers above them.
+`tonutils-adnl` exposes `AdnlUdpPeer`, `AdnlUdpSocket`, and authenticated
+direct/channel packet primitives behind the opt-in `udp` feature. Direct
+packets use the upstream layout of destination id, ephemeral Ed25519 key,
+SHA-256 digest, and AES-CTR ciphertext. Established channel packets use the
+channel id, canonical AES-channel digest/key/IV derivation, TL
+`adnl.packetContents`, bounded sequence replay tracking, and ACK validation.
+All datagram APIs enforce the 64 KiB bound and provide Tokio timeouts.
+
+`AdnlUdpSession` still expects the caller to provision the remote identity and
+does not perform the initial create/confirm channel negotiation or DHT/overlay
+handshake. Fragmentation and NAT traversal remain outside this layer.
 
 ## Missing Work
 

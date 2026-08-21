@@ -11,10 +11,15 @@ pub mod udp;
 #[cfg(test)]
 mod tests;
 
+pub use crypto::{KeyPair, PublicKey};
 pub use helper_types::{AdnlAddress, AdnlAesParams, AdnlConnectionInfo, AdnlError};
 pub use primitives::codec::AdnlCodec;
 pub use primitives::handshake::AdnlHandshake;
 #[cfg(feature = "udp")]
-pub use udp::{AdnlUdpPeer, AdnlUdpSocket};
+pub use udp::{
+    AdnlChannelCipher, AdnlChannelPacket, AdnlUdpPeer, AdnlUdpSession, AdnlUdpSocket,
+    channel_id_for_secret, decrypt_direct, encrypt_direct, ordered_channel_ciphers,
+    reverse_channel_secret,
+};
 pub use wrappers::builder::AdnlBuilder;
 pub use wrappers::peer::AdnlPeer;

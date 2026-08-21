@@ -20,6 +20,9 @@ runtime = ["dep:futures", "dep:tokio"]
 [dependencies]
 ed25519-dalek.workspace = true
 futures = { workspace = true, optional = true }
+log.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+tl-proto.workspace = true
 tokio = { workspace = true, optional = true }
+tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }

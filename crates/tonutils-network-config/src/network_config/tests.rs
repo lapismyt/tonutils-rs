@@ -177,6 +177,24 @@ fn test_extract_bootstrap_addresses_from_global_config() {
 }
 
 #[test]
+fn test_extract_dht_addresses_excludes_liteservers() {
+    let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+    let json = format!(
+        r#"{{
+            "liteservers": [{{"ip": 2130706433, "port": 8001,
+                "id": {{"@type":"pub.ed25519", "key":"{key}"}}}}],
+            "dht": {{"static_nodes": {{"nodes": [{{
+                "id": {{"@type":"pub.ed25519", "key":"{key}"}},
+                "addr_list": {{"addrs": [{{"ip": 2130706434, "port": 30303}}]}}
+            }}]}}}}
+        }}"#
+    );
+    let addresses = extract_dht_addresses(&json).unwrap();
+    assert_eq!(addresses.len(), 1);
+    assert_eq!(addresses[0].address.port(), 30303);
+}
+
+#[test]
 fn test_extract_bootstrap_addresses_discards_unusable_records() {
     let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
     let json = format!(

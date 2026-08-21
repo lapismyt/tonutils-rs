@@ -18,6 +18,7 @@ workspace = true
 
 [dependencies]
 derivative.workspace = true
+ed25519-dalek.workspace = true
 hex.workspace = true
 rand.workspace = true
 thiserror.workspace = true

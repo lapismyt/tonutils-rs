@@ -12,6 +12,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use thiserror::Error;
+use tonutils_tl::tl::network::{Address, DhtNode, PublicKey as TlPublicKey};
 
 #[cfg(feature = "runtime")]
 use futures::future::BoxFuture;
@@ -105,6 +106,11 @@ pub trait OverlaySession: Send {
 }
 
 #[cfg(feature = "runtime")]
+pub type ReconnectFactory = Arc<
+    dyn Fn(PeerId) -> BoxFuture<'static, Result<Box<dyn OverlaySession>, String>> + Send + Sync,
+>;
+
+#[cfg(feature = "runtime")]
 type SharedSession = Arc<tokio::sync::Mutex<Box<dyn OverlaySession>>>;
 
 /// A peer advertised by an explicit seed or a DHT lookup.
@@ -177,6 +183,14 @@ pub struct DiscoveryConfig {
     pub max_records: usize,
 }
 
+#[cfg(feature = "runtime")]
+pub type DiscoveryLookup =
+    std::sync::Arc<dyn Fn(Vec<SeedPeer>) -> BoxFuture<'static, Vec<DiscoveryRecord>> + Send + Sync>;
+
+#[cfg(feature = "runtime")]
+pub type TypedDiscoveryLookup =
+    std::sync::Arc<dyn Fn(Vec<SeedPeer>) -> BoxFuture<'static, Vec<DhtNode>> + Send + Sync>;
+
 impl Default for DiscoveryConfig {
     fn default() -> Self {
         Self {
@@ -214,6 +228,48 @@ pub fn select_discovery_peers(
     selected
 }
 
+pub fn select_typed_dht_peers(
+    records: impl IntoIterator<Item = DhtNode>,
+    max_records: usize,
+    now: i32,
+) -> Vec<SeedPeer> {
+    let mut peers = HashSet::new();
+    let mut selected = Vec::new();
+    for record in records {
+        if selected.len() >= max_records || !record.is_valid(now) {
+            continue;
+        }
+        let TlPublicKey::Ed25519 { key } = record.id else {
+            continue;
+        };
+        let peer = PeerId::from_bytes(
+            Sha256::digest(tl_proto::serialize(TlPublicKey::Ed25519 {
+                key: key.clone(),
+            }))
+            .into(),
+        );
+        for address in record.addr_list.addrs {
+            let Address::Udp { ip, port } = address else {
+                continue;
+            };
+            let Ok(port) = u16::try_from(port) else {
+                continue;
+            };
+            if port == 0 || ip == 0 {
+                continue;
+            }
+            let address = format!("{}:{}", std::net::Ipv4Addr::from(ip.cast_unsigned()), port);
+            if peers.insert((peer, address.clone())) {
+                selected.push(SeedPeer { peer, address });
+                if selected.len() >= max_records {
+                    break;
+                }
+            }
+        }
+    }
+    selected
+}
+
 #[cfg(feature = "runtime")]
 impl DiscoveryConfig {
     /// Runs a DHT lookup first and deterministically falls back to configured
@@ -223,10 +279,39 @@ impl DiscoveryConfig {
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Vec<DiscoveryRecord>>,
     {
-        let records = tokio::time::timeout(self.lookup_timeout, lookup())
+        self.discover_with(|_| lookup()).await
+    }
+
+    pub async fn discover_with<F, Fut>(&self, lookup: F) -> Vec<SeedPeer>
+    where
+        F: FnOnce(Vec<SeedPeer>) -> Fut,
+        Fut: std::future::Future<Output = Vec<DiscoveryRecord>>,
+    {
+        let records = tokio::time::timeout(self.lookup_timeout, lookup(self.seeds.clone()))
             .await
             .unwrap_or_default();
         select_discovery_peers(self, records)
+    }
+
+    pub async fn discover_typed<F, Fut>(&self, lookup: F) -> Vec<SeedPeer>
+    where
+        F: FnOnce(Vec<SeedPeer>) -> Fut,
+        Fut: std::future::Future<Output = Vec<DhtNode>>,
+    {
+        let records = tokio::time::timeout(self.lookup_timeout, lookup(self.seeds.clone()))
+            .await
+            .unwrap_or_default();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .min(i32::MAX as u64) as i32;
+        let selected = select_typed_dht_peers(records, self.max_records, now);
+        if selected.is_empty() {
+            self.seeds.clone()
+        } else {
+            selected
+        }
     }
 }
 
@@ -361,6 +446,83 @@ impl PeerManager {
         });
     }
 
+    pub async fn add_session_with_reconnect(
+        &self,
+        session: Box<dyn OverlaySession>,
+        reconnect: ReconnectFactory,
+        max_attempts: u32,
+        base_backoff: Duration,
+    ) {
+        let peer = session.peer_id();
+        if self.sessions.read().await.contains_key(&peer) {
+            return;
+        }
+        let sessions = self.sessions.clone();
+        let scores = self.scores.clone();
+        let pool = self.pool.clone();
+        let overlay = self.overlay;
+        let mut shutdown = self.shutdown.subscribe();
+        tokio::spawn(async move {
+            let mut current = session;
+            loop {
+                let shared = Arc::new(tokio::sync::Mutex::new(current));
+                sessions.write().await.insert(peer, shared.clone());
+                pool.register_peer(peer).await;
+                loop {
+                    tokio::select! {
+                        _ = shutdown.changed() => return,
+                        packet = async { shared.lock().await.receive().await } => {
+                            match packet {
+                                Ok(payload) => {
+                                    let packet = OverlayPacket { payload, routing: RoutingMetadata::new(overlay, peer) };
+                                    if pool.ingest(packet).await.is_err() { return; }
+                                    scores.write().await.entry(peer).and_modify(|score| *score += 1);
+                                }
+                                Err(_) => {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                sessions.write().await.remove(&peer);
+                pool.unregister_peer(peer).await;
+                if max_attempts == 0 {
+                    let _ = pool.report_status(PeerStatus::Failed { peer }).await;
+                    return;
+                }
+                let _ = pool.report_status(PeerStatus::Failed { peer }).await;
+                let mut replacement = None;
+                for attempt in 1..=max_attempts {
+                    let _ = pool
+                        .report_status(PeerStatus::Reconnecting { peer, attempt })
+                        .await;
+                    let multiplier = 1u32
+                        .checked_shl(attempt.saturating_sub(1))
+                        .unwrap_or(u32::MAX);
+                    let delay = base_backoff
+                        .saturating_mul(multiplier)
+                        .min(Duration::from_secs(30));
+                    tokio::select! {
+                        _ = shutdown.changed() => return,
+                        () = tokio::time::sleep(delay) => {}
+                    }
+                    match reconnect(peer).await {
+                        Ok(session) => {
+                            replacement = Some(session);
+                            break;
+                        }
+                        Err(error) => log::debug!("reconnect for {peer:?} failed: {error}"),
+                    }
+                }
+                let Some(session) = replacement else {
+                    return;
+                };
+                current = session;
+            }
+        });
+    }
+
     pub async fn broadcast(&self, payload: Arc<[u8]>) -> usize {
         let sessions = self
             .sessions
@@ -459,6 +621,31 @@ impl OverlayPeerPool {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
+    use futures::future::BoxFuture;
+
+    struct FlakySession {
+        peer: PeerId,
+        fail: bool,
+    }
+
+    impl OverlaySession for FlakySession {
+        fn peer_id(&self) -> PeerId {
+            self.peer
+        }
+
+        fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+            if self.fail {
+                self.fail = false;
+                Box::pin(async { Err("synthetic failure".to_owned()) })
+            } else {
+                Box::pin(std::future::pending())
+            }
+        }
+
+        fn send(&mut self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
 
     #[tokio::test]
     async fn rejects_unknown_and_oversized_packets() {
@@ -538,6 +725,64 @@ mod tests {
         assert_eq!(peers, config.seeds);
     }
 
+    #[tokio::test]
+    async fn discovery_lookup_receives_seed_candidates_before_fallback() {
+        let overlay = OverlayId::from_name(b"testnet");
+        let seed = SeedPeer {
+            peer: PeerId::from_bytes([4; 32]),
+            address: "127.0.0.1:30303".to_owned(),
+        };
+        let config = DiscoveryConfig {
+            overlay,
+            seeds: vec![seed.clone()],
+            ..Default::default()
+        };
+        let peers = config
+            .discover_with(|seeds| async move {
+                assert_eq!(seeds, vec![seed]);
+                Vec::new()
+            })
+            .await;
+        assert_eq!(peers, config.seeds);
+    }
+
+    #[tokio::test]
+    async fn reconnects_with_bounded_backoff_after_session_failure() {
+        let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+        let peer = PeerId::from_bytes([6; 32]);
+        let mut statuses = manager.subscribe_statuses();
+        let reconnect: ReconnectFactory = Arc::new(move |candidate| {
+            Box::pin(async move {
+                assert_eq!(candidate, peer);
+                Ok(Box::new(FlakySession { peer, fail: false }) as Box<dyn OverlaySession>)
+            })
+        });
+        manager
+            .add_session_with_reconnect(
+                Box::new(FlakySession { peer, fail: true }),
+                reconnect,
+                2,
+                Duration::from_millis(1),
+            )
+            .await;
+
+        let mut reconnecting = false;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while let Ok(status) = statuses.recv().await {
+                if matches!(status, PeerStatus::Reconnecting { .. }) {
+                    reconnecting = true;
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(reconnecting);
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        assert_eq!(manager.peer_count().await, 1);
+        manager.shutdown();
+    }
+
     #[test]
     fn discovery_rejects_unparseable_addresses() {
         let key = SigningKey::from_bytes(&[8; 32]);
@@ -550,5 +795,39 @@ mod tests {
         };
         record.signature = key.sign(&record.signed_bytes()).to_bytes();
         assert!(!record.is_usable(record.overlay));
+    }
+
+    #[test]
+    fn typed_dht_selection_requires_signature_and_deduplicates_addresses() {
+        let key = SigningKey::from_bytes(&[11; 32]);
+        let node = tonutils_tl::tl::network::DhtNode {
+            id: tonutils_tl::tl::network::PublicKey::Ed25519 {
+                key: tonutils_tl::Int256(key.verifying_key().to_bytes()),
+            },
+            addr_list: tonutils_tl::tl::network::AddressList {
+                addrs: vec![tonutils_tl::tl::network::Address::Udp {
+                    ip: 0x7f000001,
+                    port: 30303,
+                }],
+                version: 1,
+                reinit_date: 1,
+                priority: 0,
+                expire_at: 0,
+            },
+            version: 1,
+            signature: Vec::new(),
+        };
+        let unsigned = tonutils_tl::tl::network::DhtNodeBoxed {
+            id: node.id.clone(),
+            addr_list: node.addr_list.clone(),
+            version: node.version,
+            signature: Vec::new(),
+        };
+        let signature = key.sign(&tl_proto::serialize(unsigned));
+        let mut signed = node;
+        signed.signature = signature.to_bytes().to_vec();
+        let peers = select_typed_dht_peers([signed.clone(), signed], 8, 2);
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0].address, "127.0.0.1:30303");
     }
 }

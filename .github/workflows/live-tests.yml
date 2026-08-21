@@ -62,6 +62,8 @@ jobs:
     name: Live liteserver smoke tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -80,6 +82,22 @@ jobs:
               https://ton.org/global.config.json
             echo 'TON_GLOBAL_CONFIG_JSON_EOF'
           } >> "$GITHUB_ENV"
+          {
+            echo 'TON_TESTNET_GLOBAL_CONFIG_JSON<<TON_TESTNET_GLOBAL_CONFIG_JSON_EOF'
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-all-errors --retry-delay 2 \
+              https://ton.org/testnet-global.config.json
+            echo 'TON_TESTNET_GLOBAL_CONFIG_JSON_EOF'
+          } >> "$GITHUB_ENV"
 
       - name: Run live workflow smoke tests
         run: cargo test -p tonutils-liteclient --test live_workflows -- --ignored --nocapture
+
+      - name: Run mempool bootstrap smoke test
+        run: cargo test -p tonutils-mempool --test live configured_global_config_can_start_scanner -- --ignored --nocapture
+
+      - name: Run mempool mainnet DHT probe
+        run: cargo test -p tonutils-mempool --test live mainnet_dht_seed_answers_find_node -- --ignored --nocapture
+
+      - name: Run mempool testnet DHT probe
+        run: cargo test -p tonutils-mempool --test live testnet_dht_seed_answers_find_node -- --ignored --nocapture

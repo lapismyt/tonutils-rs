@@ -32,12 +32,16 @@ Typical lookup:
 
 ## Crate Mapping
 
-`tonutils-overlay` currently models the discovery boundary with
-`DiscoveryRecord`, `DiscoveryConfig`, `SeedPeer`, and
-`select_discovery_peers`. Records are verified with Ed25519 before selection;
-when no valid DHT record is available, explicit seed peers are returned. The
-actual TON DHT TL query/response transport still belongs above this boundary
-and must be implemented from checked upstream schemas.
+`tonutils-tl::tl::network` contains checked ADNL/DHT node, key, value, and
+lookup constructors. `tonutils-adnl::AdnlUdpSession::dht_find_node` sends a
+query over authenticated UDP, decodes the boxed `dht.nodes` answer, and keeps
+only nodes with usable addresses, non-expired versions, and valid Ed25519
+signatures. `DiscoveryConfig::discover_typed` then applies deterministic
+deduplication and explicit seed fallback.
+
+`DiscoveryRecord` remains a compatibility abstraction for callers that already
+have signed records. Full iterative Kademlia-style lookup, DHT value lookup,
+and overlay-specific value validation remain above this boundary.
 
 ## Required Tests
 

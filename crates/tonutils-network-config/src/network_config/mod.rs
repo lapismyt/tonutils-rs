@@ -293,6 +293,58 @@ pub fn extract_bootstrap_addresses(json: &str) -> Result<Vec<ConfigBootstrapAddr
     }
 }
 
+/// Extracts only DHT static-node endpoints from a raw global config.
+pub fn extract_dht_addresses(json: &str) -> Result<Vec<ConfigBootstrapAddress>, ConfigError> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|_| ConfigError::NoBootstrapAddresses)?;
+    let mut addresses = BTreeSet::new();
+    let Some(nodes) = value
+        .pointer("/dht/static_nodes/nodes")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Err(ConfigError::NoBootstrapAddresses);
+    };
+    for node in nodes {
+        let key = node.get("id").and_then(parse_public_key_value);
+        let Some(addrs) = node.get("addr_list").and_then(|list| {
+            list.get("addrs")
+                .or_else(|| list.get("addresses"))
+                .and_then(serde_json::Value::as_array)
+        }) else {
+            continue;
+        };
+        for addr in addrs {
+            let Some(ip) = addr
+                .get("ip")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|ip| i32::try_from(ip).ok())
+            else {
+                continue;
+            };
+            let Some(port) = addr
+                .get("port")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|port| u16::try_from(port).ok())
+            else {
+                continue;
+            };
+            let candidate = ConfigBootstrapAddress {
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::from(ip.cast_unsigned())), port),
+                public_key: key,
+            };
+            if candidate.is_valid() {
+                addresses.insert(candidate);
+            }
+        }
+    }
+    let result = addresses.into_iter().collect::<Vec<_>>();
+    if result.is_empty() {
+        Err(ConfigError::NoBootstrapAddresses)
+    } else {
+        Ok(result)
+    }
+}
+
 fn parse_public_key_value(value: &serde_json::Value) -> Option<[u8; 32]> {
     let key = value
         .get("key")
