@@ -43,9 +43,9 @@ overlay manager starts; no validated peer is a startup error.
 `MempoolScannerBuilder::session_factory` is the explicit transport boundary:
 applications provide a factory that performs the canonical ADNL and
 overlay-specific handshake and returns an authenticated `OverlaySession`.
-For the native UDP path, `direct_factory` and `channel_factory` provide ready
-factories over `AdnlUdpOverlaySession`; `udp_dht_lookup` provides the typed
-DHT-first lookup input.
+For the native UDP path, `native_udp` wires those pieces together; the lower
+level `direct_factory`, `channel_factory`, and `udp_dht_lookup` helpers remain
+available when applications need custom lifecycle policy.
 When present, startup connects every validated discovery result concurrently
 and fails if all session attempts fail. Without a factory, startup still builds
 the bounded scanner for dependency-injected or offline session management.

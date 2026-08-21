@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 use thiserror::Error;
 use tokio::sync::{Mutex, mpsc};
+use tonutils_adnl::KeyPair;
 use tonutils_network_config::{ConfigGlobal, extract_dht_addresses};
 use tonutils_overlay::{
     DiscoveryConfig, OverlayConfig, OverlayId, OverlayPacket, OverlayPeerPool, OverlaySession,
@@ -352,6 +353,31 @@ impl MempoolScannerBuilder {
     pub fn discovery_lookup(mut self, lookup: DiscoveryLookup) -> Self {
         self.discovery_lookup = Some(lookup);
         self
+    }
+
+    /// Configures the native UDP DHT/session path in one step.
+    ///
+    /// A `Some` channel timeout enables ADNL create/confirm before application
+    /// traffic; `None` keeps direct authenticated packets for peers that do
+    /// not advertise channel support.
+    pub fn native_udp(
+        self,
+        local_addr: std::net::SocketAddr,
+        local_keypair: KeyPair,
+        channel_timeout: Option<Duration>,
+    ) -> Self {
+        let discovery_timeout = self.discovery_timeout;
+        let session_factory = channel_timeout.map_or_else(
+            || direct_factory(local_addr, local_keypair),
+            |timeout| channel_factory(local_addr, local_keypair, timeout),
+        );
+        self.session_factory(session_factory)
+            .typed_discovery_lookup(udp_dht_lookup(
+                local_addr,
+                local_keypair,
+                16,
+                discovery_timeout,
+            ))
     }
 
     pub fn typed_discovery_lookup(mut self, lookup: TypedDiscoveryLookup) -> Self {
