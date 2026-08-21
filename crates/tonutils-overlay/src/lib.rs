@@ -114,6 +114,18 @@ pub struct SeedPeer {
     pub address: String,
 }
 
+impl SeedPeer {
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.peer.as_bytes() != [0; 32]
+            && self.address.len() <= 256
+            && self
+                .address
+                .parse::<std::net::SocketAddr>()
+                .is_ok_and(|address| address.port() != 0 && !address.ip().is_unspecified())
+    }
+}
+
 /// Canonical signed discovery record.  The verifier is intentionally kept
 /// local to this crate so callers can reject records before opening sessions.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -304,6 +316,13 @@ impl PeerManager {
 
     pub async fn add_session(&self, session: Box<dyn OverlaySession>) {
         let peer = session.peer_id();
+        if self.sessions.read().await.contains_key(&peer) {
+            let _ = self
+                .pool
+                .report_status(PeerStatus::Reconnecting { peer, attempt: 0 })
+                .await;
+            return;
+        }
         let session = Arc::new(tokio::sync::Mutex::new(session));
         self.sessions.write().await.insert(peer, session.clone());
         self.scores.write().await.entry(peer).or_insert(0);
@@ -365,6 +384,10 @@ impl PeerManager {
             .get(&peer)
             .copied()
             .unwrap_or_default()
+    }
+
+    pub async fn peer_count(&self) -> usize {
+        self.sessions.read().await.len()
     }
 
     pub fn shutdown(&self) {

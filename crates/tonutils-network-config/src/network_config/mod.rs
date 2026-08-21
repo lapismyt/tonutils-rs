@@ -13,6 +13,8 @@ pub enum ConfigError {
     LiteServerIndexOutOfBounds { index: usize, len: usize },
     #[error("global config JSON does not contain a supported bootstrap address")]
     NoBootstrapAddresses,
+    #[error("bootstrap address is not usable: {0}")]
+    InvalidBootstrapAddress(String),
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -58,6 +60,15 @@ pub struct ConfigGlobal {
 pub struct ConfigBootstrapAddress {
     pub address: SocketAddr,
     pub public_key: Option<[u8; 32]>,
+}
+
+impl ConfigBootstrapAddress {
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.address.port() != 0
+            && !self.address.ip().is_unspecified()
+            && self.public_key.is_some_and(|key| key != [0; 32])
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -187,6 +198,7 @@ impl ConfigGlobal {
                 address: SocketAddr::V4(server.socket_addr()),
                 public_key: Some(server.public_key()),
             })
+            .filter(ConfigBootstrapAddress::is_valid)
             .collect()
     }
 }
@@ -221,13 +233,16 @@ pub fn extract_bootstrap_addresses(json: &str) -> Result<Vec<ConfigBootstrapAddr
                 continue;
             };
             let key = server.get("id").and_then(parse_public_key_value);
-            addresses.insert(ConfigBootstrapAddress {
+            let candidate = ConfigBootstrapAddress {
                 address: SocketAddr::V4(SocketAddrV4::new(
                     Ipv4Addr::from(ip.cast_unsigned()),
                     port,
                 )),
                 public_key: key,
-            });
+            };
+            if candidate.is_valid() {
+                addresses.insert(candidate);
+            }
         }
     }
 
@@ -259,10 +274,13 @@ pub fn extract_bootstrap_addresses(json: &str) -> Result<Vec<ConfigBootstrapAddr
                 else {
                     continue;
                 };
-                addresses.insert(ConfigBootstrapAddress {
+                let candidate = ConfigBootstrapAddress {
                     address: SocketAddr::new(IpAddr::V4(Ipv4Addr::from(ip.cast_unsigned())), port),
                     public_key: key,
-                });
+                };
+                if candidate.is_valid() {
+                    addresses.insert(candidate);
+                }
             }
         }
     }

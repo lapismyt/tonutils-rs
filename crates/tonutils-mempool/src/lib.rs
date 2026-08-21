@@ -9,6 +9,7 @@ use futures::future::{BoxFuture, join_all};
 use futures::stream::{self, Stream};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
@@ -16,8 +17,8 @@ use thiserror::Error;
 use tokio::sync::{Mutex, mpsc};
 use tonutils_network_config::{ConfigGlobal, extract_bootstrap_addresses};
 use tonutils_overlay::{
-    DiscoveryConfig, OverlayConfig, OverlayId, OverlayPacket, OverlayPeerPool, PeerId, PeerManager,
-    PeerStatus, RoutingMetadata, SeedPeer,
+    DiscoveryConfig, OverlayConfig, OverlayId, OverlayPacket, OverlayPeerPool, OverlaySession,
+    PeerId, PeerManager, PeerStatus, RoutingMetadata, SeedPeer,
 };
 
 /// Hash of a serialized external message.
@@ -139,6 +140,7 @@ pub struct MempoolMetrics {
     pub duplicates: u64,
     pub rejected: u64,
     pub broadcast_failures: u64,
+    pub invalid_warnings: u64,
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -169,6 +171,8 @@ pub enum MempoolError {
     ConfigDownload(String),
     #[error("overlay manager initialization failed: {0}")]
     Overlay(String),
+    #[error("overlay session connection failed: {0}")]
+    Session(String),
 }
 
 /// Controls how callers configure the scanner's bounded event queue.
@@ -185,7 +189,11 @@ pub struct ScannerIdentity {
 }
 
 /// Builder for a live scanner startup.
-#[derive(Clone, Debug)]
+pub type OverlaySessionFactory = Arc<
+    dyn Fn(SeedPeer) -> BoxFuture<'static, Result<Box<dyn OverlaySession>, String>> + Send + Sync,
+>;
+
+#[derive(Clone)]
 pub struct MempoolScannerBuilder {
     identity: Option<ScannerIdentity>,
     testnet: bool,
@@ -199,6 +207,28 @@ pub struct MempoolScannerBuilder {
     discovery_timeout: Duration,
     queue_policy: QueuePolicy,
     download_config: bool,
+    session_factory: Option<OverlaySessionFactory>,
+}
+
+impl fmt::Debug for MempoolScannerBuilder {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MempoolScannerBuilder")
+            .field("identity", &self.identity)
+            .field("testnet", &self.testnet)
+            .field("explicit_seeds", &self.explicit_seeds)
+            .field("global_config", &self.global_config.is_some())
+            .field("global_config_json", &self.global_config_json.is_some())
+            .field("config", &self.config)
+            .field("overlay", &self.overlay)
+            .field("overlay_id", &self.overlay_id)
+            .field("bootstrap_timeout", &self.bootstrap_timeout)
+            .field("discovery_timeout", &self.discovery_timeout)
+            .field("queue_policy", &self.queue_policy)
+            .field("download_config", &self.download_config)
+            .field("session_factory", &self.session_factory.is_some())
+            .finish()
+    }
 }
 
 impl Default for MempoolScannerBuilder {
@@ -216,6 +246,7 @@ impl Default for MempoolScannerBuilder {
             discovery_timeout: Duration::from_secs(5),
             queue_policy: QueuePolicy::Backpressure,
             download_config: true,
+            session_factory: None,
         }
     }
 }
@@ -290,6 +321,14 @@ impl MempoolScannerBuilder {
         self
     }
 
+    /// Installs the transport-specific connector used for discovered peers.
+    /// The factory owns ADNL handshakes and returns an authenticated overlay
+    /// session, keeping protocol wire details out of the scanner.
+    pub fn session_factory(mut self, factory: OverlaySessionFactory) -> Self {
+        self.session_factory = Some(factory);
+        self
+    }
+
     /// Resolves bootstrap sources, initializes the bounded overlay manager, and
     /// starts the scanner's overlay receive adapter.
     pub async fn start(
@@ -302,7 +341,7 @@ impl MempoolScannerBuilder {
         ),
         MempoolError,
     > {
-        let _ = self.identity;
+        let _identity = self.identity;
         let _ = self.queue_policy;
         let seeds = self.resolve_bootstrap().await?;
         let discovery = DiscoveryConfig {
@@ -320,6 +359,38 @@ impl MempoolScannerBuilder {
         let scanner = Arc::new(MempoolScanner::new(self.config)?);
         let stream = scanner.events();
         let _receiver_task = scanner.clone().spawn_overlay_receiver(manager.pool());
+        let mut statuses = manager.subscribe_statuses();
+        let status_scanner = scanner.clone();
+        tokio::spawn(async move {
+            while let Ok(status) = statuses.recv().await {
+                if status_scanner.peer_status(status).await.is_err() {
+                    break;
+                }
+            }
+        });
+        if let Some(factory) = self.session_factory {
+            let results = join_all(peers.into_iter().map(|peer| {
+                let factory = factory.clone();
+                async move { factory(peer).await }
+            }))
+            .await;
+            let mut connected = 0;
+            for result in results {
+                match result {
+                    Ok(session) => {
+                        manager.add_session(session).await;
+                        connected += 1;
+                    }
+                    Err(error) => log::debug!("bootstrap session failed: {error}"),
+                }
+            }
+            if connected == 0 {
+                manager.shutdown();
+                return Err(MempoolError::Session(
+                    "all validated bootstrap sessions failed".into(),
+                ));
+            }
+        }
         Ok((scanner, manager, stream))
     }
 
@@ -331,9 +402,7 @@ impl MempoolScannerBuilder {
                     .bootstrap_addresses()
                     .into_iter()
                     .map(|item| SeedPeer {
-                        peer: PeerId::from_bytes(
-                            item.public_key.unwrap_or_else(|| peer_key(item.address)),
-                        ),
+                        peer: PeerId::from_bytes(item.public_key.unwrap_or([0; 32])),
                         address: item.address.to_string(),
                     }),
             );
@@ -360,14 +429,21 @@ impl MempoolScannerBuilder {
         }
         let mut unique = HashMap::<(PeerId, String), SeedPeer>::new();
         for peer in peers {
-            peer.address
-                .parse::<std::net::SocketAddr>()
-                .map_err(|_| MempoolError::InvalidBootstrapAddress(peer.address.clone()))?;
+            if !peer.is_valid() {
+                return Err(MempoolError::InvalidBootstrapAddress(peer.address));
+            }
             unique
                 .entry((peer.peer, peer.address.clone()))
                 .or_insert(peer);
         }
-        Ok(unique.into_values().collect())
+        let mut peers = unique.into_values().collect::<Vec<_>>();
+        peers.sort_by(|left, right| {
+            left.peer
+                .as_bytes()
+                .cmp(&right.peer.as_bytes())
+                .then_with(|| left.address.cmp(&right.address))
+        });
+        Ok(peers)
     }
 }
 
@@ -388,14 +464,10 @@ fn parse_seed_json(json: &str) -> Result<Vec<SeedPeer>, MempoolError> {
     Ok(addresses
         .into_iter()
         .map(|item| SeedPeer {
-            peer: PeerId::from_bytes(item.public_key.unwrap_or_else(|| peer_key(item.address))),
+            peer: PeerId::from_bytes(item.public_key.unwrap_or([0; 32])),
             address: item.address.to_string(),
         })
         .collect())
-}
-
-fn peer_key(address: std::net::SocketAddr) -> [u8; 32] {
-    Sha256::digest(address.to_string().as_bytes()).into()
 }
 
 /// A bounded, deduplicating scanner.
@@ -409,6 +481,7 @@ pub struct MempoolScanner {
     duplicates: AtomicU64,
     rejected: AtomicU64,
     broadcast_failures: AtomicU64,
+    invalid_warnings: AtomicU64,
     last_invalid_warning: Mutex<Option<Instant>>,
 }
 
@@ -437,6 +510,7 @@ impl MempoolScanner {
             duplicates: AtomicU64::new(0),
             rejected: AtomicU64::new(0),
             broadcast_failures: AtomicU64::new(0),
+            invalid_warnings: AtomicU64::new(0),
             last_invalid_warning: Mutex::new(None),
         })
     }
@@ -461,6 +535,7 @@ impl MempoolScanner {
             duplicates: self.duplicates.load(Ordering::Relaxed),
             rejected: self.rejected.load(Ordering::Relaxed),
             broadcast_failures: self.broadcast_failures.load(Ordering::Relaxed),
+            invalid_warnings: self.invalid_warnings.load(Ordering::Relaxed),
         }
     }
 
@@ -551,6 +626,7 @@ impl MempoolScanner {
                         .unwrap_or(true)
                     {
                         log::warn!("dropping invalid overlay external message: {error}");
+                        self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
                         *last_warning = Some(now);
                     }
                 }
@@ -636,6 +712,24 @@ fn validate_envelope(
 mod tests {
     use super::*;
     use futures::StreamExt;
+
+    struct PendingSession {
+        peer: PeerId,
+    }
+
+    impl OverlaySession for PendingSession {
+        fn peer_id(&self) -> PeerId {
+            self.peer
+        }
+
+        fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+            Box::pin(std::future::pending())
+        }
+
+        fn send(&mut self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
 
     fn boc(body: u8) -> Vec<u8> {
         vec![0xb5, 0xee, 0x9c, 0x72, body]
@@ -742,5 +836,31 @@ mod tests {
             .start()
             .await;
         assert!(matches!(result, Err(MempoolError::NoBootstrapPeers)));
+    }
+
+    #[tokio::test]
+    async fn builder_connects_validated_peers_through_factory() {
+        let peer = PeerId::from_bytes([5; 32]);
+        let seed = SeedPeer {
+            peer,
+            address: "127.0.0.1:30303".into(),
+        };
+        let factory: OverlaySessionFactory = Arc::new(move |seed| {
+            Box::pin(async move {
+                assert_eq!(seed.peer, peer);
+                Ok(Box::new(PendingSession { peer }) as Box<dyn OverlaySession>)
+            })
+        });
+        let (_scanner, manager, _events) = MempoolScannerBuilder::new()
+            .download_config(false)
+            .config(config())
+            .seed(seed)
+            .session_factory(factory)
+            .start()
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        assert_eq!(manager.peer_count().await, 1);
+        manager.shutdown();
     }
 }

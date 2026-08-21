@@ -111,9 +111,25 @@ impl AdnlUdpSocket {
         Ok(self.socket.send(&packet).await?)
     }
 
+    pub async fn send_timeout(
+        &mut self,
+        payload: Bytes,
+        timeout: Duration,
+    ) -> Result<usize, AdnlError> {
+        tokio::time::timeout(timeout, self.send(payload))
+            .await
+            .map_err(|_| AdnlError::Timeout {
+                operation: "ADNL UDP send",
+                timeout,
+            })?
+    }
+
     pub async fn recv(&mut self) -> Result<Bytes, AdnlError> {
-        let mut packet = vec![0u8; MAX_UDP_PACKET_SIZE];
+        let mut packet = vec![0u8; MAX_UDP_PACKET_SIZE + 1];
         let size = self.socket.recv(&mut packet).await?;
+        if size > MAX_UDP_PACKET_SIZE {
+            return Err(AdnlError::TooLongPacket);
+        }
         self.peer.decode(&packet[..size])
     }
 

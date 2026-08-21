@@ -8,7 +8,8 @@ LiteServer block/indexing queries.
 
 - `ExternalMessage` means **Seen**: the envelope passed the configured fast
   checks and its SHA-256 hash was not observed in the scanner lifetime.
-- `Included` is a separately supplied correlation result from a slow path.
+- `Included` remains a compatibility helper for callers that already perform
+  correlation; inclusion tracking is not part of the scanner startup path.
 - `PeerStatus` reports transport lifecycle only.
 - A message that was deduplicated is not emitted again; an unknown final state
   remains **Unknown**, not `Included`.
@@ -16,8 +17,9 @@ LiteServer block/indexing queries.
 The raw BoC is held in `Arc<[u8]>`, so event consumers and broadcast peers can
 share ownership without copying the payload. The bounded event queue provides
 backpressure. Deduplication is sharded by the first hash byte and evicted by
-the configured TTL and bounded shard capacity. `MempoolMetrics` exposes accepted,
-duplicate, rejected, and broadcast-failure counters.
+the configured TTL and bounded shard capacity. `MempoolMetrics` exposes
+accepted, duplicate, rejected, broadcast-failure, and rate-limited
+invalid-warning counters.
 
 ## Fast and slow paths
 
@@ -38,10 +40,14 @@ builder, while `tonutils-network-config` remains an offline parser. Duplicate
 `(peer, address)` pairs and malformed socket addresses are rejected before the
 overlay manager starts; no validated peer is a startup error.
 
-The current startup creates the bounded `PeerManager` and receive adapter. It
-does not yet open canonical ADNL channels or issue DHT/overlay queries. QUIC,
-inclusion tracking, and consumer-defined retry policy remain outside this
-crate's current live scope.
+`MempoolScannerBuilder::session_factory` is the explicit transport boundary:
+applications provide a factory that performs the canonical ADNL and
+overlay-specific handshake and returns an authenticated `OverlaySession`.
+When present, startup connects every validated discovery result concurrently
+and fails if all session attempts fail. Without a factory, startup still builds
+the bounded scanner for dependency-injected or offline session management.
+Canonical DHT/overlay queries and QUIC remain outside this crate until their
+upstream wire fixtures are available.
 
 ## Reference comparison
 

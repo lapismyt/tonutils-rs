@@ -177,6 +177,28 @@ fn test_extract_bootstrap_addresses_from_global_config() {
 }
 
 #[test]
+fn test_extract_bootstrap_addresses_discards_unusable_records() {
+    let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+    let json = format!(
+        r#"{{
+            "liteservers": [
+                {{"ip": 0, "port": 0, "id": {{"@type":"pub.ed25519", "key":"{key}"}}}},
+                {{"ip": 2130706433, "port": 30303, "id": {{"@type":"pub.ed25519", "key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}}}
+            ],
+            "dht": {{"static_nodes": {{"nodes": [{{
+                "id": {{"@type":"pub.ed25519", "key":"{key}"}},
+                "addr_list": {{"addrs": [{{"ip": 2130706434, "port": 0}}]}}
+            }}]}}}}
+        }}"#
+    );
+
+    assert!(matches!(
+        extract_bootstrap_addresses(&json),
+        Err(ConfigError::NoBootstrapAddresses)
+    ));
+}
+
+#[test]
 fn test_config_global_liteserver_selection() {
     let config = ConfigGlobal {
         liteservers: vec![
