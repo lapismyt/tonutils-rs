@@ -2486,6 +2486,7 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "rand 0.8.7",
+ "sha2 0.10.9",
  "thiserror",
  "tl-proto",
  "tl-scheme",

@@ -6,7 +6,7 @@ use tonutils_adnl::{AdnlUdpSession, KeyPair};
 use tonutils_mempool::{AdnlUdpOverlaySession, MempoolConfig, MempoolEvent, MempoolScanner};
 use tonutils_overlay::{OverlayConfig, OverlayId, PeerId};
 use tonutils_tl::Message;
-use tonutils_tl::tl::network::PacketContents;
+use tonutils_tl::tl::network::{OverlayBroadcast, PacketContents};
 
 #[tokio::test]
 async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
@@ -61,7 +61,9 @@ async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
             from: None,
             from_short: None,
             message: Some(Message::Custom {
-                data: vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3],
+                data: tl_proto::serialize(OverlayBroadcast::Unicast {
+                    data: vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3],
+                }),
             }),
             messages: None,
             address: None,

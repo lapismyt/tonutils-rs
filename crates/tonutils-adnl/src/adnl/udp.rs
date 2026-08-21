@@ -13,7 +13,8 @@ use sha2::{Digest, Sha256};
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 use tonutils_tl::tl::network::{
-    DhtMessage, DhtNodesBoxed, PacketContents, PublicKey as TlPublicKey,
+    DhtMessage, DhtNodesBoxed, OverlayNodes, OverlayNodesBoxed, OverlayQuery, PacketContents,
+    PublicKey as TlPublicKey,
 };
 use tonutils_tl::{Int256, Message as AdnlMessage};
 
@@ -560,6 +561,66 @@ impl AdnlUdpSession {
                             .filter(|node| node.is_valid(now))
                             .collect(),
                     });
+                }
+            }
+        }
+    }
+
+    pub async fn overlay_get_random_peers(
+        &mut self,
+        overlay: Int256,
+        timeout: Duration,
+    ) -> Result<OverlayNodesBoxed, AdnlError> {
+        let query_id = Int256::random();
+        let mut query = tl_proto::serialize(OverlayQuery::Query { overlay });
+        query.extend(tl_proto::serialize(OverlayQuery::GetRandomPeers {
+            peers: OverlayNodes { nodes: Vec::new() },
+        }));
+        self.send_contents(PacketContents {
+            rand1: vec![0; 7],
+            flags: (),
+            from: None,
+            from_short: None,
+            message: Some(AdnlMessage::Query {
+                query_id: query_id.clone(),
+                query,
+            }),
+            messages: None,
+            address: None,
+            priority_address: None,
+            seqno: None,
+            confirm_seqno: None,
+            recv_addr_list_version: None,
+            recv_priority_addr_list_version: None,
+            reinit_date: None,
+            dst_reinit_date: None,
+            signature: None,
+            rand2: vec![0; 7],
+        })
+        .await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(AdnlError::Timeout {
+                    operation: "overlay getRandomPeers",
+                    timeout,
+                });
+            }
+            let packet = self.recv_timeout(remaining).await?;
+            let messages = packet
+                .message
+                .into_iter()
+                .chain(packet.messages.into_iter().flatten());
+            for message in messages {
+                if let AdnlMessage::Answer {
+                    query_id: id,
+                    answer,
+                } = message
+                    && id == query_id
+                {
+                    return tl_proto::deserialize(&answer)
+                        .map_err(|error| AdnlError::MalformedPacket(error.to_string()));
                 }
             }
         }

@@ -2,6 +2,7 @@
 
 use derivative::Derivative;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use sha2::{Digest, Sha256};
 use tl_proto::{TlRead, TlWrite};
 
 use super::adnl::Message as AdnlMessage;
@@ -277,8 +278,14 @@ pub struct OverlayNode {
 
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
-#[tl(boxed, id = 0xe487290e)]
 pub struct OverlayNodes {
+    pub nodes: Vec<OverlayNode>,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0xe487290e)]
+pub struct OverlayNodesBoxed {
     pub nodes: Vec<OverlayNode>,
 }
 
@@ -325,6 +332,44 @@ pub enum OverlayBroadcast {
         date: i32,
         signature: Vec<u8>,
     },
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(
+    boxed,
+    id = 0xfa374e7c,
+    scheme_inline = r##"overlay.broadcast.toSign hash:int256 date:int = overlay.broadcast.ToSign;"##
+)]
+pub struct OverlayBroadcastToSign {
+    pub hash: Int256,
+    pub date: i32,
+}
+
+impl OverlayBroadcast {
+    pub fn payload_if_valid(&self, now: i32) -> Option<&[u8]> {
+        let Self::Broadcast {
+            src: PublicKey::Ed25519 { key },
+            data,
+            date,
+            signature,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        if *date > now.saturating_add(60) || signature.len() != 64 {
+            return None;
+        }
+        let signature = Signature::from_slice(signature).ok()?;
+        let public_key = VerifyingKey::from_bytes(&key.0).ok()?;
+        let hash = Int256(Sha256::digest(data).into());
+        let to_sign = OverlayBroadcastToSign { hash, date: *date };
+        public_key
+            .verify(&tl_proto::serialize(to_sign), &signature)
+            .ok()?;
+        Some(data)
+    }
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -450,5 +495,31 @@ mod tests {
                 data: vec![1, 2, 3]
             }
         );
+    }
+
+    #[test]
+    fn signed_overlay_broadcast_rejects_tampering() {
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[13; 32]);
+        let data = vec![4, 5, 6];
+        let to_sign = OverlayBroadcastToSign {
+            hash: Int256(Sha256::digest(&data).into()),
+            date: 100,
+        };
+        let signature = ed25519_dalek::Signer::sign(&signing_key, &serialize(to_sign));
+        let mut broadcast = OverlayBroadcast::Broadcast {
+            src: PublicKey::Ed25519 {
+                key: Int256(signing_key.verifying_key().to_bytes()),
+            },
+            certificate: OverlayCertificate::Empty,
+            flags: 0,
+            data,
+            date: 100,
+            signature: signature.to_bytes().to_vec(),
+        };
+        assert_eq!(broadcast.payload_if_valid(100), Some([4, 5, 6].as_slice()));
+        if let OverlayBroadcast::Broadcast { data, .. } = &mut broadcast {
+            data[0] ^= 1;
+        }
+        assert!(broadcast.payload_if_valid(100).is_none());
     }
 }

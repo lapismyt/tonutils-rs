@@ -31,8 +31,7 @@ pub fn direct_factory(
                     local_keypair,
                     remote,
                 )
-                .await
-                .map_err(|error| error.to_string())?,
+                .await?,
             ) as Box<dyn OverlaySession>)
         })
     })
@@ -58,8 +57,7 @@ pub fn channel_factory(
                     remote,
                     timeout,
                 )
-                .await
-                .map_err(|error| error.to_string())?,
+                .await?,
             ) as Box<dyn OverlaySession>)
         })
     })
@@ -122,7 +120,17 @@ impl OverlaySession for AdnlUdpOverlaySession {
                     if let AdnlMessage::Custom { data } = message {
                         let data = match tl_proto::deserialize::<OverlayBroadcast>(&data) {
                             Ok(OverlayBroadcast::Unicast { data }) => data,
-                            Ok(OverlayBroadcast::Broadcast { data, .. }) => data,
+                            Ok(broadcast) => broadcast
+                                .payload_if_valid(
+                                    std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .unwrap_or_default()
+                                        .as_secs()
+                                        .min(i32::MAX as u64)
+                                        as i32,
+                                )
+                                .ok_or_else(|| "invalid overlay broadcast".to_owned())?
+                                .to_vec(),
                             Err(_) => data,
                         };
                         return Ok(Arc::from(data));
