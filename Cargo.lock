@@ -1817,9 +1817,11 @@ dependencies = [
  "tonutils-crc",
  "tonutils-jetton",
  "tonutils-liteclient",
+ "tonutils-mempool",
  "tonutils-metadata",
  "tonutils-network-config",
  "tonutils-nft",
+ "tonutils-overlay",
  "tonutils-tl",
  "tonutils-tlb",
  "tonutils-tvm",
@@ -1942,6 +1944,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tonutils-mempool"
+version = "2.0.0"
+dependencies = [
+ "futures",
+ "sha2 0.10.9",
+ "thiserror",
+ "tokio",
+ "tonutils-overlay",
+]
+
+[[package]]
 name = "tonutils-metadata"
 version = "2.0.0"
 dependencies = [
@@ -1974,6 +1987,16 @@ dependencies = [
  "tonutils-metadata",
  "tonutils-tlb",
  "tonutils-tvm",
+]
+
+[[package]]
+name = "tonutils-overlay"
+version = "2.0.0"
+dependencies = [
+ "futures",
+ "sha2 0.10.9",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

@@ -1,0 +1,21 @@
+[package]
+name = "tonutils-mempool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Low-latency Rust stream for TON pending external messages."
+readme = "../../README.md"
+documentation = "https://docs.rs/tonutils-mempool"
+keywords = ["ton", "mempool", "overlay", "blockchain"]
+categories = ["network-programming", "cryptography::cryptocurrencies"]
+
+[lints]
+workspace = true
+
+[dependencies]
+futures.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tonutils-overlay = { path = "../tonutils-overlay", version = "2.0.0" }

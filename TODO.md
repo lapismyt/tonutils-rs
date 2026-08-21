@@ -368,22 +368,24 @@ postponed work moves to `# BACKLOG`.
   - [ ] Add DHT TL types #dht #tl
   - [ ] Verify node signatures #dht #crypto
   - [ ] Resolve liteservers and overlay peers through DHT #dht
-- [ ] Implement overlay protocol #overlay #network
-  - [ ] Add overlay node and peer exchange types #overlay #tl
-  - [ ] Add overlay query transport #overlay
-  - [ ] Add broadcast handling where needed for mempool #overlay #mempool
+- [-] Implement overlay protocol #overlay #network
+  - [x] Add bounded overlay peer/routing/status primitives #overlay #tests
+  - [ ] Add overlay node and peer exchange types from upstream schemas #overlay #tl
+  - [ ] Add overlay query transport and live peer bootstrap #overlay
+  - [x] Add bounded broadcast hook for mempool #overlay #mempool
 - [ ] Implement native Rust QUIC transport #quic #network
   - [ ] Define optional feature gating without native runtime dependencies #quic #features
   - [ ] Add peer and session lifecycle handling #quic #network
   - [ ] Model stream and datagram semantics with rate limiting and backpressure #quic #network #perf
   - [ ] Integrate QUIC with block-sync, fast-sync, and overlay communication #quic #network #overlay
   - [ ] Add offline fixtures and interoperability tests #quic #network #tests
-- [ ] Build mempool scanning support #mempool
-  - [ ] Study `yungwine/ton-mempool` behavior and map required overlay flows #mempool #docs
-  - [ ] Identify public API for pending external messages #mempool
-  - [ ] Add stream API for pending messages #mempool
-  - [ ] Add backpressure and filtering #mempool #perf
-  - [ ] Add tests with captured fixtures before live network tests #mempool #tests
+- [-] Build mempool scanning support #mempool
+  - [x] Study `yungwine/ton-mempool` behavior and map required overlay flows #mempool #docs
+  - [x] Identify public API for pending external messages #mempool
+  - [x] Add stream API for pending messages #mempool
+  - [x] Add bounded backpressure and fast-path filtering #mempool #perf
+  - [x] Add offline structural tests before live network tests #mempool #tests
+  - [ ] Add canonical external-message fixtures and LiteServer inclusion tracking #mempool #tests #network
 
 ## CLI And Shell Automation
 

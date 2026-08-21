@@ -99,6 +99,11 @@ surface expansion:
 
 ## Phase 4: Performance, Extended Protocols, And Ecosystem Coverage
 
+The initial `tonutils-overlay` and `tonutils-mempool` primitives now provide
+offline-safe bounded peer/event handling and a Rust stream for deduplicated
+pending external messages. Live DHT bootstrap, canonical overlay wire schemas,
+and LiteServer inclusion tracking remain protocol-evidence work in `TODO.md`.
+
 After protocol coverage and reliability are established:
 
 - Add benchmarks and allocation audits for ADNL, TL, TVM, BoC, and balancer

@@ -43,6 +43,8 @@ tracked in `fixtures/compatibility/block_tlb_extended.json`.
 19. [Wallet V5R1](contracts/wallet-v5r1.md)
 20. [Wallet V4R2 and TON mnemonics](contracts/wallet-v4r2-mnemonics.md)
 21. [TEP metadata roadmap](contracts/tep-metadata.md)
+22. [Overlay protocol design](network/overlay.md)
+23. [Mempool scanner design](mempool/scanner.md)
 
 ## Directory Map
 

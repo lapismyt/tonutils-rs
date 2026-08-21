@@ -10,6 +10,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 This section describes the breaking changes being prepared for `2.0.0`. It is
 not a release tag or release date.
 
+### Mempool scanner
+
+- Added initial `tonutils-overlay` bounded peer/routing primitives and
+  `tonutils-mempool` low-latency Rust `Stream` API for deduplicated pending
+  external-message events. Live DHT bootstrap and inclusion tracking remain
+  explicitly incomplete.
+
 ### Added
 
 - Added a pinned upstream TON TL/TL-B schema snapshot at commit
