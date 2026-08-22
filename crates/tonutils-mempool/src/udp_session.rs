@@ -15,8 +15,8 @@ use tonutils_overlay::{
 use tonutils_tl::Message as AdnlMessage;
 use tonutils_tl::tl::network::{
     Address, AddressListBoxed, DhtKey, DhtValueResult, OverlayBroadcast, OverlayBroadcastFec,
-    OverlayMessage, OverlayNode, OverlayNodeToSign, OverlayNodesBoxed, PacketContents,
-    PublicKey as TlPublicKey, TonNodeExternalMessageBroadcast,
+    OverlayMessage, OverlayNode, OverlayNodeToSign, OverlayNodesBoxed, OverlayQuery,
+    PacketContents, PublicKey as TlPublicKey, TonNodeExternalMessageBroadcast,
 };
 
 /// Adapter exposing an authenticated direct ADNL UDP session to the overlay.
@@ -597,6 +597,17 @@ impl OverlaySession for AdnlUdpOverlaySession {
                     .chain(packet.messages.into_iter().flatten());
                 let mut channel_changed = false;
                 for message in messages {
+                    if let AdnlMessage::Query { query_id, query } = &message
+                        && let Ok(OverlayQuery::Ping) =
+                            OverlayQuery::read_from(&mut query.as_slice())
+                        && self.overlay.is_some()
+                    {
+                        let _ = self
+                            .session
+                            .send_answer(query_id.clone(), tl_proto::serialize(OverlayQuery::Ping))
+                            .await;
+                        continue;
+                    }
                     if matches!(
                         message,
                         AdnlMessage::CreateChannel { .. } | AdnlMessage::ConfirmChannel { .. }

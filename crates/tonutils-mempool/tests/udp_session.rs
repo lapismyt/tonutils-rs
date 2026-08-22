@@ -6,8 +6,9 @@ use tl_proto::TlRead;
 use tonutils_adnl::{AdnlUdpSession, KeyPair};
 use tonutils_mempool::{AdnlUdpOverlaySession, MempoolConfig, MempoolEvent, MempoolScanner};
 use tonutils_overlay::{OverlayConfig, OverlayId, PeerId};
-use tonutils_tl::Message;
-use tonutils_tl::tl::network::{OverlayBroadcast, OverlayMessage, PacketContents};
+use tonutils_tl::tl::adnl::Message as AdnlMessage;
+use tonutils_tl::tl::network::{OverlayBroadcast, OverlayMessage, OverlayQuery, PacketContents};
+use tonutils_tl::{Int256, Message};
 
 #[tokio::test]
 async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
@@ -101,4 +102,55 @@ async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
         .unwrap();
     assert!(matches!(event, MempoolEvent::ExternalMessage { .. }));
     manager.shutdown();
+}
+
+#[tokio::test]
+async fn adnl_session_sends_answer_to_query() {
+    let client_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let server_key = KeyPair::generate(&mut rand::rngs::OsRng);
+
+    let client_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let server_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let server_addr = server_socket.local_addr().unwrap();
+    drop(server_socket);
+
+    let mut server =
+        AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
+            .await
+            .unwrap();
+    let mut client =
+        AdnlUdpSession::connect(client_addr, server_addr, client_key, server_key.public_key)
+            .await
+            .unwrap();
+
+    // Server sends an answer
+    let query_id = Int256::random();
+    server
+        .send_answer(query_id.clone(), tl_proto::serialize(OverlayQuery::Ping))
+        .await
+        .unwrap();
+
+    // Client receives the answer
+    let packet = tokio::time::timeout(Duration::from_secs(2), client.recv_contents())
+        .await
+        .unwrap()
+        .unwrap();
+
+    match packet.message {
+        Some(AdnlMessage::Answer {
+            answer,
+            query_id: id,
+        }) => {
+            assert_eq!(id, query_id);
+            assert!(matches!(
+                OverlayQuery::read_from(&mut answer.as_slice()),
+                Ok(OverlayQuery::Ping)
+            ));
+        }
+        _ => panic!("expected Answer message with Ping"),
+    }
 }

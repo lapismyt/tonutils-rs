@@ -251,6 +251,32 @@ impl AdnlUdpSession {
         self.send_direct_contents(contents).await
     }
 
+    pub async fn send_answer(
+        &mut self,
+        query_id: Int256,
+        answer: Vec<u8>,
+    ) -> Result<usize, AdnlError> {
+        self.send_contents(PacketContents {
+            rand1: vec![0; 7],
+            flags: (),
+            from: None,
+            from_short: None,
+            message: Some(AdnlMessage::Answer { query_id, answer }),
+            messages: None,
+            address: None,
+            priority_address: None,
+            seqno: None,
+            confirm_seqno: None,
+            recv_addr_list_version: None,
+            recv_priority_addr_list_version: None,
+            reinit_date: None,
+            dst_reinit_date: None,
+            signature: None,
+            rand2: vec![0; 7],
+        })
+        .await
+    }
+
     async fn send_direct_contents(
         &mut self,
         mut contents: PacketContents,

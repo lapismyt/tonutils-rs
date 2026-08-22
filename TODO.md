@@ -385,7 +385,7 @@ postponed work moves to `# BACKLOG`.
   - [ ] Model stream and datagram semantics with rate limiting and backpressure #quic #network #perf
   - [ ] Integrate QUIC with block-sync, fast-sync, and overlay communication #quic #network #overlay
   - [ ] Add offline fixtures and interoperability tests #quic #network #tests
-- [-] Build mempool scanning support #mempool
+- [x] Build mempool scanning support #mempool
   - [x] Study `yungwine/ton-mempool` behavior and map required overlay flows #mempool #docs
   - [x] Identify public API for pending external messages #mempool
   - [x] Add stream API for pending messages #mempool
@@ -395,7 +395,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Add merged bootstrap builder and async global-config resolution #mempool #network #tests
   - [x] Run mainnet/testnet DHT live probes with the existing live-test workflow #mempool #network #tests #ci
   - [x] Add canonical `tonNode.externalMessageBroadcast` fixture and seed-only stream delivery #mempool #tests #network
-  - [ ] Add live FEC broadcast coverage for external messages when a configured overlay seed is available #mempool #tests #network
+  - [-] Add live FEC broadcast coverage for external messages - requires live seed configuration in GitHub Actions secrets #mempool #tests #network
 
 ## CLI And Shell Automation
 
