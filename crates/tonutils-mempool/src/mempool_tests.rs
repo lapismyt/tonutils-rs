@@ -233,3 +233,13 @@ async fn concurrent_ingest_publishes_one_copy() {
     assert_eq!(scanner.metrics().duplicates, 1);
     assert_eq!(scanner.dedup_entries.load(Ordering::Relaxed), 1);
 }
+
+#[tokio::test]
+async fn overlay_receiver_stops_with_manager_shutdown() {
+    let scanner = Arc::new(MempoolScanner::new(config()).unwrap());
+    let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+    let receiver =
+        scanner.spawn_overlay_receiver_with_shutdown(manager.pool(), manager.subscribe_shutdown());
+    manager.shutdown_wait().await;
+    receiver.await.unwrap();
+}

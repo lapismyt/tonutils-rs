@@ -468,13 +468,22 @@ impl MempoolScannerBuilder {
             .map_err(|error| MempoolError::Overlay(error.to_string()))?;
         let scanner = Arc::new(MempoolScanner::new(self.config)?);
         let stream = scanner.events();
-        let _receiver_task = scanner.clone().spawn_overlay_receiver(manager.pool());
+        let _receiver_task = scanner
+            .clone()
+            .spawn_overlay_receiver_with_shutdown(manager.pool(), manager.subscribe_shutdown());
         let mut statuses = manager.subscribe_statuses();
         let status_scanner = scanner.clone();
+        let mut shutdown = manager.subscribe_shutdown();
         tokio::spawn(async move {
-            while let Ok(status) = statuses.recv().await {
-                if status_scanner.peer_status(status).await.is_err() {
-                    break;
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => break,
+                    status = statuses.recv() => {
+                        let Ok(status) = status else { break; };
+                        if status_scanner.peer_status(status).await.is_err() {
+                            break;
+                        }
+                    }
                 }
             }
         });
@@ -760,18 +769,32 @@ impl MempoolScanner {
         self: Arc<Self>,
         pool: Arc<OverlayPeerPool>,
     ) -> tokio::task::JoinHandle<()> {
+        self.spawn_overlay_receiver_with_shutdown(pool, tokio::sync::watch::channel(false).1)
+    }
+
+    pub fn spawn_overlay_receiver_with_shutdown(
+        self: Arc<Self>,
+        pool: Arc<OverlayPeerPool>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            while let Some(OverlayPacket { payload, routing }) = pool.next_packet().await {
-                if let Err(error) = self.ingest(payload, routing).await {
-                    let now = Instant::now();
-                    let mut last_warning = self.last_invalid_warning.lock().await;
-                    if last_warning
-                        .map(|last| now.duration_since(last) >= Duration::from_secs(1))
-                        .unwrap_or(true)
-                    {
-                        log::warn!("dropping invalid overlay external message: {error}");
-                        self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
-                        *last_warning = Some(now);
+            loop {
+                tokio::select! {
+                    _ = shutdown.changed() => break,
+                    packet = pool.next_packet() => {
+                        let Some(OverlayPacket { payload, routing }) = packet else { break; };
+                        if let Err(error) = self.ingest(payload, routing).await {
+                            let now = Instant::now();
+                            let mut last_warning = self.last_invalid_warning.lock().await;
+                            if last_warning
+                                .map(|last| now.duration_since(last) >= Duration::from_secs(1))
+                                .unwrap_or(true)
+                            {
+                                log::warn!("dropping invalid overlay external message: {error}");
+                                self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
+                                *last_warning = Some(now);
+                            }
+                        }
                     }
                 }
             }

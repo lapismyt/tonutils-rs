@@ -431,6 +431,10 @@ impl PeerManager {
         self.pool.subscribe_statuses()
     }
 
+    pub fn subscribe_shutdown(&self) -> watch::Receiver<bool> {
+        self.shutdown.subscribe()
+    }
+
     pub async fn add_session(&self, session: Box<dyn OverlaySession>) {
         let peer = session.peer_id();
         if self.sessions.read().await.contains_key(&peer) {
