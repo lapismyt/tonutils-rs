@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use futures::future::BoxFuture;
 use futures::future::join_all;
-use raptorq::{Decoder, EncodingPacket, ObjectTransmissionInformation};
+use raptorq::{Decoder, EncodingPacket, ObjectTransmissionInformation, PayloadId};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -25,6 +25,7 @@ pub struct AdnlUdpOverlaySession {
     session: AdnlUdpSession,
     overlay: Option<OverlayId>,
     fec: HashMap<[u8; 32], FecAssembly>,
+    last_keepalive: Instant,
 }
 
 struct FecAssembly {
@@ -481,6 +482,7 @@ impl AdnlUdpOverlaySession {
             session,
             overlay: None,
             fec: HashMap::new(),
+            last_keepalive: Instant::now(),
         })
     }
 
@@ -506,6 +508,7 @@ impl AdnlUdpOverlaySession {
             session,
             overlay: None,
             fec: HashMap::new(),
+            last_keepalive: Instant::now(),
         })
     }
 
@@ -551,10 +554,11 @@ impl AdnlUdpOverlaySession {
             session,
             overlay: Some(overlay),
             fec: HashMap::new(),
+            last_keepalive: Instant::now(),
         };
         session
             .session
-            .send_overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()))
+            .overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()), timeout)
             .await
             .map_err(|error| error.to_string())?;
         Ok(session)
@@ -569,24 +573,43 @@ impl OverlaySession for AdnlUdpOverlaySession {
     fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
         Box::pin(async move {
             loop {
-                let packet = self
-                    .session
-                    .recv_contents()
-                    .await
-                    .map_err(|error| error.to_string())?;
+                if self.last_keepalive.elapsed() >= Duration::from_secs(5)
+                    && let Some(overlay) = self.overlay
+                {
+                    let _ = self
+                        .session
+                        .send_overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()))
+                        .await;
+                    self.last_keepalive = Instant::now();
+                }
+                let packet = match tokio::time::timeout(
+                    Duration::from_secs(5),
+                    self.session.recv_contents(),
+                )
+                .await
+                {
+                    Ok(packet) => packet.map_err(|error| error.to_string())?,
+                    Err(_) => continue,
+                };
                 let messages = packet
                     .message
                     .into_iter()
                     .chain(packet.messages.into_iter().flatten());
+                let mut channel_changed = false;
                 for message in messages {
+                    if matches!(
+                        message,
+                        AdnlMessage::CreateChannel { .. } | AdnlMessage::ConfirmChannel { .. }
+                    ) {
+                        channel_changed = true;
+                    }
                     if let AdnlMessage::Custom { data } = message {
                         let data = if let Some(overlay) = self.overlay {
                             let mut data = data.as_slice();
-                            let Ok(OverlayMessage::Message {
-                                overlay: message_overlay,
-                            }) = OverlayMessage::read_from(&mut data)
-                            else {
-                                continue;
+                            let message_overlay = match OverlayMessage::read_from(&mut data) {
+                                Ok(OverlayMessage::Message { overlay })
+                                | Ok(OverlayMessage::MessageWithExtra { overlay, .. }) => overlay,
+                                _ => continue,
                             };
                             if message_overlay.0 != overlay.as_bytes() {
                                 continue;
@@ -603,6 +626,12 @@ impl OverlaySession for AdnlUdpOverlaySession {
                         };
                         return Ok(Arc::from(data));
                     }
+                }
+                if channel_changed && let Some(overlay) = self.overlay {
+                    let _ = self
+                        .session
+                        .send_overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()))
+                        .await;
                 }
             }
         })
@@ -667,7 +696,7 @@ impl AdnlUdpOverlaySession {
                 || symbols_count <= 0
                 || fec_data_size != data_size
                 || (data_size as usize).div_ceil(symbol_size as usize) != symbols_count as usize
-                || fec.data.len() < 4
+                || fec.seqno < 0
             {
                 return Err("invalid overlay FEC parameters".to_owned());
             }
@@ -700,14 +729,11 @@ impl AdnlUdpOverlaySession {
             }
             state.last_seen = Instant::now();
             let expected_size = state.data_size;
-            let packet = EncodingPacket::deserialize(&fec.data);
-            if packet.payload_id().source_block_number() != 0 {
-                return Err("overlay FEC packet has invalid source block".to_owned());
-            }
             let max_symbol_id = symbols_count as u32 + (symbols_count as u32 / 2) + 1024;
-            if packet.payload_id().encoding_symbol_id() > max_symbol_id {
+            if fec.seqno as u32 > max_symbol_id {
                 return Err("overlay FEC packet has an excessive symbol id".to_owned());
             }
+            let packet = EncodingPacket::new(PayloadId::new(0, fec.seqno as u32), fec.data);
             let Some(reconstructed) = state.decoder.decode(packet) else {
                 return Err("overlay FEC payload is incomplete".to_owned());
             };
@@ -781,6 +807,7 @@ mod tests {
             session,
             overlay: None,
             fec: HashMap::new(),
+            last_keepalive: Instant::now(),
         };
         let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
         let fec = OverlayBroadcastFec {
@@ -789,7 +816,7 @@ mod tests {
             data_hash: tonutils_tl::Int256(hash),
             data_size: external.len() as i32,
             flags: 0,
-            data: packet.serialize(),
+            data: packet.split().1,
             seqno: 0,
             fec: tonutils_tl::tl::network::FecType::RaptorQ {
                 data_size: external.len() as i32,
@@ -835,6 +862,7 @@ mod tests {
             session,
             overlay: None,
             fec: HashMap::new(),
+            last_keepalive: Instant::now(),
         };
         let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
         for (index, packet) in packets.into_iter().enumerate() {
@@ -844,7 +872,7 @@ mod tests {
                 data_hash: tonutils_tl::Int256(hash),
                 data_size: external.len() as i32,
                 flags: 0,
-                data: packet.serialize(),
+                data: packet.split().1,
                 seqno: index as i32,
                 fec: tonutils_tl::tl::network::FecType::RaptorQ {
                     data_size: external.len() as i32,

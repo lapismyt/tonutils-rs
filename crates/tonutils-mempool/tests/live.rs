@@ -129,19 +129,29 @@ fn configured_bytes(variable: &str) -> Option<[u8; 32]> {
 #[tokio::test]
 #[ignore = "requires a configured live overlay seed and external-message traffic"]
 async fn configured_seed_delivers_valid_external_message() {
-    let seed_address: SocketAddr = match std::env::var("TON_MEMPOOL_LIVE_SEED") {
-        Ok(value) => value
-            .parse()
-            .expect("TON_MEMPOOL_LIVE_SEED must be IP:port"),
-        Err(std::env::VarError::NotPresent) => {
-            eprintln!("skipping: TON_MEMPOOL_LIVE_SEED is not configured");
-            return;
+    let seeds = match std::env::var("TON_MEMPOOL_LIVE_SEEDS") {
+        Ok(value) if !value.trim().is_empty() => parse_live_seeds(&value),
+        Ok(_) | Err(std::env::VarError::NotPresent) => {
+            let seed_address: SocketAddr = match std::env::var("TON_MEMPOOL_LIVE_SEED") {
+                Ok(value) => value
+                    .parse()
+                    .expect("TON_MEMPOOL_LIVE_SEED must be IP:port"),
+                Err(std::env::VarError::NotPresent) => {
+                    eprintln!("skipping: TON_MEMPOOL_LIVE_SEED is not configured");
+                    return;
+                }
+                Err(error) => panic!("failed to read TON_MEMPOOL_LIVE_SEED: {error}"),
+            };
+            let Some(peer_key) = configured_bytes("TON_MEMPOOL_LIVE_PEER_KEY") else {
+                eprintln!("skipping: TON_MEMPOOL_LIVE_PEER_KEY is not configured");
+                return;
+            };
+            vec![SeedPeer {
+                peer: PeerId::from_bytes(peer_key),
+                address: seed_address.to_string(),
+            }]
         }
-        Err(error) => panic!("failed to read TON_MEMPOOL_LIVE_SEED: {error}"),
-    };
-    let Some(peer_key) = configured_bytes("TON_MEMPOOL_LIVE_PEER_KEY") else {
-        eprintln!("skipping: TON_MEMPOOL_LIVE_PEER_KEY is not configured");
-        return;
+        Err(error) => panic!("failed to read TON_MEMPOOL_LIVE_SEEDS: {error}"),
     };
     let Some(overlay_bytes) = configured_bytes("TON_MEMPOOL_LIVE_OVERLAY_ID") else {
         eprintln!("skipping: TON_MEMPOOL_LIVE_OVERLAY_ID is not configured");
@@ -152,18 +162,18 @@ async fn configured_seed_delivers_valid_external_message() {
         .and_then(|value| value.parse().ok())
         .unwrap_or(30);
     let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
-    let seed = SeedPeer {
-        peer: PeerId::from_bytes(peer_key),
-        address: seed_address.to_string(),
-    };
     let overlay = OverlayId::from_bytes(overlay_bytes);
-    let (_, manager, stream) = MempoolScannerBuilder::new()
+    let (_scanner, manager, stream) = MempoolScannerBuilder::new()
         .download_config(false)
         .overlay_id(overlay)
         .config(MempoolConfig::default())
-        .seed(seed)
+        .seeds(seeds)
         .reconnect_attempts(2)
-        .native_udp_seeds_only("0.0.0.0:0".parse().unwrap(), local_key, None)
+        .native_udp_seeds_only(
+            "0.0.0.0:0".parse().unwrap(),
+            local_key,
+            Some(Duration::from_secs(10)),
+        )
         .start()
         .await
         .expect("configured seed scanner must start");
@@ -175,8 +185,8 @@ async fn configured_seed_delivers_valid_external_message() {
             }
         }
     })
-    .await
-    .expect("configured overlay seed did not deliver an external message");
+    .await;
+    let event = event.expect("configured overlay seed did not deliver an external message");
     let lazy = event
         .lazy_message()
         .expect("external event must expose lazy message");
@@ -188,6 +198,25 @@ async fn configured_seed_delivers_valid_external_message() {
         tonutils_tlb::CommonMsgInfo::ExternalIn { .. }
     ));
     manager.shutdown_wait().await;
+}
+
+fn parse_live_seeds(value: &str) -> Vec<SeedPeer> {
+    value
+        .split(';')
+        .map(|entry| {
+            let (key, address) = entry
+                .split_once('@')
+                .unwrap_or_else(|| panic!("live seed must use KEY@IP:PORT: {entry}"));
+            let peer_key = hex::decode(key).expect("live seed key must be hex");
+            let peer_key: [u8; 32] = peer_key
+                .try_into()
+                .expect("live seed key must contain 32 bytes");
+            address
+                .parse::<SocketAddr>()
+                .unwrap_or_else(|_| panic!("live seed address must be IP:PORT: {address}"));
+            SeedPeer::from_public_key(peer_key, address)
+        })
+        .collect()
 }
 
 #[test]

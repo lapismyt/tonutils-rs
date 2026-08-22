@@ -83,7 +83,7 @@ async fn explicit_seed_udp_overlay_fec_reaches_scanner_stream() {
             data_hash: tonutils_tl::Int256(data_hash),
             data_size: external.len() as i32,
             flags: 0,
-            data: packet.serialize(),
+            data: packet.split().1,
             seqno: seqno as i32,
             fec: FecType::RaptorQ {
                 data_size: external.len() as i32,

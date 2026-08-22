@@ -256,8 +256,13 @@ async fn channel_create_confirm_switches_to_directional_channel_packets() {
         server.recv_timeout(Duration::from_secs(1))
     );
     client_result.unwrap();
+    let server_packet = server_result.unwrap();
+    assert!(server_packet.message.is_none());
     assert!(matches!(
-        server_result.unwrap().message,
+        server_packet
+            .messages
+            .as_ref()
+            .and_then(|messages| messages.first()),
         Some(AdnlMessage::CreateChannel { .. })
     ));
     client

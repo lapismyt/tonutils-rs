@@ -253,6 +253,9 @@ pub enum DhtUpdateRule {
 #[derivative(Debug, Clone, PartialEq, Eq)]
 #[tl(boxed)]
 pub enum DhtMessage {
+    /// dht.getSignedAddressList = dht.Node;
+    #[tl(id = 0xa97948ed)]
+    GetSignedAddressList,
     /// dht.ping random_id:long = dht.Pong;
     #[tl(id = 0xcbeb3f18)]
     Ping { random_id: u64 },
@@ -308,6 +311,33 @@ pub struct OverlayNodeToSign {
     pub id: AdnlIdShort,
     pub overlay: Int256,
     pub version: i32,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed)]
+pub enum OverlayMemberCertificate {
+    /// overlay.emptyMemberCertificate = overlay.MemberCertificate;
+    #[tl(id = 0xc02441e2)]
+    Empty,
+    /// overlay.memberCertificate issued_by:PublicKey flags:int slot:int expire_at:int signature:bytes = overlay.MemberCertificate;
+    #[tl(id = 0xc2008c59)]
+    Certificate {
+        issued_by: PublicKey,
+        flags: i32,
+        slot: i32,
+        expire_at: i32,
+        signature: Vec<u8>,
+    },
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayMessageExtra {
+    #[tl(flags)]
+    pub flags: (),
+    #[tl(flags_bit = "flags.0")]
+    pub certificate: Option<OverlayMemberCertificate>,
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -518,6 +548,12 @@ pub enum OverlayMessage {
     /// overlay.message overlay:int256 = overlay.Message;
     #[tl(id = 0x75252420)]
     Message { overlay: Int256 },
+    /// overlay.messageWithExtra overlay:int256 extra:overlay.messageExtra = overlay.Message;
+    #[tl(id = 0xa232233d)]
+    MessageWithExtra {
+        overlay: Int256,
+        extra: OverlayMessageExtra,
+    },
     /// overlay.unicast data:bytes = overlay.Broadcast;
     #[tl(id = 0x33534e24)]
     Unicast { data: Vec<u8> },

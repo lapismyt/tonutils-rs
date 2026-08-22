@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 use tonutils_tl::tl::network::{
-    DhtMessage, DhtNodesBoxed, DhtValueResult, OverlayNodes, OverlayNodesBoxed, OverlayQuery,
-    PacketContents, PublicKey as TlPublicKey,
+    AddressList, DhtMessage, DhtNodesBoxed, DhtValueResult, OverlayNodes, OverlayNodesBoxed,
+    OverlayQuery, PacketContents, PublicKey as TlPublicKey,
 };
 use tonutils_tl::{Int256, Message as AdnlMessage};
 
@@ -285,124 +285,134 @@ impl AdnlUdpSession {
     #[allow(clippy::unnecessary_join)]
     pub async fn recv_contents(&mut self) -> Result<PacketContents, AdnlError> {
         let mut packet = vec![0u8; MAX_UDP_PACKET_SIZE + 1];
-        let size = self.socket.recv(&mut packet).await?;
-        if size > MAX_UDP_PACKET_SIZE {
-            return Err(AdnlError::TooLongPacket);
-        }
-        if let Some(channel) = self.channel.as_mut()
-            && size >= channel.inbound_id.len()
-            && packet[..channel.inbound_id.len()] == channel.inbound_id
-        {
-            return channel.decode(&packet[..size]);
-        }
-        if size < self.local_id.len() || packet[..self.local_id.len()] != self.local_id {
-            return Err(AdnlError::UnknownAddr(AdnlAddress::from(self.local_id)));
-        }
-        let (_, payload) = decrypt_direct(&self.local, &packet[32..size])?;
-        let contents: PacketContents = tl_proto::deserialize(&payload).map_err(|error| {
-            let prefix = payload
-                .iter()
-                .take(16)
-                .map(|byte| format!("{byte:02x}"))
-                .collect::<Vec<_>>()
-                .join("");
-            AdnlError::MalformedPacket(format!("{error} (payload={prefix})"))
-        })?;
-        let Some(TlPublicKey::Ed25519 { key }) = &contents.from else {
-            return Err(AdnlError::InvalidPublicKey);
-        };
-        let sender = PublicKey::from_bytes(key.0).ok_or(AdnlError::InvalidPublicKey)?;
-        if sender != self.remote {
-            return Err(AdnlError::InvalidPublicKey);
-        }
-        if let Some(from_short) = &contents.from_short
-            && from_short.id.0 != self.remote_id
-        {
-            return Err(AdnlError::InvalidPublicKey);
-        }
-        let Some(signature) = &contents.signature else {
-            return Err(AdnlError::IntegrityError);
-        };
-        {
-            let signature: [u8; 64] = signature
-                .as_slice()
-                .try_into()
-                .map_err(|_| AdnlError::IntegrityError)?;
+        loop {
+            let size = self.socket.recv(&mut packet).await?;
+            if size > MAX_UDP_PACKET_SIZE {
+                return Err(AdnlError::TooLongPacket);
+            }
+            if let Some(channel) = self.channel.as_mut()
+                && size >= channel.inbound_id.len()
+                && packet[..channel.inbound_id.len()] == channel.inbound_id
+            {
+                match channel.decode(&packet[..size]) {
+                    Ok(contents) => return Ok(contents),
+                    Err(error) => log::debug!("dropping invalid ADNL channel packet: {error}"),
+                }
+                continue;
+            }
+            if size < self.local_id.len() || packet[..self.local_id.len()] != self.local_id {
+                continue;
+            }
+            let Ok((_, payload)) = decrypt_direct(&self.local, &packet[32..size]) else {
+                continue;
+            };
+            let Ok(contents) = tl_proto::deserialize::<PacketContents>(&payload) else {
+                continue;
+            };
+            let Some(TlPublicKey::Ed25519 { key }) = &contents.from else {
+                continue;
+            };
+            let Some(sender) = PublicKey::from_bytes(key.0) else {
+                continue;
+            };
+            if sender != self.remote {
+                continue;
+            }
+            if let Some(from_short) = &contents.from_short
+                && from_short.id.0 != self.remote_id
+            {
+                continue;
+            }
+            let Some(signature) = &contents.signature else {
+                continue;
+            };
+            let Ok(signature) = signature.as_slice().try_into() else {
+                continue;
+            };
             let mut unsigned = contents.clone();
             unsigned.signature = None;
             if !self
                 .remote
                 .verify_raw(&tl_proto::serialize(unsigned), &signature)
             {
-                return Err(AdnlError::IntegrityError);
+                continue;
             }
+            if let Some(seqno) = contents.seqno {
+                if seqno == 0
+                    || self.received.contains(&seqno)
+                    || (self.highest_seqno > 4096 && seqno + 4096 < self.highest_seqno)
+                {
+                    continue;
+                }
+                self.highest_seqno = self.highest_seqno.max(seqno);
+                self.received.push_back(seqno);
+                while self.received.len() > 4096 {
+                    self.received.pop_front();
+                }
+            }
+            if self.process_channel_control(&contents).await.is_err() {
+                continue;
+            }
+            return Ok(contents);
         }
-        if let Some(seqno) = contents.seqno {
-            if seqno == 0
-                || self.received.contains(&seqno)
-                || (self.highest_seqno > 4096 && seqno + 4096 < self.highest_seqno)
-            {
-                return Err(AdnlError::ReplayDetected);
-            }
-            self.highest_seqno = self.highest_seqno.max(seqno);
-            self.received.push_back(seqno);
-            while self.received.len() > 4096 {
-                self.received.pop_front();
-            }
-        }
-        self.process_channel_control(&contents).await?;
-        Ok(contents)
     }
 
     async fn process_channel_control(
         &mut self,
         contents: &PacketContents,
     ) -> Result<(), AdnlError> {
-        let Some(AdnlMessage::CreateChannel { key, date }) = contents.message.as_ref() else {
-            if let Some(AdnlMessage::ConfirmChannel {
-                key,
-                peer_key,
-                date,
-            }) = contents.message.as_ref()
-            {
-                let Some((local_channel, local_date)) = self.pending_channel.take() else {
-                    return Ok(());
-                };
-                if peer_key.0 != local_channel.public_key.to_bytes() || *date < local_date {
-                    return Err(AdnlError::InvalidPacket);
+        let messages = contents
+            .message
+            .iter()
+            .chain(contents.messages.iter().flatten());
+        for message in messages {
+            match message {
+                AdnlMessage::CreateChannel { key, date } => {
+                    let Some(peer_channel) = PublicKey::from_bytes(key.0) else {
+                        return Err(AdnlError::InvalidPublicKey);
+                    };
+                    let local_channel = KeyPair::generate(&mut rand::rngs::OsRng);
+                    self.install_channel(&local_channel, peer_channel.to_bytes(), *date)?;
+                    self.send_direct_contents(PacketContents {
+                        rand1: vec![0; 7],
+                        flags: (),
+                        from: None,
+                        from_short: None,
+                        message: Some(AdnlMessage::ConfirmChannel {
+                            key: Int256(local_channel.public_key.to_bytes()),
+                            peer_key: key.clone(),
+                            date: *date,
+                        }),
+                        messages: None,
+                        address: None,
+                        priority_address: None,
+                        seqno: None,
+                        confirm_seqno: None,
+                        recv_addr_list_version: None,
+                        recv_priority_addr_list_version: None,
+                        reinit_date: None,
+                        dst_reinit_date: None,
+                        signature: None,
+                        rand2: vec![0; 7],
+                    })
+                    .await?;
                 }
-                self.install_channel(&local_channel, key.0, *date)?;
+                AdnlMessage::ConfirmChannel {
+                    key,
+                    peer_key,
+                    date,
+                } => {
+                    let Some((local_channel, local_date)) = self.pending_channel.take() else {
+                        continue;
+                    };
+                    if peer_key.0 != local_channel.public_key.to_bytes() || *date < local_date {
+                        return Err(AdnlError::InvalidPacket);
+                    }
+                    self.install_channel(&local_channel, key.0, *date)?;
+                }
+                _ => {}
             }
-            return Ok(());
-        };
-        let Some(peer_channel) = PublicKey::from_bytes(key.0) else {
-            return Err(AdnlError::InvalidPublicKey);
-        };
-        let local_channel = KeyPair::generate(&mut rand::rngs::OsRng);
-        self.install_channel(&local_channel, peer_channel.to_bytes(), *date)?;
-        self.send_direct_contents(PacketContents {
-            rand1: vec![0; 7],
-            flags: (),
-            from: None,
-            from_short: None,
-            message: Some(AdnlMessage::ConfirmChannel {
-                key: Int256(local_channel.public_key.to_bytes()),
-                peer_key: key.clone(),
-                date: *date,
-            }),
-            messages: None,
-            address: None,
-            priority_address: None,
-            seqno: None,
-            confirm_seqno: None,
-            recv_addr_list_version: None,
-            recv_priority_addr_list_version: None,
-            reinit_date: None,
-            dst_reinit_date: None,
-            signature: None,
-            rand2: vec![0; 7],
-        })
-        .await?;
+        }
         Ok(())
     }
 
@@ -443,19 +453,31 @@ impl AdnlUdpSession {
             flags: (),
             from: None,
             from_short: None,
-            message: Some(AdnlMessage::CreateChannel {
-                key: Int256(local_channel.public_key.to_bytes()),
-                date,
+            message: None,
+            messages: Some(vec![
+                AdnlMessage::CreateChannel {
+                    key: Int256(local_channel.public_key.to_bytes()),
+                    date,
+                },
+                AdnlMessage::Query {
+                    query_id: Int256::random(),
+                    query: tl_proto::serialize(DhtMessage::GetSignedAddressList),
+                },
+            ]),
+            address: Some(AddressList {
+                addrs: Vec::new(),
+                version: date,
+                reinit_date: date,
+                priority: 0,
+                expire_at: 0,
             }),
-            messages: None,
-            address: None,
             priority_address: None,
             seqno: None,
             confirm_seqno: None,
-            recv_addr_list_version: None,
+            recv_addr_list_version: Some(date),
             recv_priority_addr_list_version: None,
             reinit_date: None,
-            dst_reinit_date: None,
+            dst_reinit_date: Some(0),
             signature: None,
             rand2: vec![0; 7],
         })
@@ -796,8 +818,10 @@ impl AdnlChannelPacket {
             return Err(AdnlError::InvalidPacket);
         }
         let payload = self.inbound.decrypt(&datagram[self.inbound_id.len()..])?;
-        let contents: PacketContents = tl_proto::deserialize(&payload)
-            .map_err(|error| AdnlError::MalformedPacket(error.to_string()))?;
+        let contents: PacketContents = tl_proto::deserialize(&payload).map_err(|error| {
+            let prefix = hex::encode(payload.iter().take(96).copied().collect::<Vec<_>>());
+            AdnlError::MalformedPacket(format!("{error} (channel payload={prefix})"))
+        })?;
         if let Some(confirm_seqno) = contents.confirm_seqno
             && confirm_seqno > self.next_seqno
         {
