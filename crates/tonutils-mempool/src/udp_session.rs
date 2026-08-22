@@ -163,7 +163,7 @@ pub fn udp_overlay_lookup(
     })
 }
 
-#[allow(clippy::large_types_passed_by_value)]
+#[allow(clippy::large_types_passed_by_value, clippy::too_many_arguments)]
 async fn query_overlay_seed(
     local_addr: std::net::SocketAddr,
     local_keypair: KeyPair,
@@ -312,7 +312,7 @@ async fn query_dht_value_seed(
 }
 
 fn valid_overlay_node(node: &OverlayNode, overlay: OverlayId, now: i32) -> bool {
-    if node.overlay.0 != overlay.as_bytes() || node.version <= 0 || node.version > now + 60 {
+    if node.overlay.0 != overlay.as_bytes() || node.version < now.saturating_sub(600) {
         return false;
     }
     let TlPublicKey::Ed25519 { key } = &node.id else {
@@ -329,7 +329,12 @@ fn valid_overlay_node(node: &OverlayNode, overlay: OverlayId, now: i32) -> bool 
         overlay: node.overlay.clone(),
         version: node.version,
     };
-    let Ok(signature) = node.signature.as_slice().try_into() else {
+    let signature = match node.signature.as_slice() {
+        signature if signature.len() == 64 => signature,
+        signature if signature.len() == 68 => &signature[4..],
+        _ => return false,
+    };
+    let Ok(signature) = signature.try_into() else {
         return false;
     };
     public_key.verify_raw(&tl_proto::serialize(unsigned), &signature)
@@ -925,5 +930,39 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(payload.as_ref(), [9, 8, 7]);
+    }
+
+    #[test]
+    fn validates_overlay_node_signature_and_timestamp_window() {
+        let key = KeyPair::generate(&mut rand::rngs::OsRng);
+        let overlay = OverlayId::from_name(b"overlay");
+        let now = 1_000;
+        let version = now + 60;
+        let public_key = tonutils_tl::tl::network::PublicKey::Ed25519 {
+            key: tonutils_tl::Int256(key.public_key.to_bytes()),
+        };
+        let adnl_id = tonutils_adnl::AdnlAddress::from(&key.public_key).to_bytes();
+        let signature = key.sign_raw(&tl_proto::serialize(OverlayNodeToSign {
+            id: tonutils_tl::tl::network::AdnlIdShort {
+                id: tonutils_tl::Int256(adnl_id),
+            },
+            overlay: tonutils_tl::Int256(overlay.as_bytes()),
+            version,
+        }));
+        let node = OverlayNode {
+            id: public_key,
+            overlay: tonutils_tl::Int256(overlay.as_bytes()),
+            version,
+            signature: signature.to_vec(),
+        };
+        assert!(valid_overlay_node(&node, overlay, now));
+        let mut prefixed = vec![0xff, 0xff, 0xff, 0xff];
+        prefixed.extend_from_slice(&signature);
+        let prefixed_node = OverlayNode {
+            signature: prefixed,
+            ..node.clone()
+        };
+        assert!(valid_overlay_node(&prefixed_node, overlay, now));
+        assert!(!valid_overlay_node(&node, overlay, now + 1_100));
     }
 }
