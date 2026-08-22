@@ -2,9 +2,12 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::time::Duration;
 
+use futures::StreamExt;
 use tonutils_adnl::{AdnlUdpSession, KeyPair, PublicKey};
 use tonutils_mempool::MempoolScannerBuilder;
+use tonutils_mempool::{MempoolConfig, MempoolEvent};
 use tonutils_network_config::extract_dht_addresses;
+use tonutils_overlay::{OverlayId, PeerId, SeedPeer};
 use tonutils_tl::Int256;
 
 fn configured_seed(variable: &str) -> SocketAddr {
@@ -104,6 +107,84 @@ async fn mainnet_dht_seed_answers_find_node() {
 #[ignore = "requires live testnet UDP access"]
 async fn testnet_dht_seed_answers_find_node() {
     probe_dht_from_config("TON_TESTNET_GLOBAL_CONFIG_JSON").await;
+}
+
+fn configured_bytes(variable: &str) -> Option<[u8; 32]> {
+    let value = match std::env::var(variable) {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return None,
+        Err(error) => panic!("failed to read {variable}: {error}"),
+    };
+    let bytes =
+        hex::decode(value).unwrap_or_else(|error| panic!("{variable} must be hex: {error}"));
+    bytes
+        .try_into()
+        .ok()
+        .or_else(|| panic!("{variable} must contain 32 bytes"))
+}
+
+#[tokio::test]
+#[ignore = "requires a configured live overlay seed and external-message traffic"]
+async fn configured_seed_delivers_valid_external_message() {
+    let seed_address: SocketAddr = match std::env::var("TON_MEMPOOL_LIVE_SEED") {
+        Ok(value) => value
+            .parse()
+            .expect("TON_MEMPOOL_LIVE_SEED must be IP:port"),
+        Err(std::env::VarError::NotPresent) => {
+            eprintln!("skipping: TON_MEMPOOL_LIVE_SEED is not configured");
+            return;
+        }
+        Err(error) => panic!("failed to read TON_MEMPOOL_LIVE_SEED: {error}"),
+    };
+    let Some(peer_key) = configured_bytes("TON_MEMPOOL_LIVE_PEER_KEY") else {
+        eprintln!("skipping: TON_MEMPOOL_LIVE_PEER_KEY is not configured");
+        return;
+    };
+    let Some(overlay_bytes) = configured_bytes("TON_MEMPOOL_LIVE_OVERLAY_ID") else {
+        eprintln!("skipping: TON_MEMPOOL_LIVE_OVERLAY_ID is not configured");
+        return;
+    };
+    let timeout = std::env::var("TON_MEMPOOL_LIVE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(30);
+    let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let seed = SeedPeer {
+        peer: PeerId::from_bytes(peer_key),
+        address: seed_address.to_string(),
+    };
+    let overlay = OverlayId::from_bytes(overlay_bytes);
+    let (_, manager, stream) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .overlay_id(overlay)
+        .config(MempoolConfig::default())
+        .seed(seed)
+        .reconnect_attempts(2)
+        .native_udp_seeds_only("0.0.0.0:0".parse().unwrap(), local_key, None)
+        .start()
+        .await
+        .expect("configured seed scanner must start");
+    let mut events = Box::pin(stream);
+    let event = tokio::time::timeout(Duration::from_secs(timeout), async {
+        loop {
+            if let Some(event @ MempoolEvent::ExternalMessage { .. }) = events.next().await {
+                break event;
+            }
+        }
+    })
+    .await
+    .expect("configured overlay seed did not deliver an external message");
+    let lazy = event
+        .lazy_message()
+        .expect("external event must expose lazy message");
+    let message = lazy
+        .decode()
+        .expect("live payload must decode as a TL-B message");
+    assert!(matches!(
+        message.info,
+        tonutils_tlb::CommonMsgInfo::ExternalIn { .. }
+    ));
+    manager.shutdown_wait().await;
 }
 
 #[test]

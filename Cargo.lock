@@ -2405,6 +2405,7 @@ name = "tonutils-mempool"
 version = "2.0.0"
 dependencies = [
  "futures",
+ "hex",
  "log",
  "rand 0.8.7",
  "reqwest",

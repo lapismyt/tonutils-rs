@@ -46,6 +46,8 @@ overlay-specific handshake and returns an authenticated `OverlaySession`.
 For the native UDP path, `native_udp` wires those pieces together; the lower
 level `direct_factory`, `channel_factory`, and `udp_dht_lookup` helpers remain
 available when applications need custom lifecycle policy.
+`native_udp_seeds_only` is the minimal mode: it connects only explicit
+`SeedPeer` values and does not perform DHT expansion.
 When present, startup connects every validated discovery result concurrently
 and fails if all session attempts fail. Without a factory, startup still builds
 the bounded scanner for dependency-injected or offline session management.
