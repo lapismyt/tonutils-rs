@@ -554,4 +554,62 @@ mod tests {
             .unwrap();
         assert_eq!(payload, vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3]);
     }
+
+    #[tokio::test]
+    async fn waits_for_all_source_symbols_before_publishing_fec_payload() {
+        let external = tl_proto::serialize(TonNodeExternalMessageBroadcast {
+            message: TonNodeExternalMessage { data: vec![7; 300] },
+        });
+        let encoder = Encoder::with_defaults(&external, 64);
+        let config = encoder.get_config();
+        let packets = encoder.get_encoded_packets(0);
+        assert!(packets.len() > 1);
+        let hash: [u8; 32] = Sha256::digest(&external).into();
+        let local = KeyPair::generate(&mut rand::rngs::OsRng);
+        let remote = KeyPair::generate(&mut rand::rngs::OsRng);
+        let local_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let remote_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let session = AdnlUdpSession::connect(local_addr, remote_addr, local, remote.public_key)
+            .await
+            .unwrap();
+        let mut adapter = AdnlUdpOverlaySession {
+            peer: PeerId::from_bytes([2; 32]),
+            session,
+            overlay: None,
+            fec: HashMap::new(),
+        };
+        let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
+        for (index, packet) in packets.into_iter().enumerate() {
+            let fec = OverlayBroadcastFec {
+                src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![2] },
+                certificate: tonutils_tl::tl::network::OverlayCertificate::Empty,
+                data_hash: tonutils_tl::Int256(hash),
+                data_size: external.len() as i32,
+                flags: 0,
+                data: packet.serialize(),
+                seqno: index as i32,
+                fec: tonutils_tl::tl::network::FecType::RaptorQ {
+                    data_size: external.len() as i32,
+                    symbol_size: config.symbol_size() as i32,
+                    symbols_count,
+                },
+                date: 0,
+                signature: Vec::new(),
+            };
+            let result = adapter.unwrap_overlay_payload(&tl_proto::serialize(fec));
+            if index + 1 == symbols_count as usize {
+                assert_eq!(result.unwrap(), vec![7; 300]);
+            } else {
+                assert!(result.is_err());
+            }
+        }
+    }
 }
