@@ -1,7 +1,8 @@
 use std::time::Duration;
 
+use tl_proto::TlRead;
 use tokio_util::bytes::Bytes;
-use tonutils_tl::tl::network::{DhtNodesBoxed, OverlayNodesBoxed, PacketContents};
+use tonutils_tl::tl::network::{DhtNodesBoxed, OverlayNodesBoxed, OverlayQuery, PacketContents};
 use tonutils_tl::{Int256, Message as AdnlMessage};
 
 use crate::{
@@ -319,6 +320,17 @@ async fn overlay_random_peers_query_routes_boxed_response() {
             panic!("expected overlay query");
         };
         assert_eq!(&query[..4], &0xccfd8443u32.to_le_bytes());
+        let mut query = query.as_slice();
+        assert!(matches!(
+            OverlayQuery::read_from(&mut query),
+            Ok(OverlayQuery::Query { .. })
+        ));
+        let Ok(OverlayQuery::GetRandomPeers { peers }) = OverlayQuery::read_from(&mut query) else {
+            panic!("expected getRandomPeers query");
+        };
+        assert_eq!(peers.nodes.len(), 1);
+        assert_eq!(peers.nodes[0].signature.len(), 64);
+        assert!(query.is_empty());
         server
             .send_contents(PacketContents {
                 rand1: vec![0; 7],

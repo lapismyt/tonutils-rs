@@ -547,6 +547,38 @@ mod tests {
     }
 
     #[test]
+    fn dht_key_and_overlay_node_to_sign_have_canonical_constructors() {
+        assert_eq!(
+            &serialize(DhtKey {
+                id: Int256([1; 32]),
+                name: b"nodes".to_vec(),
+                idx: 0,
+            })[..4],
+            &0xf667de8fu32.to_le_bytes()
+        );
+        assert_eq!(
+            &serialize(OverlayNodeToSign {
+                id: AdnlIdShort {
+                    id: Int256([2; 32])
+                },
+                overlay: Int256([3; 32]),
+                version: 4,
+            })[..4],
+            &0x03d8a8e1u32.to_le_bytes()
+        );
+        assert_eq!(
+            &serialize(AddressListBoxed {
+                addrs: Vec::new(),
+                version: 1,
+                reinit_date: 2,
+                priority: 3,
+                expire_at: 4,
+            })[..4],
+            &0x2227e658u32.to_le_bytes()
+        );
+    }
+
+    #[test]
     fn packet_contents_roundtrips_optional_channel_fields() {
         let value = PacketContents {
             rand1: vec![1, 2, 3],
