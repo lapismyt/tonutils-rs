@@ -336,6 +336,50 @@ pub enum OverlayBroadcast {
 
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed)]
+pub enum FecType {
+    /// fec.raptorQ data_size:int symbol_size:int symbols_count:int = fec.Type;
+    #[tl(id = 0x8b93a7e0)]
+    RaptorQ {
+        data_size: i32,
+        symbol_size: i32,
+        symbols_count: i32,
+    },
+    /// fec.roundRobin data_size:int symbol_size:int symbols_count:int = fec.Type;
+    #[tl(id = 0x32f528e4)]
+    RoundRobin {
+        data_size: i32,
+        symbol_size: i32,
+        symbols_count: i32,
+    },
+    /// fec.online data_size:int symbol_size:int symbols_count:int = fec.Type;
+    #[tl(id = 0x0127660c)]
+    Online {
+        data_size: i32,
+        symbol_size: i32,
+        symbols_count: i32,
+    },
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0xbad7c36a)]
+pub struct OverlayBroadcastFec {
+    /// overlay.broadcastFec ... = overlay.Broadcast;
+    pub src: PublicKey,
+    pub certificate: OverlayCertificate,
+    pub data_hash: Int256,
+    pub data_size: i32,
+    pub flags: i32,
+    pub data: Vec<u8>,
+    pub seqno: i32,
+    pub fec: FecType,
+    pub date: i32,
+    pub signature: Vec<u8>,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
 #[tl(
     boxed,
     id = 0xfa374e7c,

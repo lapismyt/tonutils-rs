@@ -46,7 +46,7 @@ async fn configured_global_config_can_start_scanner() {
     manager.shutdown();
 }
 
-async fn probe_dht_from_config(variable: &str) {
+async fn probe_dht_from_config(variable: &str, allow_unavailable: bool) {
     let json = std::env::var(variable)
         .unwrap_or_else(|_| panic!("set {variable} to run this ignored live test"));
     let candidates =
@@ -90,7 +90,7 @@ async fn probe_dht_from_config(variable: &str) {
         }
     }
     let error = last_error.unwrap_or_else(|| "no usable peers".into());
-    if std::env::var("TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE").as_deref() == Ok("1") {
+    if allow_unavailable {
         eprintln!("skipping unavailable DHT probe: {error}");
     } else {
         panic!("no configured DHT peer answered: {error}");
@@ -100,13 +100,13 @@ async fn probe_dht_from_config(variable: &str) {
 #[tokio::test]
 #[ignore = "requires live mainnet UDP access"]
 async fn mainnet_dht_seed_answers_find_node() {
-    probe_dht_from_config("TON_GLOBAL_CONFIG_JSON").await;
+    probe_dht_from_config("TON_GLOBAL_CONFIG_JSON", false).await;
 }
 
 #[tokio::test]
 #[ignore = "requires live testnet UDP access"]
 async fn testnet_dht_seed_answers_find_node() {
-    probe_dht_from_config("TON_TESTNET_GLOBAL_CONFIG_JSON").await;
+    probe_dht_from_config("TON_TESTNET_GLOBAL_CONFIG_JSON", true).await;
 }
 
 fn configured_bytes(variable: &str) -> Option<[u8; 32]> {

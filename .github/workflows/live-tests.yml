@@ -59,11 +59,9 @@ jobs:
           fi
 
   live-tests:
-    name: Live liteserver smoke tests
+    name: Live liteserver and mempool smoke tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -103,6 +101,8 @@ jobs:
         run: cargo test -p tonutils-mempool --test live mainnet_dht_seed_answers_find_node -- --ignored --nocapture
 
       - name: Run mempool testnet DHT probe
+        env:
+          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
         run: cargo test -p tonutils-mempool --test live testnet_dht_seed_answers_find_node -- --ignored --nocapture
 
       - name: Run configured seed-only mempool live test
