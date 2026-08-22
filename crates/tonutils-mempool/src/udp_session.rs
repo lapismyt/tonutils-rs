@@ -170,6 +170,50 @@ pub fn channel_factory(
     })
 }
 
+pub fn overlay_factory(
+    local_addr: std::net::SocketAddr,
+    local_keypair: KeyPair,
+    overlay: OverlayId,
+    channel_timeout: Option<Duration>,
+) -> crate::OverlaySessionFactory {
+    Arc::new(move |seed: SeedPeer| {
+        let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes());
+        Box::pin(async move {
+            let remote = remote.ok_or_else(|| "seed peer is not a valid Ed25519 key".to_owned())?;
+            let session = match channel_timeout {
+                Some(timeout) => {
+                    AdnlUdpOverlaySession::connect_for_overlay_with_channel(
+                        seed.peer,
+                        overlay,
+                        local_addr,
+                        seed.address
+                            .parse()
+                            .map_err(|error| format!("invalid seed address: {error}"))?,
+                        local_keypair,
+                        remote,
+                        timeout,
+                    )
+                    .await?
+                }
+                None => {
+                    AdnlUdpOverlaySession::connect_for_overlay(
+                        seed.peer,
+                        overlay,
+                        local_addr,
+                        seed.address
+                            .parse()
+                            .map_err(|error| format!("invalid seed address: {error}"))?,
+                        local_keypair,
+                        remote,
+                    )
+                    .await?
+                }
+            };
+            Ok(Box::new(session) as Box<dyn OverlaySession>)
+        })
+    })
+}
+
 impl AdnlUdpOverlaySession {
     pub async fn connect(
         peer: PeerId,
@@ -225,6 +269,31 @@ impl AdnlUdpOverlaySession {
             Self::connect(peer, local_addr, remote_addr, local_keypair, remote_public).await?;
         session.overlay = Some(overlay);
         Ok(session)
+    }
+
+    pub async fn connect_for_overlay_with_channel(
+        peer: PeerId,
+        overlay: OverlayId,
+        local_addr: std::net::SocketAddr,
+        remote_addr: std::net::SocketAddr,
+        local_keypair: KeyPair,
+        remote_public: AdnlPublicKey,
+        timeout: Duration,
+    ) -> Result<Self, String> {
+        let session = AdnlUdpSession::connect_with_channel(
+            local_addr,
+            remote_addr,
+            local_keypair,
+            remote_public,
+            timeout,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok(Self {
+            peer,
+            session,
+            overlay: Some(overlay),
+        })
     }
 }
 

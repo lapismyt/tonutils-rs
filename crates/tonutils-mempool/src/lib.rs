@@ -25,7 +25,7 @@ use tonutils_overlay::{DiscoveryLookup, TypedDiscoveryLookup};
 mod udp_session;
 
 pub use udp_session::{
-    AdnlUdpOverlaySession, channel_factory, direct_factory, udp_dht_lookup,
+    AdnlUdpOverlaySession, channel_factory, direct_factory, overlay_factory, udp_dht_lookup,
     udp_iterative_dht_lookup,
 };
 
@@ -370,15 +370,14 @@ impl MempoolScannerBuilder {
         channel_timeout: Option<Duration>,
     ) -> Self {
         let discovery_timeout = self.discovery_timeout;
-        let session_factory = channel_timeout.map_or_else(
-            || direct_factory(local_addr, local_keypair),
-            |timeout| channel_factory(local_addr, local_keypair, timeout),
-        );
+        let session_factory =
+            overlay_factory(local_addr, local_keypair, self.overlay_id, channel_timeout);
         self.session_factory(session_factory)
-            .typed_discovery_lookup(udp_dht_lookup(
+            .typed_discovery_lookup(udp_iterative_dht_lookup(
                 local_addr,
                 local_keypair,
                 16,
+                2,
                 discovery_timeout,
             ))
     }

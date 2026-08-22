@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use tokio_util::bytes::Bytes;
-use tonutils_tl::tl::network::{DhtNodesBoxed, PacketContents};
+use tonutils_tl::tl::network::{DhtNodesBoxed, OverlayNodesBoxed, PacketContents};
 use tonutils_tl::{Int256, Message as AdnlMessage};
 
 use crate::{
@@ -289,4 +289,64 @@ async fn channel_create_confirm_switches_to_directional_channel_packets() {
             data: vec![1, 2, 3]
         })
     );
+}
+
+#[tokio::test]
+async fn overlay_random_peers_query_routes_boxed_response() {
+    let client_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let server_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let client_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let server_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let mut client =
+        AdnlUdpSession::connect(client_addr, server_addr, client_key, server_key.public_key)
+            .await
+            .unwrap();
+    let mut server =
+        AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
+            .await
+            .unwrap();
+    let response = async {
+        let packet = server.recv_timeout(Duration::from_secs(1)).await.unwrap();
+        let AdnlMessage::Query { query_id, query } = packet.message.unwrap() else {
+            panic!("expected overlay query");
+        };
+        assert_eq!(&query[..4], &0xccfd8443u32.to_le_bytes());
+        server
+            .send_contents(PacketContents {
+                rand1: vec![0; 7],
+                flags: (),
+                from: None,
+                from_short: None,
+                message: Some(AdnlMessage::Answer {
+                    query_id,
+                    answer: tl_proto::serialize(OverlayNodesBoxed { nodes: Vec::new() }),
+                }),
+                messages: None,
+                address: None,
+                priority_address: None,
+                recv_addr_list_version: None,
+                recv_priority_addr_list_version: None,
+                seqno: None,
+                confirm_seqno: None,
+                reinit_date: None,
+                dst_reinit_date: None,
+                signature: None,
+                rand2: vec![0; 7],
+            })
+            .await
+            .unwrap();
+    };
+    let (result, ()) = tokio::join!(
+        client.overlay_get_random_peers(Int256([12; 32]), Duration::from_secs(1)),
+        response
+    );
+    assert!(result.unwrap().nodes.is_empty());
 }
