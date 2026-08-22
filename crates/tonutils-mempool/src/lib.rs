@@ -395,6 +395,27 @@ impl MempoolScannerBuilder {
         }
     }
 
+    pub fn native_udp_for_shard_public(
+        self,
+        local_addr: std::net::SocketAddr,
+        local_keypair: KeyPair,
+        workchain: i32,
+        shard: i64,
+        zero_state_file_hash: [u8; 32],
+        channel_timeout: Option<Duration>,
+    ) -> Self {
+        let overlay_key: [u8; 32] = Sha256::digest(tl_proto::serialize(
+            tonutils_tl::tl::network::TonNodeShardPublicOverlayId {
+                workchain,
+                shard,
+                zero_state_file_hash: tonutils_tl::Int256(zero_state_file_hash),
+            },
+        ))
+        .into();
+        self.dht_overlay_key(overlay_key)
+            .native_udp(local_addr, local_keypair, channel_timeout)
+    }
+
     /// Configures native UDP sessions for explicit seeds only.
     pub fn native_udp_seeds_only(
         mut self,
