@@ -220,6 +220,7 @@ pub struct MempoolScannerBuilder {
     discovery_lookup: Option<DiscoveryLookup>,
     typed_discovery_lookup: Option<TypedDiscoveryLookup>,
     seed_discovery_lookup: Option<SeedDiscoveryLookup>,
+    dht_overlay_key: Option<[u8; 32]>,
     reconnect_attempts: u32,
     reconnect_backoff: Duration,
 }
@@ -250,6 +251,7 @@ impl fmt::Debug for MempoolScannerBuilder {
                 "seed_discovery_lookup",
                 &self.seed_discovery_lookup.is_some(),
             )
+            .field("dht_overlay_key", &self.dht_overlay_key.is_some())
             .field("reconnect_attempts", &self.reconnect_attempts)
             .field("reconnect_backoff", &self.reconnect_backoff)
             .finish()
@@ -275,6 +277,7 @@ impl Default for MempoolScannerBuilder {
             discovery_lookup: None,
             typed_discovery_lookup: None,
             seed_discovery_lookup: None,
+            dht_overlay_key: None,
             reconnect_attempts: 5,
             reconnect_backoff: Duration::from_secs(1),
         }
@@ -379,14 +382,17 @@ impl MempoolScannerBuilder {
         let discovery_timeout = self.discovery_timeout;
         let overlay = self.overlay_id;
         let session_factory = overlay_factory(local_addr, local_keypair, overlay, channel_timeout);
-        self.session_factory(session_factory)
-            .seed_discovery_lookup(udp_overlay_lookup(
+        let builder = self.session_factory(session_factory);
+        match builder.dht_overlay_key {
+            Some(overlay_key) => builder.seed_discovery_lookup(udp_overlay_lookup(
                 local_addr,
                 local_keypair,
-                overlay,
+                overlay_key,
                 16,
                 discovery_timeout,
-            ))
+            )),
+            None => builder,
+        }
     }
 
     /// Configures native UDP sessions for explicit seeds only.
@@ -414,6 +420,13 @@ impl MempoolScannerBuilder {
 
     pub fn seed_discovery_lookup(mut self, lookup: SeedDiscoveryLookup) -> Self {
         self.seed_discovery_lookup = Some(lookup);
+        self
+    }
+
+    /// Configures the full `pub.overlay` name used for DHT overlay-node lookup.
+    /// The short [`OverlayId`] alone is not sufficient to reconstruct it.
+    pub fn dht_overlay_key(mut self, overlay_key: [u8; 32]) -> Self {
+        self.dht_overlay_key = Some(overlay_key);
         self
     }
 

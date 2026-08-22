@@ -124,10 +124,11 @@ pub fn udp_iterative_dht_lookup(
 pub fn udp_overlay_lookup(
     local_addr: std::net::SocketAddr,
     local_keypair: KeyPair,
-    overlay: OverlayId,
+    overlay_key: [u8; 32],
     max_records: usize,
     timeout: Duration,
 ) -> SeedDiscoveryLookup {
+    let overlay = OverlayId::from_name(&overlay_key);
     Arc::new(move |seeds: Vec<SeedPeer>| {
         Box::pin(async move {
             let responses = join_all(seeds.into_iter().filter_map(|seed| {
@@ -139,6 +140,7 @@ pub fn udp_overlay_lookup(
                     remote,
                     address,
                     overlay,
+                    overlay_key,
                     max_records,
                     timeout,
                 ))
@@ -168,6 +170,7 @@ async fn query_overlay_seed(
     remote: AdnlPublicKey,
     address: std::net::SocketAddr,
     overlay: OverlayId,
+    overlay_key: [u8; 32],
     max_records: usize,
     timeout: Duration,
 ) -> Option<Vec<SeedPeer>> {
@@ -175,7 +178,7 @@ async fn query_overlay_seed(
         peer: PeerId::from_bytes(remote.to_bytes()),
         address: address.to_string(),
     };
-    let overlay_key = dht_key_id(overlay.as_bytes(), b"nodes");
+    let overlay_dht_key = dht_key_id(overlay_key, b"nodes");
     let mut frontier = vec![initial];
     let mut seen = std::collections::HashSet::new();
     let now = std::time::SystemTime::now()
@@ -188,14 +191,14 @@ async fn query_overlay_seed(
         let responses = join_all(frontier.drain(..).filter_map(|seed| {
             let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
             let address = seed.address.parse().ok()?;
-            let overlay_key = overlay_key.clone();
+            let overlay_dht_key = overlay_dht_key.clone();
             Some(async move {
                 let response = query_dht_value_seed(
                     local_addr,
                     local_keypair,
                     remote,
                     address,
-                    overlay_key.clone(),
+                    overlay_dht_key,
                     max_records,
                     timeout,
                 )
