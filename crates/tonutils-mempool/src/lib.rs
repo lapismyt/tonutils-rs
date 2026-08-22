@@ -384,11 +384,16 @@ impl MempoolScannerBuilder {
 
     /// Configures native UDP sessions for explicit seeds only.
     pub fn native_udp_seeds_only(
-        self,
+        mut self,
         local_addr: std::net::SocketAddr,
         local_keypair: KeyPair,
         channel_timeout: Option<Duration>,
     ) -> Self {
+        self.download_config = false;
+        self.global_config = None;
+        self.global_config_json = None;
+        self.discovery_lookup = None;
+        self.typed_discovery_lookup = None;
         let session_factory =
             overlay_factory(local_addr, local_keypair, self.overlay_id, channel_timeout);
         self.session_factory(session_factory)

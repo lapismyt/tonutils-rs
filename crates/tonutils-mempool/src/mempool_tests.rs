@@ -156,6 +156,22 @@ async fn builder_requires_a_verified_bootstrap_source() {
 }
 
 #[tokio::test]
+async fn seed_only_mode_ignores_global_discovery_sources() {
+    let key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let seed = SeedPeer::from_public_key(key.public_key.to_bytes(), "127.0.0.1:30303");
+    let result = MempoolScannerBuilder::new()
+        .global_config_json("not json")
+        .seed(seed)
+        .native_udp_seeds_only("0.0.0.0:0".parse().unwrap(), key, None)
+        .start()
+        .await;
+    assert!(result.is_ok());
+    if let Ok((_, manager, _)) = result {
+        manager.shutdown_wait().await;
+    }
+}
+
+#[tokio::test]
 async fn builder_connects_validated_peers_through_factory() {
     let peer = PeerId::from_bytes([5; 32]);
     let seed = SeedPeer {
