@@ -2,11 +2,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
+use tl_proto::TlRead;
 use tonutils_adnl::{AdnlUdpSession, KeyPair};
 use tonutils_mempool::{AdnlUdpOverlaySession, MempoolConfig, MempoolEvent, MempoolScanner};
 use tonutils_overlay::{OverlayConfig, OverlayId, PeerId};
 use tonutils_tl::Message;
-use tonutils_tl::tl::network::{OverlayBroadcast, PacketContents};
+use tonutils_tl::tl::network::{OverlayBroadcast, OverlayMessage, PacketContents};
 
 #[tokio::test]
 async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
@@ -62,6 +63,15 @@ async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
     overlay_payload.extend(tl_proto::serialize(OverlayBroadcast::Unicast {
         data: vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3],
     }));
+    let mut envelope = overlay_payload.as_slice();
+    assert!(matches!(
+        OverlayMessage::read_from(&mut envelope),
+        Ok(OverlayMessage::Message { .. })
+    ));
+    assert!(matches!(
+        OverlayBroadcast::read_from(&mut envelope),
+        Ok(OverlayBroadcast::Unicast { .. })
+    ));
     sender
         .send_contents(PacketContents {
             rand1: vec![1; 7],

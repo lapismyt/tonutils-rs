@@ -769,7 +769,22 @@ impl MempoolScanner {
         self: Arc<Self>,
         pool: Arc<OverlayPeerPool>,
     ) -> tokio::task::JoinHandle<()> {
-        self.spawn_overlay_receiver_with_shutdown(pool, tokio::sync::watch::channel(false).1)
+        tokio::spawn(async move {
+            while let Some(OverlayPacket { payload, routing }) = pool.next_packet().await {
+                if let Err(error) = self.ingest(payload, routing).await {
+                    let now = Instant::now();
+                    let mut last_warning = self.last_invalid_warning.lock().await;
+                    if last_warning
+                        .map(|last| now.duration_since(last) >= Duration::from_secs(1))
+                        .unwrap_or(true)
+                    {
+                        log::warn!("dropping invalid overlay external message: {error}");
+                        self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
+                        *last_warning = Some(now);
+                    }
+                }
+            }
+        })
     }
 
     pub fn spawn_overlay_receiver_with_shutdown(
