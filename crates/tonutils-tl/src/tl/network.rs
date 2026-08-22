@@ -346,6 +346,21 @@ pub struct OverlayBroadcastToSign {
     pub date: i32,
 }
 
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+pub struct TonNodeExternalMessage {
+    /// tonNode.externalMessage data:bytes = tonNode.ExternalMessage;
+    pub data: Vec<u8>,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0x3d1b1867)]
+pub struct TonNodeExternalMessageBroadcast {
+    /// tonNode.externalMessageBroadcast message:tonNode.externalMessage = tonNode.Broadcast;
+    pub message: TonNodeExternalMessage,
+}
+
 impl OverlayBroadcast {
     pub fn payload_if_valid(&self, now: i32) -> Option<&[u8]> {
         let Self::Broadcast {
@@ -521,5 +536,17 @@ mod tests {
             data[0] ^= 1;
         }
         assert!(broadcast.payload_if_valid(100).is_none());
+    }
+
+    #[test]
+    fn external_message_broadcast_uses_canonical_constructor() {
+        let bytes = serialize(TonNodeExternalMessageBroadcast {
+            message: TonNodeExternalMessage {
+                data: vec![0xb5, 0xee, 0x9c, 0x72],
+            },
+        });
+        assert_eq!(&bytes[..4], &0x3d1b1867u32.to_le_bytes());
+        let decoded: TonNodeExternalMessageBroadcast = deserialize(&bytes).unwrap();
+        assert_eq!(decoded.message.data, vec![0xb5, 0xee, 0x9c, 0x72]);
     }
 }

@@ -6,7 +6,7 @@ use futures::future::join_all;
 use tonutils_adnl::{AdnlUdpSession, KeyPair, PublicKey as AdnlPublicKey};
 use tonutils_overlay::{OverlayId, OverlaySession, PeerId, SeedPeer, TypedDiscoveryLookup};
 use tonutils_tl::Message as AdnlMessage;
-use tonutils_tl::tl::network::{OverlayBroadcast, PacketContents};
+use tonutils_tl::tl::network::{OverlayBroadcast, PacketContents, TonNodeExternalMessageBroadcast};
 
 /// Adapter exposing an authenticated direct ADNL UDP session to the overlay.
 pub struct AdnlUdpOverlaySession {
@@ -323,35 +323,10 @@ impl OverlaySession for AdnlUdpOverlaySession {
                             if data[4..36] != overlay.as_bytes() {
                                 return Err("overlay id mismatch".to_owned());
                             }
-                            match tl_proto::deserialize::<OverlayBroadcast>(&data[36..]) {
-                                Ok(OverlayBroadcast::Unicast { data }) => data,
-                                Ok(broadcast) => broadcast
-                                    .payload_if_valid(
-                                        std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_secs()
-                                            .min(i32::MAX as u64)
-                                            as i32,
-                                    )
-                                    .ok_or_else(|| "invalid overlay broadcast".to_owned())?
-                                    .to_vec(),
-                                Err(_) => return Err("invalid overlay payload".to_owned()),
-                            }
+                            unwrap_overlay_payload(&data[36..])?
                         } else {
-                            match tl_proto::deserialize::<OverlayBroadcast>(&data) {
-                                Ok(OverlayBroadcast::Unicast { data }) => data,
-                                Ok(broadcast) => broadcast
-                                    .payload_if_valid(
-                                        std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_secs()
-                                            .min(i32::MAX as u64)
-                                            as i32,
-                                    )
-                                    .ok_or_else(|| "invalid overlay broadcast".to_owned())?
-                                    .to_vec(),
+                            match unwrap_overlay_payload(&data) {
+                                Ok(data) => data,
                                 Err(_) => data,
                             }
                         };
@@ -397,5 +372,25 @@ impl OverlaySession for AdnlUdpOverlaySession {
                 .map(|_| ())
                 .map_err(|error| error.to_string())
         })
+    }
+}
+
+fn unwrap_overlay_payload(data: &[u8]) -> Result<Vec<u8>, String> {
+    if let Ok(broadcast) = tl_proto::deserialize::<TonNodeExternalMessageBroadcast>(data) {
+        return Ok(broadcast.message.data);
+    }
+    match tl_proto::deserialize::<OverlayBroadcast>(data) {
+        Ok(OverlayBroadcast::Unicast { data }) => Ok(data),
+        Ok(broadcast) => broadcast
+            .payload_if_valid(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs()
+                    .min(i32::MAX as u64) as i32,
+            )
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| "invalid overlay broadcast".to_owned()),
+        Err(_) => Err("invalid overlay payload".to_owned()),
     }
 }

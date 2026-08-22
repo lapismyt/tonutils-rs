@@ -393,7 +393,8 @@ postponed work moves to `# BACKLOG`.
   - [x] Add lazy decode, dedup TTL/eviction, diagnostics, and overlay receive adapter #mempool #tests
   - [x] Add merged bootstrap builder and async global-config resolution #mempool #network #tests
   - [x] Run mainnet/testnet DHT live probes with the existing live-test workflow #mempool #network #tests #ci
-  - [ ] Add canonical external-message fixtures and LiteServer inclusion tracking #mempool #tests #network
+  - [x] Add canonical `tonNode.externalMessageBroadcast` fixture and seed-only stream delivery #mempool #tests #network
+  - [ ] Add live FEC broadcast coverage for external messages when a configured overlay seed is available #mempool #tests #network
 
 ## CLI And Shell Automation
 

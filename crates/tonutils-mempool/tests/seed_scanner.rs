@@ -4,7 +4,9 @@ use futures::StreamExt;
 use tonutils_adnl::{AdnlUdpSession, KeyPair};
 use tonutils_mempool::{MempoolConfig, MempoolEvent, MempoolScannerBuilder};
 use tonutils_overlay::{OverlayConfig, OverlayId, PeerId, SeedPeer};
-use tonutils_tl::tl::network::{OverlayBroadcast, PacketContents};
+use tonutils_tl::tl::network::{
+    PacketContents, TonNodeExternalMessage, TonNodeExternalMessageBroadcast,
+};
 use tonutils_tlb::{
     CommonMsgInfo, Either, Grams, Message as TlbMessage, MsgAddressExt, MsgAddressInt, TlbSerialize,
 };
@@ -66,8 +68,8 @@ async fn explicit_seed_udp_overlay_reaches_scanner_stream() {
     let mut overlay_payload = Vec::new();
     overlay_payload.extend_from_slice(&0x75252420u32.to_le_bytes());
     overlay_payload.extend_from_slice(&overlay.as_bytes());
-    overlay_payload.extend(tl_proto::serialize(OverlayBroadcast::Unicast {
-        data: boc.clone(),
+    overlay_payload.extend(tl_proto::serialize(TonNodeExternalMessageBroadcast {
+        message: TonNodeExternalMessage { data: boc.clone() },
     }));
     sender
         .send_contents(PacketContents {
