@@ -805,16 +805,20 @@ impl MempoolScanner {
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             while let Some(OverlayPacket { payload, routing }) = pool.next_packet().await {
-                if let Err(error) = self.ingest(payload, routing).await {
-                    let now = Instant::now();
-                    let mut last_warning = self.last_invalid_warning.lock().await;
-                    if last_warning
-                        .map(|last| now.duration_since(last) >= Duration::from_secs(1))
-                        .unwrap_or(true)
-                    {
-                        log::warn!("dropping invalid overlay external message: {error}");
-                        self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
-                        *last_warning = Some(now);
+                match self.ingest(payload, routing).await {
+                    Ok(_) => {}
+                    Err(MempoolError::QueueClosed) => break,
+                    Err(error) => {
+                        let now = Instant::now();
+                        let mut last_warning = self.last_invalid_warning.lock().await;
+                        if last_warning
+                            .map(|last| now.duration_since(last) >= Duration::from_secs(1))
+                            .unwrap_or(true)
+                        {
+                            log::warn!("dropping invalid overlay external message: {error}");
+                            self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
+                            *last_warning = Some(now);
+                        }
                     }
                 }
             }
@@ -832,16 +836,20 @@ impl MempoolScanner {
                     _ = shutdown.changed() => break,
                     packet = pool.next_packet() => {
                         let Some(OverlayPacket { payload, routing }) = packet else { break; };
-                        if let Err(error) = self.ingest(payload, routing).await {
-                            let now = Instant::now();
-                            let mut last_warning = self.last_invalid_warning.lock().await;
-                            if last_warning
-                                .map(|last| now.duration_since(last) >= Duration::from_secs(1))
-                                .unwrap_or(true)
-                            {
-                                log::warn!("dropping invalid overlay external message: {error}");
-                                self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
-                                *last_warning = Some(now);
+                        match self.ingest(payload, routing).await {
+                            Ok(_) => {}
+                            Err(MempoolError::QueueClosed) => break,
+                            Err(error) => {
+                                let now = Instant::now();
+                                let mut last_warning = self.last_invalid_warning.lock().await;
+                                if last_warning
+                                    .map(|last| now.duration_since(last) >= Duration::from_secs(1))
+                                    .unwrap_or(true)
+                                {
+                                    log::warn!("dropping invalid overlay external message: {error}");
+                                    self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
+                                    *last_warning = Some(now);
+                                }
                             }
                         }
                     }
