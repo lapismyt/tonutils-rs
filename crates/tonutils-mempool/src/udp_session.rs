@@ -3,7 +3,10 @@ use std::time::Duration;
 
 use futures::future::BoxFuture;
 use futures::future::join_all;
+use raptorq::{Decoder, EncodingPacket, ObjectTransmissionInformation};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::time::Instant;
 use tonutils_adnl::{AdnlUdpSession, KeyPair, PublicKey as AdnlPublicKey};
 use tonutils_overlay::{OverlayId, OverlaySession, PeerId, SeedPeer, TypedDiscoveryLookup};
 use tonutils_tl::Message as AdnlMessage;
@@ -16,6 +19,15 @@ pub struct AdnlUdpOverlaySession {
     peer: PeerId,
     session: AdnlUdpSession,
     overlay: Option<OverlayId>,
+    fec: HashMap<[u8; 32], FecAssembly>,
+}
+
+struct FecAssembly {
+    decoder: Decoder,
+    data_size: usize,
+    symbol_size: i32,
+    symbols_count: i32,
+    last_seen: Instant,
 }
 
 pub fn udp_dht_lookup(
@@ -233,6 +245,7 @@ impl AdnlUdpOverlaySession {
             peer,
             session,
             overlay: None,
+            fec: HashMap::new(),
         })
     }
 
@@ -257,6 +270,7 @@ impl AdnlUdpOverlaySession {
             peer,
             session,
             overlay: None,
+            fec: HashMap::new(),
         })
     }
 
@@ -296,6 +310,7 @@ impl AdnlUdpOverlaySession {
             peer,
             session,
             overlay: Some(overlay),
+            fec: HashMap::new(),
         })
     }
 }
@@ -326,11 +341,14 @@ impl OverlaySession for AdnlUdpOverlaySession {
                             if data[4..36] != overlay.as_bytes() {
                                 return Err("overlay id mismatch".to_owned());
                             }
-                            unwrap_overlay_payload(&data[36..])?
-                        } else {
-                            match unwrap_overlay_payload(&data) {
+                            match self.unwrap_overlay_payload(&data[36..]) {
                                 Ok(data) => data,
-                                Err(_) => data,
+                                Err(_) => continue,
+                            }
+                        } else {
+                            match self.unwrap_overlay_payload(&data) {
+                                Ok(data) => data,
+                                Err(_) => continue,
                             }
                         };
                         return Ok(Arc::from(data));
@@ -378,88 +396,162 @@ impl OverlaySession for AdnlUdpOverlaySession {
     }
 }
 
-fn unwrap_overlay_payload(data: &[u8]) -> Result<Vec<u8>, String> {
-    if let Ok(broadcast) = tl_proto::deserialize::<TonNodeExternalMessageBroadcast>(data) {
-        return Ok(broadcast.message.data);
-    }
-    if let Ok(fec) = tl_proto::deserialize::<OverlayBroadcastFec>(data) {
-        let data_hash: [u8; 32] = Sha256::digest(&fec.data).into();
-        if fec.data_hash.0 != data_hash {
-            return Err("overlay FEC data hash mismatch".to_owned());
-        }
-        if let Ok(broadcast) = tl_proto::deserialize::<TonNodeExternalMessageBroadcast>(&fec.data) {
+impl AdnlUdpOverlaySession {
+    fn unwrap_overlay_payload(&mut self, data: &[u8]) -> Result<Vec<u8>, String> {
+        if let Ok(broadcast) = tl_proto::deserialize::<TonNodeExternalMessageBroadcast>(data) {
             return Ok(broadcast.message.data);
         }
-        return Err("overlay FEC payload requires reassembly".to_owned());
-    }
-    match tl_proto::deserialize::<OverlayBroadcast>(data) {
-        Ok(OverlayBroadcast::Unicast { data }) => Ok(data),
-        Ok(broadcast) => broadcast
-            .payload_if_valid(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs()
-                    .min(i32::MAX as u64) as i32,
+        if let Ok(fec) = tl_proto::deserialize::<OverlayBroadcastFec>(data) {
+            let (fec_data_size, symbol_size, symbols_count) = match fec.fec {
+                tonutils_tl::tl::network::FecType::RaptorQ {
+                    data_size: fec_data_size,
+                    symbol_size,
+                    symbols_count,
+                } => (fec_data_size, symbol_size, symbols_count),
+                _ => return Err("unsupported overlay FEC type".to_owned()),
+            };
+            let data_size = fec.data_size;
+            if data_size <= 0
+                || data_size as usize > 1 << 20
+                || symbol_size <= 0
+                || symbols_count <= 0
+                || fec_data_size != data_size
+                || (data_size as usize).div_ceil(symbol_size as usize) != symbols_count as usize
+                || fec.data.len() < 4
+            {
+                return Err("invalid overlay FEC parameters".to_owned());
+            }
+            self.fec
+                .retain(|_, state| state.last_seen.elapsed() < Duration::from_secs(90));
+            if self.fec.len() >= 128 && !self.fec.contains_key(&fec.data_hash.0) {
+                return Err("overlay FEC reassembly capacity exceeded".to_owned());
+            }
+            let state = self
+                .fec
+                .entry(fec.data_hash.0)
+                .or_insert_with(|| FecAssembly {
+                    decoder: Decoder::new(ObjectTransmissionInformation::new(
+                        data_size as u64,
+                        symbol_size as u16,
+                        1,
+                        1,
+                        1,
+                    )),
+                    data_size: data_size as usize,
+                    symbol_size,
+                    symbols_count,
+                    last_seen: Instant::now(),
+                });
+            if state.data_size != data_size as usize
+                || state.symbol_size != symbol_size
+                || state.symbols_count != symbols_count
+            {
+                return Err("overlay FEC metadata changed during reassembly".to_owned());
+            }
+            state.last_seen = Instant::now();
+            let expected_size = state.data_size;
+            let packet = EncodingPacket::deserialize(&fec.data);
+            if packet.payload_id().source_block_number() != 0 {
+                return Err("overlay FEC packet has invalid source block".to_owned());
+            }
+            let max_symbol_id = symbols_count as u32 + (symbols_count as u32 / 2) + 1024;
+            if packet.payload_id().encoding_symbol_id() > max_symbol_id {
+                return Err("overlay FEC packet has an excessive symbol id".to_owned());
+            }
+            let Some(reconstructed) = state.decoder.decode(packet) else {
+                return Err("overlay FEC payload is incomplete".to_owned());
+            };
+            self.fec.remove(&fec.data_hash.0);
+            let hash: [u8; 32] = Sha256::digest(&reconstructed).into();
+            if hash != fec.data_hash.0 || reconstructed.len() != expected_size {
+                return Err("overlay FEC reconstructed data mismatch".to_owned());
+            }
+            let broadcast = tl_proto::deserialize::<TonNodeExternalMessageBroadcast>(
+                &reconstructed,
             )
-            .map(ToOwned::to_owned)
-            .ok_or_else(|| "invalid overlay broadcast".to_owned()),
-        Err(_) => Err("invalid overlay payload".to_owned()),
+            .map_err(|_| "overlay FEC reconstructed payload is not external message".to_owned())?;
+            return Ok(broadcast.message.data);
+        }
+        match tl_proto::deserialize::<OverlayBroadcast>(data) {
+            Ok(OverlayBroadcast::Unicast { data }) => Ok(data),
+            Ok(broadcast) => broadcast
+                .payload_if_valid(
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs()
+                        .min(i32::MAX as u64) as i32,
+                )
+                .map(ToOwned::to_owned)
+                .ok_or_else(|| "invalid overlay broadcast".to_owned()),
+            Err(_) => Err("invalid overlay payload".to_owned()),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tonutils_tl::Int256;
-    use tonutils_tl::tl::network::{FecType, OverlayCertificate, TonNodeExternalMessage};
+    use raptorq::Encoder;
+    use tonutils_adnl::KeyPair;
+    use tonutils_tl::tl::network::{TonNodeExternalMessage, TonNodeExternalMessageBroadcast};
 
-    #[test]
-    fn unwraps_hash_checked_external_message_fec_payload() {
+    #[tokio::test]
+    async fn reassembles_single_source_raptorq_external_message() {
         let external = tl_proto::serialize(TonNodeExternalMessageBroadcast {
             message: TonNodeExternalMessage {
-                data: vec![0xb5, 0xee, 0x9c, 0x72],
+                data: vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3],
             },
         });
+        let encoder = Encoder::with_defaults(&external, 128);
+        let config = encoder.get_config();
+        let packet = encoder
+            .get_encoded_packets(0)
+            .into_iter()
+            .next()
+            .expect("encoder must produce a source packet");
         let hash: [u8; 32] = Sha256::digest(&external).into();
+        let local = KeyPair::generate(&mut rand::rngs::OsRng);
+        let remote = KeyPair::generate(&mut rand::rngs::OsRng);
+        let local_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let remote_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let session = AdnlUdpSession::connect(local_addr, remote_addr, local, remote.public_key)
+            .await
+            .unwrap();
+        let mut adapter = AdnlUdpOverlaySession {
+            peer: PeerId::from_bytes([1; 32]),
+            session,
+            overlay: None,
+            fec: HashMap::new(),
+        };
+        let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
         let fec = OverlayBroadcastFec {
             src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![1] },
-            certificate: OverlayCertificate::Empty,
-            data_hash: Int256(hash),
+            certificate: tonutils_tl::tl::network::OverlayCertificate::Empty,
+            data_hash: tonutils_tl::Int256(hash),
             data_size: external.len() as i32,
             flags: 0,
-            data: external,
+            data: packet.serialize(),
             seqno: 0,
-            fec: FecType::RaptorQ {
-                data_size: 4,
-                symbol_size: 4,
-                symbols_count: 1,
+            fec: tonutils_tl::tl::network::FecType::RaptorQ {
+                data_size: external.len() as i32,
+                symbol_size: config.symbol_size() as i32,
+                symbols_count,
             },
             date: 0,
             signature: Vec::new(),
         };
-        let payload = unwrap_overlay_payload(&tl_proto::serialize(fec)).unwrap();
-        assert_eq!(payload, vec![0xb5, 0xee, 0x9c, 0x72]);
-    }
-
-    #[test]
-    fn rejects_hash_mismatched_external_message_fec_payload() {
-        let fec = OverlayBroadcastFec {
-            src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![1] },
-            certificate: OverlayCertificate::Empty,
-            data_hash: Int256([1; 32]),
-            data_size: 4,
-            flags: 0,
-            data: vec![0xb5, 0xee, 0x9c, 0x72],
-            seqno: 0,
-            fec: FecType::RaptorQ {
-                data_size: 4,
-                symbol_size: 4,
-                symbols_count: 1,
-            },
-            date: 0,
-            signature: Vec::new(),
-        };
-        assert!(unwrap_overlay_payload(&tl_proto::serialize(fec)).is_err());
+        let payload = adapter
+            .unwrap_overlay_payload(&tl_proto::serialize(fec))
+            .unwrap();
+        assert_eq!(payload, vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3]);
     }
 }

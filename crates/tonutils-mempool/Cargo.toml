@@ -17,6 +17,7 @@ workspace = true
 tonutils-adnl = { path = "../tonutils-adnl", version = "2.0.0", features = ["udp"] }
 futures.workspace = true
 hex.workspace = true
+raptorq.workspace = true
 log.workspace = true
 reqwest.workspace = true
 rand.workspace = true
