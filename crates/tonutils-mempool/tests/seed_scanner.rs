@@ -1,11 +1,14 @@
 use std::time::Duration;
 
 use futures::StreamExt;
+use raptorq::Encoder;
+use sha2::{Digest, Sha256};
 use tonutils_adnl::{AdnlUdpSession, KeyPair};
 use tonutils_mempool::{MempoolConfig, MempoolEvent, MempoolScannerBuilder};
 use tonutils_overlay::{OverlayConfig, OverlayId, PeerId, SeedPeer};
 use tonutils_tl::tl::network::{
-    PacketContents, TonNodeExternalMessage, TonNodeExternalMessageBroadcast,
+    FecType, OverlayBroadcastFec, OverlayCertificate, PacketContents, TonNodeExternalMessage,
+    TonNodeExternalMessageBroadcast,
 };
 use tonutils_tlb::{
     CommonMsgInfo, Either, Grams, Message as TlbMessage, MsgAddressExt, MsgAddressInt, TlbSerialize,
@@ -13,7 +16,7 @@ use tonutils_tlb::{
 use tonutils_tvm::{Address, Builder, serialize_boc};
 
 #[tokio::test]
-async fn explicit_seed_udp_overlay_reaches_scanner_stream() {
+async fn explicit_seed_udp_overlay_fec_reaches_scanner_stream() {
     let client_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let server_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let client_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
@@ -65,35 +68,57 @@ async fn explicit_seed_udp_overlay_reaches_scanner_stream() {
         body: Either::Left(body.build().unwrap()),
     };
     let boc = serialize_boc(&message.to_cell().unwrap(), false).unwrap();
-    let mut overlay_payload = Vec::new();
-    overlay_payload.extend_from_slice(&0x75252420u32.to_le_bytes());
-    overlay_payload.extend_from_slice(&overlay.as_bytes());
-    overlay_payload.extend(tl_proto::serialize(TonNodeExternalMessageBroadcast {
+    let external = tl_proto::serialize(TonNodeExternalMessageBroadcast {
         message: TonNodeExternalMessage { data: boc.clone() },
-    }));
-    sender
-        .send_contents(PacketContents {
-            rand1: vec![0; 7],
-            flags: (),
-            from: None,
-            from_short: None,
-            message: Some(tonutils_tl::Message::Custom {
-                data: overlay_payload,
-            }),
-            messages: None,
-            address: None,
-            priority_address: None,
-            seqno: None,
-            confirm_seqno: None,
-            recv_addr_list_version: None,
-            recv_priority_addr_list_version: None,
-            reinit_date: None,
-            dst_reinit_date: None,
-            signature: None,
-            rand2: vec![0; 7],
-        })
-        .await
-        .unwrap();
+    });
+    let encoder = Encoder::with_defaults(&external, 128);
+    let fec_config = encoder.get_config();
+    let data_hash: [u8; 32] = Sha256::digest(&external).into();
+    let symbols_count = (external.len() as u64).div_ceil(fec_config.symbol_size() as u64) as i32;
+    for (seqno, packet) in encoder.get_encoded_packets(0).into_iter().enumerate() {
+        let mut overlay_payload = Vec::new();
+        overlay_payload.extend_from_slice(&0x75252420u32.to_le_bytes());
+        overlay_payload.extend_from_slice(&overlay.as_bytes());
+        overlay_payload.extend(tl_proto::serialize(OverlayBroadcastFec {
+            src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![1] },
+            certificate: OverlayCertificate::Empty,
+            data_hash: tonutils_tl::Int256(data_hash),
+            data_size: external.len() as i32,
+            flags: 0,
+            data: packet.serialize(),
+            seqno: seqno as i32,
+            fec: FecType::RaptorQ {
+                data_size: external.len() as i32,
+                symbol_size: fec_config.symbol_size() as i32,
+                symbols_count,
+            },
+            date: 0,
+            signature: Vec::new(),
+        }));
+        sender
+            .send_contents(PacketContents {
+                rand1: vec![0; 7],
+                flags: (),
+                from: None,
+                from_short: None,
+                message: Some(tonutils_tl::Message::Custom {
+                    data: overlay_payload,
+                }),
+                messages: None,
+                address: None,
+                priority_address: None,
+                seqno: None,
+                confirm_seqno: None,
+                recv_addr_list_version: None,
+                recv_priority_addr_list_version: None,
+                reinit_date: None,
+                dst_reinit_date: None,
+                signature: None,
+                rand2: vec![0; 7],
+            })
+            .await
+            .unwrap();
+    }
     let event = tokio::time::timeout(Duration::from_secs(1), async {
         loop {
             if let Some(event) = events.next().await
