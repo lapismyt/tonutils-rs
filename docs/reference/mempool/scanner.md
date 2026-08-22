@@ -50,6 +50,9 @@ available when applications need custom lifecycle policy.
 `SeedPeer` values and does not perform DHT expansion.
 Its overlay adapter accepts TON's `overlay.message` prefix followed by
 `tonNode.externalMessageBroadcast` and publishes the nested external BoC.
+The strict live test is enabled with repository variables
+`TON_MEMPOOL_LIVE_SEED`, `TON_MEMPOOL_LIVE_PEER_KEY`, and
+`TON_MEMPOOL_LIVE_OVERLAY_ID`; it skips only when those variables are absent.
 When present, startup connects every validated discovery result concurrently
 and fails if all session attempts fail. Without a factory, startup still builds
 the bounded scanner for dependency-injected or offline session management.
