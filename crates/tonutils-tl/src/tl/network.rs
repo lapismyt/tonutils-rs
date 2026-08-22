@@ -405,6 +405,16 @@ pub struct TonNodeExternalMessageBroadcast {
     pub message: TonNodeExternalMessage,
 }
 
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0x4d9ed329)]
+pub struct TonNodeShardPublicOverlayId {
+    /// tonNode.shardPublicOverlayId workchain:int shard:long zero_state_file_hash:int256 = tonNode.ShardPublicOverlayId;
+    pub workchain: i32,
+    pub shard: i64,
+    pub zero_state_file_hash: Int256,
+}
+
 impl OverlayBroadcast {
     pub fn payload_if_valid(&self, now: i32) -> Option<&[u8]> {
         let Self::Broadcast {

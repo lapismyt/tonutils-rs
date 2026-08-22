@@ -370,6 +370,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Add signed discovery records, verification, and explicit seed fallback #dht #crypto #tests
   - [x] Extract and validate bootstrap endpoints from caller/global config JSON #dht #network #tests
   - [x] Add upstream-derived ADNL/DHT/overlay TL packet types and round-trip fixtures #dht #tl #tests
+  - [x] Add canonical shard-public overlay ID derivation #dht #overlay #tests
   - [ ] Resolve liteservers and overlay peers through DHT #dht
 - [-] Implement overlay protocol #overlay #network
   - [x] Add bounded overlay peer/routing/status primitives #overlay #tests

@@ -36,6 +36,20 @@ impl OverlayId {
     pub const fn as_bytes(self) -> [u8; 32] {
         self.0
     }
+
+    #[must_use]
+    pub fn from_shard_public(workchain: i32, shard: i64, zero_state_file_hash: [u8; 32]) -> Self {
+        Self(
+            Sha256::digest(tl_proto::serialize(
+                tonutils_tl::tl::network::TonNodeShardPublicOverlayId {
+                    workchain,
+                    shard,
+                    zero_state_file_hash: tonutils_tl::Int256(zero_state_file_hash),
+                },
+            ))
+            .into(),
+        )
+    }
 }
 
 impl fmt::Display for OverlayId {
@@ -859,5 +873,13 @@ mod tests {
         assert_eq!(peers.len(), 1);
         assert_eq!(peers[0].peer.as_bytes(), key.verifying_key().to_bytes());
         assert_eq!(peers[0].address, "127.0.0.1:30303");
+    }
+
+    #[test]
+    fn shard_public_overlay_id_is_deterministic() {
+        let first = OverlayId::from_shard_public(-1, i64::MIN, [7; 32]);
+        let second = OverlayId::from_shard_public(-1, i64::MIN, [7; 32]);
+        assert_eq!(first, second);
+        assert_ne!(first, OverlayId::from_shard_public(0, i64::MIN, [7; 32]));
     }
 }
