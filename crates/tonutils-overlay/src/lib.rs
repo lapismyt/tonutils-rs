@@ -122,6 +122,14 @@ pub struct SeedPeer {
 
 impl SeedPeer {
     #[must_use]
+    pub fn from_public_key(public_key: [u8; 32], address: impl Into<String>) -> Self {
+        Self {
+            peer: PeerId::from_bytes(public_key),
+            address: address.into(),
+        }
+    }
+
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.peer.as_bytes() != [0; 32]
             && self.address.len() <= 256
