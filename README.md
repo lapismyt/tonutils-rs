@@ -30,7 +30,7 @@ network reads and submissions require an explicitly configured live provider.
 - `tonutils-macros` provides derive and procedural macros.
 - `tonutils-schema-gen` generates code from TL schemas.
 - `tonutils-adnl` and `tonutils-liteclient` provide ADNL TCP and LiteAPI access;
-  `tonutils-adnl/udp` adds an opt-in bounded datagram codec.
+  `tonutils-adnl/udp` adds authenticated direct/channel UDP sessions.
 - `tonutils-overlay` provides bounded overlay peer, routing, discovery-record,
   lifecycle, and status primitives.
 - `tonutils-mempool` provides a low-latency Rust `Stream` for pending external messages.
@@ -76,10 +76,9 @@ and deduplicates shared raw bytes, then emits `ExternalMessage`; full TL-B
 decoding and `Included` correlation belong to a separately configured slow path.
 
 The current release exposes bounded peer/event primitives, signed discovery
-record validation, a transport-neutral session manager, offline-safe ingest,
-and `MempoolScannerBuilder` bootstrap resolution. The builder does not yet
-open canonical ADNL channels or issue DHT/overlay queries; those protocol
-schemas remain tracked work. The behavioral reference for this design is
+record validation, a transport-neutral session manager, native UDP seed-only
+delivery, FEC reassembly, and `MempoolScannerBuilder` bootstrap resolution.
+The behavioral reference for this design is
 [`yungwine/ton-mempool`](https://github.com/yungwine/ton-mempool), not a source
 of Rust or Python API compatibility requirements.
 
