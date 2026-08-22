@@ -438,10 +438,7 @@ impl PeerManager {
     pub async fn add_session(&self, session: Box<dyn OverlaySession>) {
         let peer = session.peer_id();
         if self.sessions.read().await.contains_key(&peer) {
-            let _ = self
-                .pool
-                .report_status(PeerStatus::Reconnecting { peer, attempt: 0 })
-                .await;
+            let _ = self.pool.report_status(PeerStatus::Reconnecting { peer, attempt: 0 });
             return;
         }
         let session = Arc::new(tokio::sync::Mutex::new(session));
@@ -470,7 +467,7 @@ impl PeerManager {
                                 scores.write().await.entry(peer).and_modify(|score| *score += 1);
                             }
                             Ok(Err(_)) | Err(_) => {
-                                let _ = pool.report_status(PeerStatus::Failed { peer }).await;
+                                let _ = pool.report_status(PeerStatus::Failed { peer });
                                 break;
                             }
                         }
@@ -511,7 +508,7 @@ impl PeerManager {
                 let shared = Arc::new(tokio::sync::Mutex::new(current));
                 sessions.write().await.insert(peer, shared.clone());
                 pool.register_peer(peer).await;
-                let _ = pool.report_status(PeerStatus::Connected { peer }).await;
+                let _ = pool.report_status(PeerStatus::Connected { peer });
                 loop {
                     tokio::select! {
                         _ = shutdown.changed() => break,
@@ -536,19 +533,18 @@ impl PeerManager {
                 sessions.write().await.remove(&peer);
                 pool.unregister_peer(peer).await;
                 if *shutdown.borrow() {
-                    let _ = pool.report_status(PeerStatus::Disconnected { peer }).await;
+                    let _ = pool.report_status(PeerStatus::Disconnected { peer });
                     return;
                 }
                 if max_attempts == 0 {
-                    let _ = pool.report_status(PeerStatus::Failed { peer }).await;
+                    let _ = pool.report_status(PeerStatus::Failed { peer });
                     return;
                 }
-                let _ = pool.report_status(PeerStatus::Failed { peer }).await;
+                let _ = pool.report_status(PeerStatus::Failed { peer });
                 let mut replacement = None;
                 for attempt in 1..=max_attempts {
                     let _ = pool
-                        .report_status(PeerStatus::Reconnecting { peer, attempt })
-                        .await;
+                        .report_status(PeerStatus::Reconnecting { peer, attempt });
                     let multiplier = 1u32
                         .checked_shl(attempt.saturating_sub(1))
                         .unwrap_or(u32::MAX);
@@ -670,7 +666,7 @@ impl OverlayPeerPool {
         self.packets.clone()
     }
 
-    pub(crate) async fn report_status(&self, status: PeerStatus) -> Result<(), OverlayError> {
+    pub(crate) fn report_status(&self, status: PeerStatus) -> Result<(), OverlayError> {
         self.statuses
             .send(status)
             .map(|_| ())
