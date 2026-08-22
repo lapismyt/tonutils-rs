@@ -33,18 +33,20 @@ observations, query LiteServer, and call `mark_included` independently.
 
 ## Bootstrap and startup
 
-`MempoolScannerBuilder::start` merges explicit `SeedPeer` values, caller-owned
-`ConfigGlobal` liteserver endpoints, optional raw global-config JSON, and the
-mainnet or testnet global-config URL. HTTP downloading is performed by the
-builder, while `tonutils-network-config` remains an offline parser. Duplicate
+`MempoolScannerBuilder::start` merges explicit `SeedPeer` values and optional
+raw global-config JSON. HTTP downloading is performed by the builder, while
+`tonutils-network-config` remains an offline parser. `ConfigGlobal` is a
+LiteServer-only model and is not treated as an overlay seed. Duplicate
 `(peer, address)` pairs and malformed socket addresses are rejected before the
 overlay manager starts; no validated peer is a startup error.
 
 `MempoolScannerBuilder::session_factory` is the explicit transport boundary:
 applications provide a factory that performs the canonical ADNL and
 overlay-specific handshake and returns an authenticated `OverlaySession`.
-For the native UDP path, `native_udp` wires those pieces together; the lower
-level `direct_factory`, `channel_factory`, and `udp_dht_lookup` helpers remain
+For the native UDP path, `native_udp` wires the session and join query
+together; `dht_overlay_key` or `native_udp_for_shard_public` additionally
+enables DHT overlay-node resolution. The lower-level `direct_factory`,
+`channel_factory`, `udp_dht_lookup`, and `udp_overlay_lookup` helpers remain
 available when applications need custom lifecycle policy.
 `native_udp_seeds_only` is the minimal mode: it connects only explicit
 `SeedPeer` values and does not perform DHT expansion.
@@ -58,8 +60,8 @@ The strict live test is enabled with repository variables
 When present, startup connects every validated discovery result concurrently
 and fails if all session attempts fail. Without a factory, startup still builds
 the bounded scanner for dependency-injected or offline session management.
-Canonical DHT/overlay queries and QUIC remain outside this crate until their
-upstream wire fixtures are available.
+Canonical DHT/overlay queries are implemented for the native UDP path. QUIC
+remains outside this crate by design.
 
 ## Reference comparison
 
@@ -70,8 +72,8 @@ uses `Stream` and does not expose a WebSocket compatibility layer.
 
 ## Current gaps
 
-Canonical external-message envelope fixtures, protocol-specific overlay
-constructors, ADNL channel negotiation, and LiteServer inclusion tracking still
-need upstream schemas, fixtures, and live-network tests. The ignored tests in
-`tests/live.rs` validate the mainnet/testnet seed environment contract only;
-they do not claim a live network connection.
+The remaining acceptance gap is a configured real overlay seed: the ignored
+strict test validates external-message delivery only when
+`TON_MEMPOOL_LIVE_SEED`, `TON_MEMPOOL_LIVE_PEER_KEY`, and
+`TON_MEMPOOL_LIVE_OVERLAY_ID` are provided. LiteServer inclusion tracking is
+intentionally out of scope.
