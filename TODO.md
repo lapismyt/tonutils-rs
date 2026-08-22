@@ -363,8 +363,8 @@ postponed work moves to `# BACKLOG`.
 - [-] Research and implement native ADNL UDP #network #adnl
   - [x] Add bounded encrypted datagram codec and malformed/trailing packet tests #network #tests
   - [x] Add upstream-derived direct packet and AES-channel packet primitives with sequence checks #network #tests
-  - [ ] Document packet format and channel negotiation #network #docs
-  - [ ] Add UDP codec tests #network #tests
+  - [x] Document packet format and channel negotiation #network #docs
+  - [x] Add UDP codec tests #network #tests
   - [ ] Add NAT and address list considerations #network
 - [-] Implement DHT discovery #dht #network
   - [x] Add signed discovery records, verification, and explicit seed fallback #dht #crypto #tests
@@ -376,9 +376,9 @@ postponed work moves to `# BACKLOG`.
   - [x] Add bounded overlay peer/routing/status primitives #overlay #tests
   - [x] Add transport-neutral sessions, parallel receive loops, scoring, and shutdown #overlay #network #tests
   - [ ] Add overlay node and peer exchange types from upstream schemas #overlay #tl
-  - [ ] Add overlay query transport and live peer bootstrap #overlay
+  - [x] Add overlay query transport and live peer bootstrap #overlay
   - [x] Add bounded broadcast hook for mempool #overlay #mempool
-  - [ ] Connect scanner bootstrap to canonical ADNL UDP channels #adnl #overlay #mempool
+  - [x] Connect scanner bootstrap to canonical ADNL UDP channels #adnl #overlay #mempool
 - [ ] Implement native Rust QUIC transport #quic #network
   - [ ] Define optional feature gating without native runtime dependencies #quic #features
   - [ ] Add peer and session lifecycle handling #quic #network

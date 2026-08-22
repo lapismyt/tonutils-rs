@@ -122,6 +122,29 @@ pub struct AddressList {
 
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0x2227e658)]
+pub struct AddressListBoxed {
+    pub addrs: Vec<Address>,
+    pub version: i32,
+    pub reinit_date: i32,
+    pub priority: i32,
+    pub expire_at: i32,
+}
+
+impl From<AddressListBoxed> for AddressList {
+    fn from(value: AddressListBoxed) -> Self {
+        Self {
+            addrs: value.addrs,
+            version: value.version,
+            reinit_date: value.reinit_date,
+            priority: value.priority,
+            expire_at: value.expire_at,
+        }
+    }
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
 #[tl(boxed, id = 0x6b561285)]
 pub struct AdnlNode {
     /// adnl.node id:PublicKey addr_list:adnl.addressList = adnl.Node;
@@ -203,6 +226,7 @@ pub struct DhtNodesBoxed {
 
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0xf667de8f)]
 pub struct DhtKey {
     /// dht.key id:int256 name:bytes idx:int = dht.Key;
     pub id: Int256,
@@ -274,6 +298,16 @@ pub struct OverlayNode {
     pub overlay: Int256,
     pub version: i32,
     pub signature: Vec<u8>,
+}
+
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0x03d8a8e1)]
+pub struct OverlayNodeToSign {
+    /// overlay.node.toSign id:adnl.id.short overlay:int256 version:int = overlay.node.ToSign;
+    pub id: AdnlIdShort,
+    pub overlay: Int256,
+    pub version: i32,
 }
 
 #[derive(TlRead, TlWrite, Derivative)]

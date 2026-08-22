@@ -13,8 +13,8 @@ use sha2::{Digest, Sha256};
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 use tonutils_tl::tl::network::{
-    DhtMessage, DhtNodesBoxed, OverlayNodes, OverlayNodesBoxed, OverlayQuery, PacketContents,
-    PublicKey as TlPublicKey,
+    DhtMessage, DhtNodesBoxed, DhtValueResult, OverlayNodes, OverlayNodesBoxed, OverlayQuery,
+    PacketContents, PublicKey as TlPublicKey,
 };
 use tonutils_tl::{Int256, Message as AdnlMessage};
 
@@ -574,16 +574,14 @@ impl AdnlUdpSession {
         }
     }
 
-    pub async fn overlay_get_random_peers(
+    pub async fn dht_find_value(
         &mut self,
-        overlay: Int256,
+        key: Int256,
+        count: i32,
         timeout: Duration,
-    ) -> Result<OverlayNodesBoxed, AdnlError> {
+    ) -> Result<DhtValueResult, AdnlError> {
         let query_id = Int256::random();
-        let mut query = tl_proto::serialize(OverlayQuery::Query { overlay });
-        query.extend(tl_proto::serialize(OverlayQuery::GetRandomPeers {
-            peers: OverlayNodes { nodes: Vec::new() },
-        }));
+        let query = tl_proto::serialize(DhtMessage::FindValue { key, k: count });
         self.send_contents(PacketContents {
             rand1: vec![0; 7],
             flags: (),
@@ -611,6 +609,42 @@ impl AdnlUdpSession {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
                 return Err(AdnlError::Timeout {
+                    operation: "DHT findValue",
+                    timeout,
+                });
+            }
+            let packet = self.recv_timeout(remaining).await?;
+            let messages = packet
+                .message
+                .into_iter()
+                .chain(packet.messages.into_iter().flatten());
+            for message in messages {
+                if let AdnlMessage::Answer {
+                    query_id: id,
+                    answer,
+                } = message
+                    && id == query_id
+                {
+                    return tl_proto::deserialize(&answer)
+                        .map_err(|error| AdnlError::MalformedPacket(error.to_string()));
+                }
+            }
+        }
+    }
+
+    pub async fn overlay_get_random_peers(
+        &mut self,
+        overlay: Int256,
+        timeout: Duration,
+    ) -> Result<OverlayNodesBoxed, AdnlError> {
+        let query_id = Int256::random();
+        self.send_overlay_get_random_peers_with_id(overlay, query_id.clone())
+            .await?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(AdnlError::Timeout {
                     operation: "overlay getRandomPeers",
                     timeout,
                 });
@@ -631,6 +665,74 @@ impl AdnlUdpSession {
                         .map_err(|error| AdnlError::MalformedPacket(error.to_string()));
                 }
             }
+        }
+    }
+
+    pub async fn send_overlay_get_random_peers(
+        &mut self,
+        overlay: Int256,
+    ) -> Result<usize, AdnlError> {
+        self.send_overlay_get_random_peers_with_id(overlay, Int256::random())
+            .await
+    }
+
+    async fn send_overlay_get_random_peers_with_id(
+        &mut self,
+        overlay: Int256,
+        query_id: Int256,
+    ) -> Result<usize, AdnlError> {
+        let mut query = tl_proto::serialize(OverlayQuery::Query {
+            overlay: overlay.clone(),
+        });
+        query.extend(tl_proto::serialize(OverlayQuery::GetRandomPeers {
+            peers: OverlayNodes {
+                nodes: vec![self.local_overlay_node(overlay)],
+            },
+        }));
+        self.send_contents(PacketContents {
+            rand1: vec![0; 7],
+            flags: (),
+            from: None,
+            from_short: None,
+            message: Some(AdnlMessage::Query {
+                query_id: query_id.clone(),
+                query,
+            }),
+            messages: None,
+            address: None,
+            priority_address: None,
+            seqno: None,
+            confirm_seqno: None,
+            recv_addr_list_version: None,
+            recv_priority_addr_list_version: None,
+            reinit_date: None,
+            dst_reinit_date: None,
+            signature: None,
+            rand2: vec![0; 7],
+        })
+        .await
+    }
+
+    fn local_overlay_node(&self, overlay: Int256) -> tonutils_tl::tl::network::OverlayNode {
+        let version = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .min(i32::MAX as u64) as i32;
+        let to_sign = tonutils_tl::tl::network::OverlayNodeToSign {
+            id: tonutils_tl::tl::network::AdnlIdShort {
+                id: Int256(self.local_id),
+            },
+            overlay: overlay.clone(),
+            version,
+        };
+        tonutils_tl::tl::network::OverlayNode {
+            id: tonutils_tl::tl::network::PublicKey::Ed25519 {
+                key: Int256(self.local.public_key.to_bytes()),
+            },
+            overlay,
+            version,
+            signature: self.local.sign_raw(&tl_proto::serialize(to_sign)).to_vec(),
         }
     }
 }

@@ -50,12 +50,11 @@ channel id, canonical AES-channel digest/key/IV derivation, TL
 `adnl.packetContents`, bounded sequence replay tracking, and ACK validation.
 All datagram APIs enforce the 64 KiB bound and provide Tokio timeouts.
 
-`AdnlUdpSession` still expects the caller to provision the remote identity and
-does not perform the initial create/confirm channel negotiation or DHT/overlay
-handshake. Fragmentation and NAT traversal remain outside this layer.
+`AdnlUdpSession` expects the caller to provision the remote identity and now
+supports create/confirm channel negotiation plus typed DHT and overlay query
+helpers. Fragmentation and NAT traversal remain outside this layer.
 
 ## Missing Work
 
-- Implement and fixture-test channel negotiation and packet-content TL.
 - Add packet fixtures from official nodes.
 - Add deterministic simulated UDP tests.

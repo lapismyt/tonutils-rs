@@ -38,7 +38,8 @@ The pending-message behavior is compared conceptually with
 [`yungwine/ton-mempool`](https://github.com/yungwine/ton-mempool). The Python
 project's WebSocket interface is not part of this crate. Canonical ADNL/DHT/
 overlay TL constructors, direct UDP live probing, channel create/confirm state
-transitions, and transport-to-stream delivery are covered by checked fixtures
-and localhost tests. Iterative DHT routing, overlay certificate/peer exchange
-validation, and production mempool broadcast selection remain TODO items; the
-session trait still lets applications supply those higher-level policies.
+transitions, signed overlay join queries, and transport-to-stream delivery are
+covered by checked fixtures and localhost tests. Iterative overlay-node
+resolution, official-node packet fixtures, and production mempool broadcast
+selection remain TODO items; the session trait still lets applications supply
+those higher-level policies.

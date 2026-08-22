@@ -217,3 +217,19 @@ async fn dedup_capacity_is_global_across_shards() {
     assert!(scanner.ingest(boc(2), routing).await.unwrap().is_some());
     assert!(scanner.dedup_entries.load(Ordering::Relaxed) <= 1);
 }
+
+#[tokio::test]
+async fn concurrent_ingest_publishes_one_copy() {
+    let scanner = Arc::new(MempoolScanner::new(config()).unwrap());
+    let routing = RoutingMetadata::new(OverlayId::from_name(b"test"), PeerId::from_bytes([1; 32]));
+    let first = scanner.ingest(boc(7), routing.clone());
+    let second = scanner.ingest(boc(7), routing);
+    let (first, second) = tokio::join!(first, second);
+    let accepted = [first.unwrap(), second.unwrap()]
+        .into_iter()
+        .flatten()
+        .count();
+    assert_eq!(accepted, 1);
+    assert_eq!(scanner.metrics().duplicates, 1);
+    assert_eq!(scanner.dedup_entries.load(Ordering::Relaxed), 1);
+}

@@ -26,7 +26,14 @@ pub struct OverlayId([u8; 32]);
 impl OverlayId {
     /// Derives an overlay ID from its canonical name.
     pub fn from_name(name: &[u8]) -> Self {
-        Self(Sha256::digest(name).into())
+        Self(
+            Sha256::digest(tl_proto::serialize(
+                tonutils_tl::tl::network::PublicKey::Overlay {
+                    name: name.to_vec(),
+                },
+            ))
+            .into(),
+        )
     }
 
     pub const fn from_bytes(bytes: [u8; 32]) -> Self {
@@ -39,16 +46,14 @@ impl OverlayId {
 
     #[must_use]
     pub fn from_shard_public(workchain: i32, shard: i64, zero_state_file_hash: [u8; 32]) -> Self {
-        Self(
-            Sha256::digest(tl_proto::serialize(
-                tonutils_tl::tl::network::TonNodeShardPublicOverlayId {
-                    workchain,
-                    shard,
-                    zero_state_file_hash: tonutils_tl::Int256(zero_state_file_hash),
-                },
-            ))
-            .into(),
-        )
+        let shard_id = Sha256::digest(tl_proto::serialize(
+            tonutils_tl::tl::network::TonNodeShardPublicOverlayId {
+                workchain,
+                shard,
+                zero_state_file_hash: tonutils_tl::Int256(zero_state_file_hash),
+            },
+        ));
+        Self::from_name(&shard_id)
     }
 }
 
@@ -216,6 +221,10 @@ pub type DiscoveryLookup =
 #[cfg(feature = "runtime")]
 pub type TypedDiscoveryLookup =
     std::sync::Arc<dyn Fn(Vec<SeedPeer>) -> BoxFuture<'static, Vec<DhtNode>> + Send + Sync>;
+
+#[cfg(feature = "runtime")]
+pub type SeedDiscoveryLookup =
+    std::sync::Arc<dyn Fn(Vec<SeedPeer>) -> BoxFuture<'static, Vec<SeedPeer>> + Send + Sync>;
 
 impl Default for DiscoveryConfig {
     fn default() -> Self {
@@ -498,9 +507,10 @@ impl PeerManager {
                 let shared = Arc::new(tokio::sync::Mutex::new(current));
                 sessions.write().await.insert(peer, shared.clone());
                 pool.register_peer(peer).await;
+                let _ = pool.report_status(PeerStatus::Connected { peer }).await;
                 loop {
                     tokio::select! {
-                        _ = shutdown.changed() => return,
+                        _ = shutdown.changed() => break,
                         packet = async {
                             tokio::time::timeout(idle_timeout, async {
                                 shared.lock().await.receive().await
@@ -521,6 +531,10 @@ impl PeerManager {
                 }
                 sessions.write().await.remove(&peer);
                 pool.unregister_peer(peer).await;
+                if *shutdown.borrow() {
+                    let _ = pool.report_status(PeerStatus::Disconnected { peer }).await;
+                    return;
+                }
                 if max_attempts == 0 {
                     let _ = pool.report_status(PeerStatus::Failed { peer }).await;
                     return;
@@ -824,6 +838,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(5)).await;
         assert_eq!(manager.peer_count().await, 1);
         manager.shutdown_wait().await;
+        assert_eq!(manager.peer_count().await, 0);
     }
 
     #[test]
@@ -881,5 +896,18 @@ mod tests {
         let second = OverlayId::from_shard_public(-1, i64::MIN, [7; 32]);
         assert_eq!(first, second);
         assert_ne!(first, OverlayId::from_shard_public(0, i64::MIN, [7; 32]));
+    }
+
+    #[test]
+    fn overlay_id_uses_boxed_public_overlay_key() {
+        let zero_state_file_hash: [u8; 32] =
+            hex::decode("5e994fcf4d425c0a6ce6a792594b7173205f740a39cd56f537defd28b48a0f6e")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        assert_eq!(
+            OverlayId::from_shard_public(0, i64::MIN, zero_state_file_hash).to_string(),
+            "12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649"
+        );
     }
 }

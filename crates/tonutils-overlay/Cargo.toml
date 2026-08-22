@@ -26,3 +26,6 @@ thiserror.workspace = true
 tl-proto.workspace = true
 tokio = { workspace = true, optional = true }
 tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
+
+[dev-dependencies]
+hex.workspace = true

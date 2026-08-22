@@ -19,14 +19,15 @@ use tonutils_adnl::KeyPair;
 use tonutils_network_config::{ConfigGlobal, extract_dht_addresses};
 use tonutils_overlay::{
     DiscoveryConfig, OverlayConfig, OverlayId, OverlayPacket, OverlayPeerPool, OverlaySession,
-    PeerId, PeerManager, PeerStatus, ReconnectFactory, RoutingMetadata, SeedPeer,
+    PeerId, PeerManager, PeerStatus, ReconnectFactory, RoutingMetadata, SeedDiscoveryLookup,
+    SeedPeer,
 };
 use tonutils_overlay::{DiscoveryLookup, TypedDiscoveryLookup};
 mod udp_session;
 
 pub use udp_session::{
     AdnlUdpOverlaySession, channel_factory, direct_factory, overlay_factory, udp_dht_lookup,
-    udp_iterative_dht_lookup,
+    udp_iterative_dht_lookup, udp_overlay_lookup,
 };
 
 /// Hash of a serialized external message.
@@ -218,6 +219,7 @@ pub struct MempoolScannerBuilder {
     session_factory: Option<OverlaySessionFactory>,
     discovery_lookup: Option<DiscoveryLookup>,
     typed_discovery_lookup: Option<TypedDiscoveryLookup>,
+    seed_discovery_lookup: Option<SeedDiscoveryLookup>,
     reconnect_attempts: u32,
     reconnect_backoff: Duration,
 }
@@ -244,6 +246,10 @@ impl fmt::Debug for MempoolScannerBuilder {
                 "typed_discovery_lookup",
                 &self.typed_discovery_lookup.is_some(),
             )
+            .field(
+                "seed_discovery_lookup",
+                &self.seed_discovery_lookup.is_some(),
+            )
             .field("reconnect_attempts", &self.reconnect_attempts)
             .field("reconnect_backoff", &self.reconnect_backoff)
             .finish()
@@ -268,6 +274,7 @@ impl Default for MempoolScannerBuilder {
             session_factory: None,
             discovery_lookup: None,
             typed_discovery_lookup: None,
+            seed_discovery_lookup: None,
             reconnect_attempts: 5,
             reconnect_backoff: Duration::from_secs(1),
         }
@@ -370,14 +377,14 @@ impl MempoolScannerBuilder {
         channel_timeout: Option<Duration>,
     ) -> Self {
         let discovery_timeout = self.discovery_timeout;
-        let session_factory =
-            overlay_factory(local_addr, local_keypair, self.overlay_id, channel_timeout);
+        let overlay = self.overlay_id;
+        let session_factory = overlay_factory(local_addr, local_keypair, overlay, channel_timeout);
         self.session_factory(session_factory)
-            .typed_discovery_lookup(udp_iterative_dht_lookup(
+            .seed_discovery_lookup(udp_overlay_lookup(
                 local_addr,
                 local_keypair,
+                overlay,
                 16,
-                2,
                 discovery_timeout,
             ))
     }
@@ -394,6 +401,7 @@ impl MempoolScannerBuilder {
         self.global_config_json = None;
         self.discovery_lookup = None;
         self.typed_discovery_lookup = None;
+        self.seed_discovery_lookup = None;
         let session_factory =
             overlay_factory(local_addr, local_keypair, self.overlay_id, channel_timeout);
         self.session_factory(session_factory)
@@ -401,6 +409,11 @@ impl MempoolScannerBuilder {
 
     pub fn typed_discovery_lookup(mut self, lookup: TypedDiscoveryLookup) -> Self {
         self.typed_discovery_lookup = Some(lookup);
+        self
+    }
+
+    pub fn seed_discovery_lookup(mut self, lookup: SeedDiscoveryLookup) -> Self {
+        self.seed_discovery_lookup = Some(lookup);
         self
     }
 
@@ -431,11 +444,17 @@ impl MempoolScannerBuilder {
         let seeds = self.resolve_bootstrap().await?;
         let discovery = DiscoveryConfig {
             overlay: self.overlay_id,
-            seeds,
+            seeds: seeds.clone(),
             lookup_timeout: self.discovery_timeout,
             max_records: 64,
         };
-        let peers = if let Some(lookup) = self.typed_discovery_lookup.clone() {
+        let peers = if let Some(lookup) = self.seed_discovery_lookup.clone() {
+            tokio::time::timeout(self.discovery_timeout, lookup(seeds.clone()))
+                .await
+                .ok()
+                .filter(|peers| !peers.is_empty())
+                .unwrap_or(seeds)
+        } else if let Some(lookup) = self.typed_discovery_lookup.clone() {
             discovery.discover_typed(move |seeds| lookup(seeds)).await
         } else if let Some(lookup) = self.discovery_lookup.clone() {
             discovery.discover_with(move |seeds| lookup(seeds)).await
@@ -586,6 +605,7 @@ pub struct MempoolScanner {
     event_tx: mpsc::Sender<MempoolEvent>,
     event_rx: Arc<Mutex<mpsc::Receiver<MempoolEvent>>>,
     dedup: Arc<Vec<Mutex<HashMap<MessageHash, Instant>>>>,
+    dedup_capacity: Mutex<()>,
     dedup_entries: AtomicU64,
     broadcast_peers: Arc<Mutex<Vec<Arc<dyn BroadcastPeer>>>>,
     accepted: AtomicU64,
@@ -616,6 +636,7 @@ impl MempoolScanner {
             event_tx,
             event_rx: Arc::new(Mutex::new(event_rx)),
             dedup: Arc::new(dedup),
+            dedup_capacity: Mutex::new(()),
             dedup_entries: AtomicU64::new(0),
             broadcast_peers: Arc::new(Mutex::new(Vec::new())),
             accepted: AtomicU64::new(0),
@@ -772,26 +793,29 @@ impl MempoolScanner {
         let hash: MessageHash = Sha256::digest(&raw_boc).into();
         let shard = usize::from(hash[0]) % self.dedup.len();
         let now = Instant::now();
-        let mut dedup = self.dedup[shard].lock().await;
-        let expired = dedup
-            .iter()
-            .filter(|(_, seen)| now.duration_since(**seen) >= self.config.dedup_ttl)
-            .count();
-        dedup.retain(|_, seen| now.duration_since(*seen) < self.config.dedup_ttl);
-        if expired != 0 {
-            self.dedup_entries
-                .fetch_sub(expired as u64, Ordering::Relaxed);
+        {
+            let _capacity_guard = self.dedup_capacity.lock().await;
+            let mut dedup = self.dedup[shard].lock().await;
+            let expired = dedup
+                .iter()
+                .filter(|(_, seen)| now.duration_since(**seen) >= self.config.dedup_ttl)
+                .count();
+            dedup.retain(|_, seen| now.duration_since(*seen) < self.config.dedup_ttl);
+            if expired != 0 {
+                self.dedup_entries
+                    .fetch_sub(expired as u64, Ordering::Relaxed);
+            }
+            if dedup.contains_key(&hash) {
+                self.duplicates.fetch_add(1, Ordering::Relaxed);
+                return Ok(None);
+            }
+            drop(dedup);
+            if self.dedup_entries.load(Ordering::Relaxed) >= self.config.max_dedup_entries as u64 {
+                self.evict_oldest().await;
+            }
+            self.dedup[shard].lock().await.insert(hash, now);
+            self.dedup_entries.fetch_add(1, Ordering::Relaxed);
         }
-        if dedup.contains_key(&hash) {
-            self.duplicates.fetch_add(1, Ordering::Relaxed);
-            return Ok(None);
-        }
-        drop(dedup);
-        if self.dedup_entries.load(Ordering::Relaxed) >= self.config.max_dedup_entries as u64 {
-            self.evict_oldest().await;
-        }
-        self.dedup[shard].lock().await.insert(hash, now);
-        self.dedup_entries.fetch_add(1, Ordering::Relaxed);
         self.accepted.fetch_add(1, Ordering::Relaxed);
         self.event_tx
             .send(MempoolEvent::ExternalMessage {

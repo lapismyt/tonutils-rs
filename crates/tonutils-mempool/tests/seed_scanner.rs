@@ -24,11 +24,8 @@ async fn explicit_seed_udp_overlay_fec_reaches_scanner_stream() {
         .unwrap()
         .local_addr()
         .unwrap();
-    let server_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
+    let server_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let server_addr = server_socket.local_addr().unwrap();
     let overlay = OverlayId::from_name(b"mempool-seed-test");
     let seed = SeedPeer {
         peer: PeerId::from_bytes(server_key.public_key.to_bytes()),
@@ -51,6 +48,7 @@ async fn explicit_seed_udp_overlay_fec_reaches_scanner_stream() {
         .start()
         .await
         .unwrap();
+    drop(server_socket);
     let mut events = Box::pin(stream);
     let mut sender =
         AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
