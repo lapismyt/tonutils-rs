@@ -632,6 +632,17 @@ impl MempoolScanner {
         })
     }
 
+    pub async fn run_handler<H, F>(&self, mut handler: H)
+    where
+        H: FnMut(MempoolEvent) -> F,
+        F: std::future::Future<Output = ()>,
+    {
+        let mut events = Box::pin(self.events());
+        while let Some(event) = futures::StreamExt::next(&mut events).await {
+            handler(event).await;
+        }
+    }
+
     pub async fn add_broadcast_peer(&self, peer: Arc<dyn BroadcastPeer>) {
         self.broadcast_peers.lock().await.push(peer);
     }

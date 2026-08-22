@@ -50,6 +50,42 @@ async fn publishes_once_for_duplicate_peers() {
     ));
 }
 
+#[tokio::test]
+async fn callback_handler_receives_external_event() {
+    let scanner = Arc::new(MempoolScanner::new(config()).unwrap());
+    let (sent, received) = tokio::sync::oneshot::channel();
+    let handler_scanner = scanner.clone();
+    let task = tokio::spawn(async move {
+        let mut sent = Some(sent);
+        handler_scanner
+            .run_handler(move |event| {
+                let sender = if matches!(event, MempoolEvent::ExternalMessage { .. }) {
+                    sent.take()
+                } else {
+                    None
+                };
+                async move {
+                    if let Some(sender) = sender {
+                        let _ = sender.send(());
+                    }
+                }
+            })
+            .await;
+    });
+    scanner
+        .ingest(
+            boc(8),
+            RoutingMetadata::new(OverlayId::from_name(b"test"), PeerId::from_bytes([1; 32])),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), received)
+        .await
+        .unwrap()
+        .unwrap();
+    task.abort();
+}
+
 #[test]
 fn event_exposes_lazy_message_without_decoding() {
     let event = MempoolEvent::ExternalMessage {
