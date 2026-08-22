@@ -115,6 +115,9 @@ fn configured_bytes(variable: &str) -> Option<[u8; 32]> {
         Err(std::env::VarError::NotPresent) => return None,
         Err(error) => panic!("failed to read {variable}: {error}"),
     };
+    if value.trim().is_empty() {
+        return None;
+    }
     let bytes =
         hex::decode(value).unwrap_or_else(|error| panic!("{variable} must be hex: {error}"));
     bytes
