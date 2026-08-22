@@ -48,6 +48,8 @@ level `direct_factory`, `channel_factory`, and `udp_dht_lookup` helpers remain
 available when applications need custom lifecycle policy.
 `native_udp_seeds_only` is the minimal mode: it connects only explicit
 `SeedPeer` values and does not perform DHT expansion.
+For this native connector, `SeedPeer.peer` must be the raw 32-byte Ed25519
+public key; `SeedPeer::from_public_key` avoids confusing it with an ADNL hash.
 Its overlay adapter accepts TON's `overlay.message` prefix followed by
 `tonNode.externalMessageBroadcast` and publishes the nested external BoC.
 The strict live test is enabled with repository variables

@@ -114,6 +114,10 @@ pub type ReconnectFactory = Arc<
 type SharedSession = Arc<tokio::sync::Mutex<Box<dyn OverlaySession>>>;
 
 /// A peer advertised by an explicit seed or a DHT lookup.
+///
+/// `peer` contains the 32-byte Ed25519 public key used by native ADNL
+/// connectors. It is kept in `PeerId` for compatibility with the transport-
+/// neutral overlay manager.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SeedPeer {
     pub peer: PeerId,
