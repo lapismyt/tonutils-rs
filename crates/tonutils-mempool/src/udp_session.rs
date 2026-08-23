@@ -180,6 +180,7 @@ async fn query_overlay_seed(
         address: address.to_string(),
     };
     let overlay_dht_key = dht_key_id(overlay_key, b"nodes");
+    let per_query_timeout = timeout.min(Duration::from_secs(5));
     log::debug!(
         "query_overlay_seed: seed={address} overlay_dht_key={}",
         overlay_dht_key.to_hex()
@@ -205,7 +206,7 @@ async fn query_overlay_seed(
                     address,
                     overlay_dht_key,
                     max_records,
-                    timeout,
+                    per_query_timeout,
                 )
                 .await?;
                 Some((seed, response))
@@ -246,7 +247,7 @@ async fn query_overlay_seed(
                             seed.address.parse().ok()?,
                             address_key,
                             1,
-                            timeout,
+                            per_query_timeout,
                         )
                         .await
                         else {

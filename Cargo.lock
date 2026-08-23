@@ -2413,6 +2413,7 @@ dependencies = [
  "futures",
  "hex",
  "log",
+ "pretty_env_logger",
  "rand 0.8.7",
  "raptorq",
  "reqwest",

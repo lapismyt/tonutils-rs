@@ -281,11 +281,25 @@ pub fn select_typed_dht_peers(
 ) -> Vec<SeedPeer> {
     let mut peers = HashSet::new();
     let mut selected = Vec::new();
+    let mut total = 0u32;
+    let mut filtered_valid = 0u32;
+    let mut filtered_key = 0u32;
     for record in records {
-        if selected.len() >= max_records || !record.is_valid(now) {
+        total += 1;
+        if selected.len() >= max_records {
+            break;
+        }
+        if !record.is_valid(now) {
+            filtered_valid += 1;
+            log::trace!(
+                "select_typed_dht_peers: skipping invalid DHT node version={} expire_at={}",
+                record.version,
+                record.addr_list.expire_at,
+            );
             continue;
         }
         let TlPublicKey::Ed25519 { key } = record.id else {
+            filtered_key += 1;
             continue;
         };
         let peer = PeerId::from_bytes(key.0);
@@ -308,6 +322,10 @@ pub fn select_typed_dht_peers(
             }
         }
     }
+    log::trace!(
+        "select_typed_dht_peers: total={total} selected={} filtered_valid={filtered_valid} filtered_key={filtered_key}",
+        selected.len(),
+    );
     selected
 }
 
@@ -887,7 +905,7 @@ mod tests {
             version: 1,
             signature: Vec::new(),
         };
-        let unsigned = tonutils_tl::tl::network::DhtNodeBoxed {
+        let unsigned = tonutils_tl::tl::network::DhtNode {
             id: node.id.clone(),
             addr_list: node.addr_list.clone(),
             version: node.version,
