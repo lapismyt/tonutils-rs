@@ -125,11 +125,11 @@ pub fn udp_iterative_dht_lookup(
 pub fn udp_overlay_lookup(
     local_addr: std::net::SocketAddr,
     local_keypair: KeyPair,
+    overlay: OverlayId,
     overlay_key: [u8; 32],
     max_records: usize,
     timeout: Duration,
 ) -> SeedDiscoveryLookup {
-    let overlay = OverlayId::from_name(&overlay_key);
     Arc::new(move |seeds: Vec<SeedPeer>| {
         Box::pin(async move {
             let responses = join_all(seeds.into_iter().filter_map(|seed| {

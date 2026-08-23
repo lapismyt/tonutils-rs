@@ -387,6 +387,7 @@ impl MempoolScannerBuilder {
             Some(overlay_key) => builder.seed_discovery_lookup(udp_overlay_lookup(
                 local_addr,
                 local_keypair,
+                overlay,
                 overlay_key,
                 16,
                 discovery_timeout,

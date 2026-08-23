@@ -155,13 +155,15 @@ async fn configured_seed_delivers_valid_external_message() {
         .unwrap_or(30);
     let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let overlay = OverlayId::from_bytes(overlay_bytes);
+    let dht_overlay_key: [u8; 32] = overlay_bytes;
     let (_scanner, manager, stream) = MempoolScannerBuilder::new()
         .download_config(false)
         .overlay_id(overlay)
         .config(MempoolConfig::default())
         .seeds(seeds)
         .reconnect_attempts(2)
-        .native_udp_seeds_only(
+        .dht_overlay_key(dht_overlay_key)
+        .native_udp(
             "0.0.0.0:0".parse().unwrap(),
             local_key,
             Some(Duration::from_secs(10)),
