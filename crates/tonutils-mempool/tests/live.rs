@@ -129,6 +129,7 @@ fn configured_bytes(variable: &str) -> Option<[u8; 32]> {
 #[tokio::test]
 #[ignore = "requires a configured live overlay seed and external-message traffic"]
 async fn configured_seed_delivers_valid_external_message() {
+    let _ = pretty_env_logger::try_init();
     let seeds = match std::env::var("TON_MEMPOOL_LIVE_SEEDS") {
         Ok(value) if !value.trim().is_empty() => parse_live_seeds(&value),
         Ok(_) | Err(std::env::VarError::NotPresent) => {
