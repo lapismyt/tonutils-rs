@@ -113,13 +113,17 @@ jobs:
                .id.key as $key |
                .addr_list.addrs[]? |
                select(.ip != null and .port != null) |
-               ($key | @base64d | @hex) + "@" +
-               ((.ip / 16777216 | floor | tostring) + "." +
-                ((.ip % 16777216) / 65536 | floor | tostring) + "." +
-                ((.ip % 65536) / 256 | floor | tostring) + "." +
-                (.ip % 256 | tostring)) + ":" + (.port | tostring)
-              ] | join(";")
-            '
+               (.ip + if .ip < 0 then 4294967296 else 0 end) as $ip |
+               $key + "@" +
+               (($ip / 16777216 | floor | tostring) + "." +
+                (($ip % 16777216) / 65536 | floor | tostring) + "." +
+                (($ip % 65536) / 256 | floor | tostring) + "." +
+                ($ip % 256 | tostring)) + ":" + (.port | tostring)
+              ] | join("\n")
+            ' | while IFS='@' read -r b64key rest; do
+              hexkey=$(printf '%s' "$b64key" | base64 -d | xxd -p | tr -d ' \n')
+              printf '%s@%s\n' "$hexkey" "$rest"
+            done | paste -sd ';'
           )
           if [ -n "$seeds" ]; then
             echo "TON_MEMPOOL_LIVE_SEEDS=$seeds" >> "$GITHUB_ENV"
