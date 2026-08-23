@@ -53,7 +53,7 @@ async fn probe_dht_from_config(variable: &str, allow_unavailable: bool) {
         extract_dht_addresses(&json).expect("global config must contain DHT static nodes");
     let local = KeyPair::generate(&mut rand::rngs::OsRng);
     let mut last_error = None;
-    for candidate in candidates.into_iter().take(8) {
+    for candidate in candidates.into_iter().take(16) {
         let Some(public_key) = candidate.public_key else {
             continue;
         };
@@ -75,7 +75,7 @@ async fn probe_dht_from_config(variable: &str, allow_unavailable: bool) {
             }
         };
         match session
-            .dht_find_node(Int256::random(), 8, Duration::from_secs(2))
+            .dht_find_node(Int256::random(), 8, Duration::from_secs(5))
             .await
         {
             Ok(nodes) if !nodes.nodes.is_empty() => return,

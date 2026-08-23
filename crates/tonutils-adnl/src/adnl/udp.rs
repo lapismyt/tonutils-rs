@@ -610,13 +610,27 @@ impl AdnlUdpSession {
                         .unwrap_or_default()
                         .as_secs()
                         .min(i32::MAX as u64) as i32;
-                    return Ok(DhtNodesBoxed {
-                        nodes: nodes
-                            .nodes
-                            .into_iter()
-                            .filter(|node| node.is_valid(now))
-                            .collect(),
-                    });
+                    let total = nodes.nodes.len();
+                    let mut selected = Vec::with_capacity(total);
+                    for node in &nodes.nodes {
+                        if node.is_valid(now) {
+                            selected.push(node.clone());
+                        } else {
+                            log::trace!(
+                                "dht_find_node: filtered node version={} expire_at={} addrs={} sig_len={}",
+                                node.version,
+                                node.addr_list.expire_at,
+                                node.addr_list.addrs.len(),
+                                node.signature.len(),
+                            );
+                        }
+                    }
+                    log::debug!(
+                        "dht_find_node: received {total} nodes, {}/{} passed is_valid",
+                        selected.len(),
+                        total,
+                    );
+                    return Ok(DhtNodesBoxed { nodes: selected });
                 }
             }
         }
