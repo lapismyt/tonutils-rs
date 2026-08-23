@@ -556,11 +556,13 @@ impl AdnlUdpOverlaySession {
             fec: HashMap::new(),
             last_keepalive: Instant::now(),
         };
-        session
+        if let Err(error) = session
             .session
             .overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()), timeout)
             .await
-            .map_err(|error| error.to_string())?;
+        {
+            log::debug!("overlay handshake skipped for {peer:?}: {error}");
+        }
         Ok(session)
     }
 }
