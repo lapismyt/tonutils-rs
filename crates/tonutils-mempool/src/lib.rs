@@ -268,7 +268,7 @@ impl Default for MempoolScannerBuilder {
             global_config_json: None,
             config: MempoolConfig::default(),
             overlay: OverlayConfig::default(),
-            overlay_id: OverlayId::from_name(b"mempool"),
+            overlay_id: OverlayId::MAINNET_BASECHAIN_OVERLAY_ID,
             bootstrap_timeout: Duration::from_secs(10),
             discovery_timeout: Duration::from_secs(5),
             queue_policy: QueuePolicy::Backpressure,

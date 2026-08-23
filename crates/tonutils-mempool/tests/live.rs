@@ -136,16 +136,10 @@ async fn configured_seed_delivers_valid_external_message() {
                 Ok(value) => value
                     .parse()
                     .expect("TON_MEMPOOL_LIVE_SEED must be IP:port"),
-                Err(std::env::VarError::NotPresent) => {
-                    eprintln!("skipping: TON_MEMPOOL_LIVE_SEED is not configured");
-                    return;
-                }
-                Err(error) => panic!("failed to read TON_MEMPOOL_LIVE_SEED: {error}"),
+                Err(error) => panic!("TON_MEMPOOL_LIVE_SEED must be set to IP:port: {error}"),
             };
-            let Some(peer_key) = configured_bytes("TON_MEMPOOL_LIVE_PEER_KEY") else {
-                eprintln!("skipping: TON_MEMPOOL_LIVE_PEER_KEY is not configured");
-                return;
-            };
+            let peer_key = configured_bytes("TON_MEMPOOL_LIVE_PEER_KEY")
+                .expect("TON_MEMPOOL_LIVE_PEER_KEY must be set to 32-byte hex");
             vec![SeedPeer {
                 peer: PeerId::from_bytes(peer_key),
                 address: seed_address.to_string(),
@@ -153,10 +147,8 @@ async fn configured_seed_delivers_valid_external_message() {
         }
         Err(error) => panic!("failed to read TON_MEMPOOL_LIVE_SEEDS: {error}"),
     };
-    let Some(overlay_bytes) = configured_bytes("TON_MEMPOOL_LIVE_OVERLAY_ID") else {
-        eprintln!("skipping: TON_MEMPOOL_LIVE_OVERLAY_ID is not configured");
-        return;
-    };
+    let overlay_bytes = configured_bytes("TON_MEMPOOL_LIVE_OVERLAY_ID")
+        .expect("TON_MEMPOOL_LIVE_OVERLAY_ID must be set to 32-byte hex");
     let timeout = std::env::var("TON_MEMPOOL_LIVE_TIMEOUT_SECS")
         .ok()
         .and_then(|value| value.parse().ok())

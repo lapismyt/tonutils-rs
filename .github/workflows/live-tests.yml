@@ -105,11 +105,33 @@ jobs:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
         run: cargo test -p tonutils-mempool --test live testnet_dht_seed_answers_find_node -- --ignored --nocapture
 
+      - name: Derive mempool live seeds from global config
+        run: |
+          seeds=$(
+            echo "$TON_GLOBAL_CONFIG_JSON" | jq -r '
+              [.dht.static_nodes.nodes[]? |
+               .id.key as $key |
+               .addr_list.addrs[]? |
+               select(.ip != null and .port != null) |
+               ($key | @base64d | @hex) + "@" +
+               ((.ip / 16777216 | floor | tostring) + "." +
+                ((.ip % 16777216) / 65536 | floor | tostring) + "." +
+                ((.ip % 65536) / 256 | floor | tostring) + "." +
+                (.ip % 256 | tostring)) + ":" + (.port | tostring)
+              ] | join(";")
+            '
+          )
+          if [ -n "$seeds" ]; then
+            echo "TON_MEMPOOL_LIVE_SEEDS=$seeds" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set default mempool overlay ID
+        run: |
+          if [ -z "${TON_MEMPOOL_LIVE_OVERLAY_ID:-}" ]; then
+            echo "TON_MEMPOOL_LIVE_OVERLAY_ID=e75e650c6ddff59891a3b3362aa12a5c7911aeefdc1b2baa2f6601e452cccc06" >> "$GITHUB_ENV"
+          fi
+
       - name: Run configured seed-only mempool live test
         env:
-          TON_MEMPOOL_LIVE_SEEDS: ${{ vars.TON_MEMPOOL_LIVE_SEEDS }}
-          TON_MEMPOOL_LIVE_SEED: ${{ vars.TON_MEMPOOL_LIVE_SEED }}
-          TON_MEMPOOL_LIVE_PEER_KEY: ${{ vars.TON_MEMPOOL_LIVE_PEER_KEY }}
-          TON_MEMPOOL_LIVE_OVERLAY_ID: ${{ vars.TON_MEMPOOL_LIVE_OVERLAY_ID }}
           TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS }}
         run: cargo test -p tonutils-mempool --test live configured_seed_delivers_valid_external_message -- --ignored --nocapture

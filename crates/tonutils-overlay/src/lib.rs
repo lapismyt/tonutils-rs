@@ -55,6 +55,17 @@ impl OverlayId {
         ));
         Self::from_name(&shard_id)
     }
+
+    /// Mainnet basechain (workchain 0) overlay ID.
+    ///
+    /// Computed as `SHA256(TL(pub.overlay { name: SHA256(TL(tonNode.shardPublicOverlayId
+    /// { 0, MIN_SHARD, MAINNET_ZERO_STATE_HASH })) }))` where
+    /// `MAINNET_ZERO_STATE_HASH = 5e994fcf4d425c0a6ce6a792594b7173205f740a39cd56f537defd28b48a0f6e`.
+    pub const MAINNET_BASECHAIN_OVERLAY_ID: Self = Self([
+        0xe7, 0x5e, 0x65, 0x0c, 0x6d, 0xdf, 0xf5, 0x98, 0x91, 0xa3, 0xb3, 0x36, 0x2a, 0xa1, 0x2a,
+        0x5c, 0x79, 0x11, 0xae, 0xef, 0xdc, 0x1b, 0x2b, 0xaa, 0x2f, 0x66, 0x01, 0xe4, 0x52, 0xcc,
+        0xcc, 0x06,
+    ]);
 }
 
 impl fmt::Display for OverlayId {

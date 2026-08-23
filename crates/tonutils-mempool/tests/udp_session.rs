@@ -32,7 +32,7 @@ async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
     )
     .await
     .unwrap();
-    let overlay = OverlayId::from_name(b"mempool");
+    let overlay = OverlayId::MAINNET_BASECHAIN_OVERLAY_ID;
     let adapter = AdnlUdpOverlaySession::connect_for_overlay(
         PeerId::from_bytes([3; 32]),
         overlay,
@@ -52,7 +52,7 @@ async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
     );
     let manager = tonutils_overlay::PeerManager::with_overlay(
         OverlayConfig::default(),
-        OverlayId::from_name(b"mempool"),
+        OverlayId::MAINNET_BASECHAIN_OVERLAY_ID,
     )
     .unwrap();
     manager.add_session(Box::new(adapter)).await;

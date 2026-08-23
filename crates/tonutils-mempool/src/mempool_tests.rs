@@ -132,7 +132,7 @@ async fn builder_merges_and_deduplicates_explicit_seeds() {
         .ingest(
             vec![0xb5, 0xee, 0x9c, 0x72, 1],
             RoutingMetadata::new(
-                OverlayId::from_name(b"mempool"),
+                OverlayId::MAINNET_BASECHAIN_OVERLAY_ID,
                 PeerId::from_bytes([9; 32]),
             ),
         )
