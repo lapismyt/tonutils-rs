@@ -180,6 +180,10 @@ async fn query_overlay_seed(
         address: address.to_string(),
     };
     let overlay_dht_key = dht_key_id(overlay_key, b"nodes");
+    log::debug!(
+        "query_overlay_seed: seed={address} overlay_dht_key={}",
+        overlay_dht_key.to_hex()
+    );
     let mut frontier = vec![initial];
     let mut seen = std::collections::HashSet::new();
     let now = std::time::SystemTime::now()
@@ -214,9 +218,19 @@ async fn query_overlay_seed(
             match response {
                 DhtValueResult::Found { value } => {
                     let nodes: OverlayNodesBoxed = tl_proto::deserialize(&value.value).ok()?;
+                    log::debug!(
+                        "query_overlay_seed: found {} overlay nodes from {address}",
+                        nodes.nodes.len()
+                    );
                     let mut result = Vec::new();
                     for node in nodes.nodes {
-                        if result.len() >= max_records || !valid_overlay_node(&node, overlay, now) {
+                        if !valid_overlay_node(&node, overlay, now) {
+                            log::debug!(
+                                "query_overlay_seed: skipping node (overlay mismatch or expired)"
+                            );
+                            continue;
+                        }
+                        if result.len() >= max_records {
                             continue;
                         }
                         let TlPublicKey::Ed25519 { key } = node.id else {
@@ -275,6 +289,10 @@ async fn query_overlay_seed(
                     }
                 }
                 DhtValueResult::NotFound { nodes } => {
+                    log::debug!(
+                        "query_overlay_seed: not found, got {} closer nodes from {address}",
+                        nodes.nodes.len()
+                    );
                     for seed in
                         tonutils_overlay::select_typed_dht_peers(nodes.nodes, max_records, now)
                     {
@@ -287,9 +305,11 @@ async fn query_overlay_seed(
         }
         frontier = next;
         if frontier.is_empty() {
+            log::debug!("query_overlay_seed: frontier exhausted at {address}");
             break;
         }
     }
+    log::debug!("query_overlay_seed: returning None for {address}");
     None
 }
 

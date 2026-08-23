@@ -484,11 +484,27 @@ impl MempoolScannerBuilder {
             max_records: 64,
         };
         let peers = if let Some(lookup) = self.seed_discovery_lookup.clone() {
-            tokio::time::timeout(self.discovery_timeout, lookup(seeds.clone()))
+            log::debug!(
+                "seed_discovery_lookup: starting with {} seeds, timeout={:?}",
+                seeds.len(),
+                self.discovery_timeout
+            );
+            let result = tokio::time::timeout(self.discovery_timeout, lookup(seeds.clone()))
                 .await
                 .ok()
-                .filter(|peers| !peers.is_empty())
-                .unwrap_or(seeds)
+                .filter(|peers| !peers.is_empty());
+            match &result {
+                Some(peers) => {
+                    log::debug!("seed_discovery_lookup: found {} overlay peers", peers.len());
+                }
+                None => {
+                    log::debug!(
+                        "seed_discovery_lookup: timed out or empty, falling back to {} raw seeds",
+                        seeds.len()
+                    );
+                }
+            }
+            result.unwrap_or(seeds)
         } else if let Some(lookup) = self.typed_discovery_lookup.clone() {
             discovery.discover_typed(move |seeds| lookup(seeds)).await
         } else if let Some(lookup) = self.discovery_lookup.clone() {
