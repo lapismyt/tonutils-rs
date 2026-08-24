@@ -489,15 +489,28 @@ impl MempoolScannerBuilder {
                 seeds.len(),
                 self.discovery_timeout
             );
+            eprintln!(
+                "mempool::start: seed_discovery_lookup starting with {} seeds, timeout={:?}",
+                seeds.len(),
+                self.discovery_timeout
+            );
             let result = tokio::time::timeout(self.discovery_timeout, lookup(seeds.clone()))
                 .await
                 .ok()
                 .filter(|peers| !peers.is_empty());
             match &result {
                 Some(peers) => {
+                    eprintln!(
+                        "mempool::start: seed_discovery_lookup found {} overlay peers",
+                        peers.len()
+                    );
                     log::debug!("seed_discovery_lookup: found {} overlay peers", peers.len());
                 }
                 None => {
+                    eprintln!(
+                        "mempool::start: seed_discovery_lookup timed out or empty, falling back to {} raw seeds",
+                        seeds.len()
+                    );
                     log::debug!(
                         "seed_discovery_lookup: timed out or empty, falling back to {} raw seeds",
                         seeds.len()
@@ -515,6 +528,11 @@ impl MempoolScannerBuilder {
         if peers.is_empty() {
             return Err(MempoolError::NoBootstrapPeers);
         }
+        eprintln!(
+            "mempool::start: {} peers from discovery, attempting {} session(s)",
+            peers.len(),
+            peers.len()
+        );
         let manager = PeerManager::with_overlay(self.overlay, self.overlay_id)
             .map_err(|error| MempoolError::Overlay(error.to_string()))?;
         let scanner = Arc::new(MempoolScanner::new(self.config)?);
@@ -570,7 +588,10 @@ impl MempoolScannerBuilder {
                             .await;
                         connected += 1;
                     }
-                    Err(error) => log::debug!("bootstrap session failed: {error}"),
+                    Err(error) => {
+                        eprintln!("bootstrap session failed: {error}");
+                        log::debug!("bootstrap session failed: {error}");
+                    }
                 }
             }
             if connected == 0 {

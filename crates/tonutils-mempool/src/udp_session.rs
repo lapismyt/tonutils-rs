@@ -152,6 +152,11 @@ pub fn udp_overlay_lookup(
             for peers in responses.into_iter().flatten() {
                 for peer in peers {
                     if seen.insert((peer.peer, peer.address.clone())) {
+                        eprintln!(
+                            "udp_overlay_lookup: discovered peer {} at {}",
+                            hex::encode(peer.peer.as_bytes()),
+                            peer.address
+                        );
                         result.push(peer);
                         if result.len() >= max_records {
                             return result;
@@ -159,6 +164,10 @@ pub fn udp_overlay_lookup(
                     }
                 }
             }
+            eprintln!(
+                "udp_overlay_lookup: returning {} peers from discovery",
+                result.len()
+            );
             result
         })
     })
@@ -182,6 +191,10 @@ async fn query_overlay_seed(
     let overlay_dht_key = dht_key_id(overlay_key, b"nodes");
     let per_query_timeout = timeout.min(Duration::from_secs(5));
     log::debug!(
+        "query_overlay_seed: seed={address} overlay_dht_key={}",
+        overlay_dht_key.to_hex()
+    );
+    eprintln!(
         "query_overlay_seed: seed={address} overlay_dht_key={}",
         overlay_dht_key.to_hex()
     );
@@ -311,6 +324,7 @@ async fn query_overlay_seed(
         }
     }
     log::debug!("query_overlay_seed: returning None for {address}");
+    eprintln!("query_overlay_seed: returning None for {address}");
     None
 }
 
