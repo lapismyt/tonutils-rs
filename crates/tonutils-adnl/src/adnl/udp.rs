@@ -694,8 +694,11 @@ impl AdnlUdpSession {
                 } = message
                     && id == query_id
                 {
-                    let prefix: String =
-                        answer.iter().take(16).map(|b| format!("{b:02x}")).collect();
+                    let mut prefix = String::with_capacity(32);
+                    for b in answer.iter().take(16) {
+                        use std::fmt::Write;
+                        let _ = write!(prefix, "{b:02x}");
+                    }
                     eprintln!(
                         "dht_find_value: got answer len={} prefix={prefix}",
                         answer.len()

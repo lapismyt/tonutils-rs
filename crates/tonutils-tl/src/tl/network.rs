@@ -537,7 +537,7 @@ pub enum DhtQuery {
 pub enum DhtValueResult {
     /// dht.valueNotFound nodes:dht.nodes = dht.ValueResult;
     #[tl(id = 0xa2620568)]
-    NotFound { nodes: DhtNodesBoxed },
+    NotFound { nodes: DhtNodes },
     /// dht.valueFound value:dht.value = dht.ValueResult;
     #[tl(id = 0xe6e9fbec)]
     Found { value: DhtValue },
