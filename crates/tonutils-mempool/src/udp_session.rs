@@ -152,7 +152,7 @@ pub fn udp_overlay_lookup(
             for peers in responses.into_iter().flatten() {
                 for peer in peers {
                     if seen.insert((peer.peer, peer.address.clone())) {
-                        eprintln!(
+                        log::debug!(
                             "udp_overlay_lookup: discovered peer {} at {}",
                             hex::encode(peer.peer.as_bytes()),
                             peer.address
@@ -164,7 +164,7 @@ pub fn udp_overlay_lookup(
                     }
                 }
             }
-            eprintln!(
+            log::debug!(
                 "udp_overlay_lookup: returning {} peers from discovery",
                 result.len()
             );
@@ -194,11 +194,7 @@ async fn query_overlay_seed(
         "query_overlay_seed: seed={address} overlay_dht_key={}",
         overlay_dht_key.to_hex()
     );
-    eprintln!(
-        "query_overlay_seed: seed={address} overlay_dht_key={}",
-        overlay_dht_key.to_hex()
-    );
-    let mut frontier = vec![initial];
+    let mut frontier = vec![initial.clone()];
     let mut seen = std::collections::HashSet::new();
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -323,9 +319,121 @@ async fn query_overlay_seed(
             break;
         }
     }
+
+    log::debug!(
+        "query_overlay_seed: DHT lookup missed, falling back to overlay getRandomPeers at {address}"
+    );
+    if let Some(fallback) = query_overlay_random_peers(
+        local_addr,
+        local_keypair,
+        remote,
+        address,
+        overlay,
+        per_query_timeout,
+    )
+    .await
+    {
+        return Some(fallback);
+    }
+
     log::debug!("query_overlay_seed: returning None for {address}");
-    eprintln!("query_overlay_seed: returning None for {address}");
     None
+}
+
+#[allow(clippy::large_types_passed_by_value)]
+async fn query_overlay_random_peers(
+    local_addr: std::net::SocketAddr,
+    local_keypair: KeyPair,
+    remote: AdnlPublicKey,
+    address: std::net::SocketAddr,
+    overlay: OverlayId,
+    timeout: Duration,
+) -> Option<Vec<SeedPeer>> {
+    let mut session =
+        match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
+            Ok(session) => session,
+            Err(error) => {
+                log::debug!("query_overlay_random_peers: connect to {address} failed: {error}");
+                return None;
+            }
+        };
+    let overlay_int = tonutils_tl::Int256(overlay.as_bytes());
+    let nodes = match session.overlay_get_random_peers(overlay_int, timeout).await {
+        Ok(nodes) => nodes,
+        Err(error) => {
+            log::debug!(
+                "query_overlay_random_peers: overlay_get_random_peers to {address} failed: {error}"
+            );
+            return None;
+        }
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .min(i32::MAX as u64) as i32;
+    let mut result = Vec::new();
+    for node in nodes.nodes {
+        if !valid_overlay_node(&node, overlay, now) {
+            continue;
+        }
+        let TlPublicKey::Ed25519 { key } = node.id else {
+            continue;
+        };
+        let overlay_public = AdnlPublicKey::from_bytes(key.0)?;
+        let adnl_id = AdnlAddress::from(&overlay_public).to_bytes();
+        let address_key = dht_key_id(adnl_id, b"address");
+        let Some(DhtValueResult::Found { value }) = query_dht_value_seed(
+            local_addr,
+            local_keypair,
+            remote,
+            address,
+            address_key,
+            1,
+            timeout,
+        )
+        .await
+        else {
+            continue;
+        };
+        let address_list: AddressListBoxed = tl_proto::deserialize(&value.value).ok()?;
+        let Some((peer, resolved_address)) = address_list.addrs.into_iter().find_map(|address| {
+            let Address::Udp { ip, port } = address else {
+                return None;
+            };
+            let port = u16::try_from(port).ok()?;
+            if port == 0 || ip == 0 {
+                return None;
+            }
+            let TlPublicKey::Ed25519 { key } = &value.key.id else {
+                return None;
+            };
+            Some((
+                PeerId::from_bytes(key.0),
+                format!("{}:{port}", std::net::Ipv4Addr::from(ip.cast_unsigned())),
+            ))
+        }) else {
+            continue;
+        };
+        if result
+            .iter()
+            .all(|candidate: &SeedPeer| candidate.peer != peer)
+        {
+            result.push(SeedPeer {
+                peer,
+                address: resolved_address,
+            });
+        }
+    }
+    log::debug!(
+        "query_overlay_random_peers: found {} peers from {address}",
+        result.len()
+    );
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
 }
 
 #[allow(clippy::large_types_passed_by_value)]
@@ -342,7 +450,7 @@ async fn query_dht_value_seed(
         match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
             Ok(session) => session,
             Err(error) => {
-                eprintln!("query_dht_value_seed: connect to {address} failed: {error}");
+                log::debug!("query_dht_value_seed: connect to {address} failed: {error}");
                 return None;
             }
         };
@@ -352,7 +460,7 @@ async fn query_dht_value_seed(
     {
         Ok(result) => Some(result),
         Err(error) => {
-            eprintln!("query_dht_value_seed: dht_find_value to {address} failed: {error}");
+            log::debug!("query_dht_value_seed: dht_find_value to {address} failed: {error}");
             None
         }
     }

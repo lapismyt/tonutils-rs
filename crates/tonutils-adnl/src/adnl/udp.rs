@@ -596,46 +596,22 @@ impl AdnlUdpSession {
                 } = message
                     && id == query_id
                 {
-                    let nodes: DhtNodesBoxed = tl_proto::deserialize(&answer).map_err(|error| {
-                        let prefix = answer
-                            .iter()
-                            .take(32)
-                            .map(|byte| format!("{byte:02x}"))
-                            .collect::<Vec<_>>()
-                            .join("");
-                        eprintln!(
-                            "dht_find_node: deserialize error: {error} len={} answer={prefix}",
-                            answer.len()
-                        );
-                        AdnlError::MalformedPacket(format!(
-                            "{error} len={} answer={prefix}",
-                            answer.len()
-                        ))
-                    })?;
+                    let nodes: DhtNodesBoxed = tl_proto::deserialize(&answer)
+                        .map_err(|error| AdnlError::MalformedPacket(error.to_string()))?;
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs()
                         .min(i32::MAX as u64) as i32;
                     let total = nodes.nodes.len();
-                    let mut selected = Vec::with_capacity(total);
-                    for node in &nodes.nodes {
-                        if node.is_valid(now) {
-                            selected.push(node.clone());
-                        } else {
-                            eprintln!(
-                                "dht_find_node: filtered node version={} expire_at={} addrs={} sig_len={}",
-                                node.version,
-                                node.addr_list.expire_at,
-                                node.addr_list.addrs.len(),
-                                node.signature.len(),
-                            );
-                        }
-                    }
-                    eprintln!(
-                        "dht_find_node: received {total} raw nodes, {}/{} passed is_valid",
+                    let selected: Vec<_> = nodes
+                        .nodes
+                        .into_iter()
+                        .filter(|node| node.is_valid(now))
+                        .collect();
+                    log::debug!(
+                        "dht_find_node: received {total} raw nodes, {} passed is_valid",
                         selected.len(),
-                        total,
                     );
                     return Ok(DhtNodesBoxed { nodes: selected });
                 }
@@ -694,19 +670,8 @@ impl AdnlUdpSession {
                 } = message
                     && id == query_id
                 {
-                    let mut prefix = String::with_capacity(32);
-                    for b in answer.iter().take(16) {
-                        use std::fmt::Write;
-                        let _ = write!(prefix, "{b:02x}");
-                    }
-                    eprintln!(
-                        "dht_find_value: got answer len={} prefix={prefix}",
-                        answer.len()
-                    );
-                    return tl_proto::deserialize(&answer).map_err(|error| {
-                        eprintln!("dht_find_value: deserialize error: {error}");
-                        AdnlError::MalformedPacket(error.to_string())
-                    });
+                    return tl_proto::deserialize(&answer)
+                        .map_err(|error| AdnlError::MalformedPacket(error.to_string()));
                 }
             }
         }

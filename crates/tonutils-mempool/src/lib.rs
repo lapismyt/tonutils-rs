@@ -489,26 +489,17 @@ impl MempoolScannerBuilder {
                 seeds.len(),
                 self.discovery_timeout
             );
-            eprintln!(
-                "mempool::start: seed_discovery_lookup starting with {} seeds, timeout={:?}",
-                seeds.len(),
-                self.discovery_timeout
-            );
             let result = tokio::time::timeout(self.discovery_timeout, lookup(seeds.clone()))
                 .await
                 .ok()
                 .filter(|peers| !peers.is_empty());
             match &result {
                 Some(peers) => {
-                    eprintln!(
-                        "mempool::start: seed_discovery_lookup found {} overlay peers",
-                        peers.len()
-                    );
                     log::debug!("seed_discovery_lookup: found {} overlay peers", peers.len());
                 }
                 None => {
-                    eprintln!(
-                        "mempool::start: seed_discovery_lookup timed out or empty, falling back to {} raw seeds",
+                    log::debug!(
+                        "seed_discovery_lookup: timed out or empty, falling back to {} raw seeds",
                         seeds.len()
                     );
                     log::debug!(
@@ -528,7 +519,7 @@ impl MempoolScannerBuilder {
         if peers.is_empty() {
             return Err(MempoolError::NoBootstrapPeers);
         }
-        eprintln!(
+        log::info!(
             "mempool::start: {} peers from discovery, attempting {} session(s)",
             peers.len(),
             peers.len()
@@ -589,7 +580,6 @@ impl MempoolScannerBuilder {
                         connected += 1;
                     }
                     Err(error) => {
-                        eprintln!("bootstrap session failed: {error}");
                         log::debug!("bootstrap session failed: {error}");
                     }
                 }
