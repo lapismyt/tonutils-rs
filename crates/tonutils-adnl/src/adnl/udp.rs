@@ -599,11 +599,18 @@ impl AdnlUdpSession {
                     let nodes: DhtNodesBoxed = tl_proto::deserialize(&answer).map_err(|error| {
                         let prefix = answer
                             .iter()
-                            .take(16)
+                            .take(32)
                             .map(|byte| format!("{byte:02x}"))
                             .collect::<Vec<_>>()
                             .join("");
-                        AdnlError::MalformedPacket(format!("{error} (answer={prefix})"))
+                        eprintln!(
+                            "dht_find_node: deserialize error: {error} len={} answer={prefix}",
+                            answer.len()
+                        );
+                        AdnlError::MalformedPacket(format!(
+                            "{error} len={} answer={prefix}",
+                            answer.len()
+                        ))
                     })?;
                     let now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -616,7 +623,7 @@ impl AdnlUdpSession {
                         if node.is_valid(now) {
                             selected.push(node.clone());
                         } else {
-                            log::trace!(
+                            eprintln!(
                                 "dht_find_node: filtered node version={} expire_at={} addrs={} sig_len={}",
                                 node.version,
                                 node.addr_list.expire_at,
@@ -625,8 +632,8 @@ impl AdnlUdpSession {
                             );
                         }
                     }
-                    log::debug!(
-                        "dht_find_node: received {total} nodes, {}/{} passed is_valid",
+                    eprintln!(
+                        "dht_find_node: received {total} raw nodes, {}/{} passed is_valid",
                         selected.len(),
                         total,
                     );
