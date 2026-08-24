@@ -198,7 +198,7 @@ impl DhtNode {
         let Ok(signature) = Signature::from_slice(signature_bytes) else {
             return false;
         };
-        let unsigned = DhtNode {
+        let unsigned = DhtNodeBoxed {
             id: self.id.clone(),
             addr_list: self.addr_list.clone(),
             version: self.version,

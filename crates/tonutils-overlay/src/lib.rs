@@ -905,7 +905,7 @@ mod tests {
             version: 1,
             signature: Vec::new(),
         };
-        let unsigned = tonutils_tl::tl::network::DhtNode {
+        let unsigned = tonutils_tl::tl::network::DhtNodeBoxed {
             id: node.id.clone(),
             addr_list: node.addr_list.clone(),
             version: node.version,
