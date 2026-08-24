@@ -338,13 +338,24 @@ async fn query_dht_value_seed(
     count: usize,
     timeout: Duration,
 ) -> Option<DhtValueResult> {
-    let mut session = AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
-        .await
-        .ok()?;
-    session
+    let mut session =
+        match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
+            Ok(session) => session,
+            Err(error) => {
+                eprintln!("query_dht_value_seed: connect to {address} failed: {error}");
+                return None;
+            }
+        };
+    match session
         .dht_find_value(key, count.min(i32::MAX as usize) as i32, timeout)
         .await
-        .ok()
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            eprintln!("query_dht_value_seed: dht_find_value to {address} failed: {error}");
+            None
+        }
+    }
 }
 
 fn valid_overlay_node(node: &OverlayNode, overlay: OverlayId, now: i32) -> bool {

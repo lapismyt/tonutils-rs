@@ -274,6 +274,7 @@ pub type DhtLookup = DhtMessage;
 
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0x281d4e05)]
 pub struct DhtKeyDescription {
     /// dht.keyDescription key:dht.key id:PublicKey update_rule:dht.UpdateRule
     /// signature:bytes = dht.KeyDescription;
@@ -285,6 +286,7 @@ pub struct DhtKeyDescription {
 
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0x90ad27cb)]
 pub struct DhtValue {
     /// dht.value key:dht.keyDescription value:bytes ttl:int signature:bytes = dht.Value;
     pub key: DhtKeyDescription,
@@ -535,7 +537,7 @@ pub enum DhtQuery {
 pub enum DhtValueResult {
     /// dht.valueNotFound nodes:dht.nodes = dht.ValueResult;
     #[tl(id = 0xa2620568)]
-    NotFound { nodes: DhtNodes },
+    NotFound { nodes: DhtNodesBoxed },
     /// dht.valueFound value:dht.value = dht.ValueResult;
     #[tl(id = 0xe6e9fbec)]
     Found { value: DhtValue },
