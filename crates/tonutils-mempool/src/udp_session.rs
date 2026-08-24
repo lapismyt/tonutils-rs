@@ -323,6 +323,9 @@ async fn query_overlay_seed(
     log::debug!(
         "query_overlay_seed: DHT lookup missed, falling back to overlay getRandomPeers at {address}"
     );
+    eprintln!(
+        "query_overlay_seed: DHT lookup missed, falling back to overlay_get_random_peers at {address}"
+    );
     if let Some(fallback) = query_overlay_random_peers(
         local_addr,
         local_keypair,
@@ -333,10 +336,19 @@ async fn query_overlay_seed(
     )
     .await
     {
+        log::debug!(
+            "query_overlay_seed: overlay getRandomPeers fallback found {} peers at {address}",
+            fallback.len()
+        );
+        eprintln!(
+            "query_overlay_seed: overlay_get_random_peers fallback found {} peers at {address}",
+            fallback.len()
+        );
         return Some(fallback);
     }
 
     log::debug!("query_overlay_seed: returning None for {address}");
+    eprintln!("query_overlay_seed: returning None for {address}");
     None
 }
 
@@ -354,6 +366,7 @@ async fn query_overlay_random_peers(
             Ok(session) => session,
             Err(error) => {
                 log::debug!("query_overlay_random_peers: connect to {address} failed: {error}");
+                eprintln!("query_overlay_random_peers: connect to {address} failed: {error}");
                 return None;
             }
         };
@@ -364,6 +377,9 @@ async fn query_overlay_random_peers(
             log::debug!(
                 "query_overlay_random_peers: overlay_get_random_peers to {address} failed: {error}"
             );
+            eprintln!(
+                "query_overlay_random_peers: overlay_get_random_peers to {address} failed: {error}"
+            );
             return None;
         }
     };
@@ -372,6 +388,8 @@ async fn query_overlay_random_peers(
         .unwrap_or_default()
         .as_secs()
         .min(i32::MAX as u64) as i32;
+    let node_count = nodes.nodes.len();
+    eprintln!("query_overlay_random_peers: got {node_count} overlay nodes from {address}");
     let mut result = Vec::new();
     for node in nodes.nodes {
         if !valid_overlay_node(&node, overlay, now) {
