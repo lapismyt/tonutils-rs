@@ -694,8 +694,16 @@ impl AdnlUdpSession {
                 } = message
                     && id == query_id
                 {
-                    return tl_proto::deserialize(&answer)
-                        .map_err(|error| AdnlError::MalformedPacket(error.to_string()));
+                    let prefix: String =
+                        answer.iter().take(16).map(|b| format!("{b:02x}")).collect();
+                    eprintln!(
+                        "dht_find_value: got answer len={} prefix={prefix}",
+                        answer.len()
+                    );
+                    return tl_proto::deserialize(&answer).map_err(|error| {
+                        eprintln!("dht_find_value: deserialize error: {error}");
+                        AdnlError::MalformedPacket(error.to_string())
+                    });
                 }
             }
         }
