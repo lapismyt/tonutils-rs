@@ -61,19 +61,26 @@ async fn probe_dht_from_config(variable: &str, allow_unavailable: bool) {
         let Some(remote_public) = PublicKey::from_bytes(public_key) else {
             continue;
         };
-        let session = match QuicSession::connect(
-            "0.0.0.0:0".parse().unwrap(),
-            candidate.address,
-            local,
-            remote_public,
+        let session = match tokio::time::timeout(
+            Duration::from_secs(5),
+            QuicSession::connect(
+                "0.0.0.0:0".parse().unwrap(),
+                candidate.address,
+                local,
+                remote_public,
+            ),
         )
         .await
         {
-            Ok(session) => session,
-            Err(error) => {
+            Err(_timeout) => {
+                last_error = Some(format!("connect timeout for {}", candidate.address));
+                continue;
+            }
+            Ok(Err(error)) => {
                 last_error = Some(error.to_string());
                 continue;
             }
+            Ok(Ok(session)) => session,
         };
         match session
             .dht_find_node(Int256::random(), 8, Duration::from_secs(5))
