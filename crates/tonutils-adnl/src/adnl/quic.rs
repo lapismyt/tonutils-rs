@@ -381,7 +381,7 @@ pub struct QuicServer {
 
 impl QuicServer {
     /// Creates a new QUIC server listening on the given address.
-    pub async fn bind(
+    pub fn bind(
         local_addr: SocketAddr,
         local_keypair: AdnlKeyPair,
     ) -> Result<Self, AdnlError> {
@@ -485,7 +485,6 @@ mod tests {
         let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
 
         let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair.clone())
-            .await
             .unwrap();
         let server_addr = server.endpoint.local_addr().unwrap();
 
@@ -537,7 +536,6 @@ mod tests {
         let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
 
         let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair.clone())
-            .await
             .unwrap();
         let server_addr = server.endpoint.local_addr().unwrap();
 
