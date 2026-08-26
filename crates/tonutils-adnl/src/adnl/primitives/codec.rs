@@ -1,5 +1,6 @@
 use aes::cipher::{KeyIvInit, StreamCipher};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use tokio_util::{
     bytes::{Buf, Bytes, BytesMut},
     codec::{Decoder, Encoder},
@@ -78,7 +79,7 @@ impl Decoder for AdnlCodec {
         // integrity check
         let mut hasher = Sha256::new();
         hasher.update(&src[..length - 32]);
-        if given_hash != hasher.finalize().as_slice() {
+        if !bool::from(given_hash.ct_eq(hasher.finalize().as_slice())) {
             return Err(AdnlError::IntegrityError);
         }
 

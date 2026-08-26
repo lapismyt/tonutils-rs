@@ -14,7 +14,7 @@ categories = ["network-programming", "cryptography::cryptocurrencies"]
 workspace = true
 
 [dependencies]
-tonutils-adnl = { path = "../tonutils-adnl", version = "2.0.0", features = ["udp"] }
+tonutils-adnl = { path = "../tonutils-adnl", version = "2.0.0", features = ["udp", "quic"] }
 futures.workspace = true
 hex.workspace = true
 raptorq.workspace = true
@@ -30,6 +30,7 @@ tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
 tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
 tl-proto.workspace = true
 tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
+quinn.workspace = true
 
 [dev-dependencies]
 pretty_env_logger.workspace = true

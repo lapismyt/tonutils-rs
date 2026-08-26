@@ -23,8 +23,10 @@ use tonutils_overlay::{
     SeedPeer,
 };
 use tonutils_overlay::{DiscoveryLookup, TypedDiscoveryLookup};
+mod quic_session;
 mod udp_session;
 
+pub use quic_session::{QuicOverlaySession, quic_overlay_factory};
 pub use udp_session::{
     AdnlUdpOverlaySession, channel_factory, direct_factory, overlay_factory, udp_dht_lookup,
     udp_iterative_dht_lookup, udp_overlay_lookup,
@@ -417,6 +419,13 @@ impl MempoolScannerBuilder {
             .native_udp(local_addr, local_keypair, channel_timeout)
     }
 
+    /// Configures QUIC-based overlay sessions for peer connections.
+    pub fn native_quic(self, local_addr: std::net::SocketAddr, local_keypair: KeyPair) -> Self {
+        let overlay = self.overlay_id;
+        let session_factory = quic_overlay_factory(local_addr, local_keypair, overlay);
+        self.session_factory(session_factory)
+    }
+
     /// Configures native UDP sessions for explicit seeds only.
     pub fn native_udp_seeds_only(
         mut self,
@@ -548,14 +557,18 @@ impl MempoolScannerBuilder {
             }
         });
         if let Some(factory) = self.session_factory {
+            let known_peers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>> =
+                Arc::new(tokio::sync::RwLock::new(peers.clone()));
             let reconnect_factory: ReconnectFactory = {
                 let factory = factory.clone();
-                let seeds = peers.clone();
+                let known = known_peers.clone();
                 Arc::new(move |peer| {
                     let factory = factory.clone();
-                    let seed = seeds.iter().find(|seed| seed.peer == peer).cloned();
+                    let known = known.clone();
                     Box::pin(async move {
-                        let seed = seed.ok_or_else(|| "peer is no longer configured".to_owned())?;
+                        let seed = known.read().await.iter().find(|s| s.peer == peer).cloned();
+                        let seed = seed
+                            .ok_or_else(|| format!("peer {peer:?} not found in known peer list"))?;
                         factory(seed).await
                     })
                 })
@@ -580,7 +593,7 @@ impl MempoolScannerBuilder {
                         connected += 1;
                     }
                     Err(error) => {
-                        log::debug!("bootstrap session failed: {error}");
+                        log::warn!("bootstrap session failed: {error}");
                     }
                 }
             }
@@ -917,11 +930,18 @@ impl MempoolScanner {
                 self.duplicates.fetch_add(1, Ordering::Relaxed);
                 return Ok(None);
             }
-            drop(dedup);
-            if self.dedup_entries.load(Ordering::Relaxed) >= self.config.max_dedup_entries as u64 {
+            if self.dedup_entries.load(Ordering::Relaxed) >= self.config.max_dedup_entries as u64
+                && dedup.is_empty()
+            {
+                drop(dedup);
                 self.evict_oldest().await;
+                dedup = self.dedup[shard].lock().await;
+                if dedup.contains_key(&hash) {
+                    self.duplicates.fetch_add(1, Ordering::Relaxed);
+                    return Ok(None);
+                }
             }
-            self.dedup[shard].lock().await.insert(hash, now);
+            dedup.insert(hash, now);
             self.dedup_entries.fetch_add(1, Ordering::Relaxed);
         }
         self.accepted.fetch_add(1, Ordering::Relaxed);
@@ -939,19 +959,23 @@ impl MempoolScanner {
     }
 
     async fn evict_oldest(&self) {
-        let mut oldest = None;
+        let mut candidates: Vec<([u8; 32], usize, Instant)> = Vec::new();
         for (index, shard) in self.dedup.iter().enumerate() {
             let dedup = shard.lock().await;
-            if let Some((hash, seen)) = dedup.iter().min_by_key(|(_, seen)| **seen)
-                && oldest.is_none_or(|(_, _, current)| *seen < current)
-            {
-                oldest = Some((*hash, index, *seen));
+            for (hash, seen) in dedup.iter() {
+                candidates.push((*hash, index, *seen));
             }
         }
-        if let Some((hash, index, _)) = oldest
-            && self.dedup[index].lock().await.remove(&hash).is_some()
-        {
-            self.dedup_entries.fetch_sub(1, Ordering::Relaxed);
+        let evict_count = (self.config.max_dedup_entries / 10).max(1);
+        candidates.sort_by_key(|(_, _, seen)| *seen);
+        let mut removed = 0u64;
+        for (hash, index, _) in candidates.into_iter().take(evict_count) {
+            if self.dedup[index].lock().await.remove(&hash).is_some() {
+                removed += 1;
+            }
+        }
+        if removed > 0 {
+            self.dedup_entries.fetch_sub(removed, Ordering::Relaxed);
         }
     }
 }

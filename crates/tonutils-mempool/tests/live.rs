@@ -3,7 +3,8 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use futures::StreamExt;
-use tonutils_adnl::{AdnlUdpSession, KeyPair, PublicKey};
+use tonutils_adnl::adnl::quic::QuicSession;
+use tonutils_adnl::{KeyPair, PublicKey};
 use tonutils_mempool::MempoolScannerBuilder;
 use tonutils_mempool::{MempoolConfig, MempoolEvent};
 use tonutils_network_config::extract_dht_addresses;
@@ -60,7 +61,7 @@ async fn probe_dht_from_config(variable: &str, allow_unavailable: bool) {
         let Some(remote_public) = PublicKey::from_bytes(public_key) else {
             continue;
         };
-        let mut session = match AdnlUdpSession::connect(
+        let session = match QuicSession::connect(
             "0.0.0.0:0".parse().unwrap(),
             candidate.address,
             local,
@@ -80,31 +81,31 @@ async fn probe_dht_from_config(variable: &str, allow_unavailable: bool) {
         {
             Ok(nodes) if !nodes.nodes.is_empty() => return,
             Ok(_) => {
-                eprintln!("DHT probe {} returned no verified nodes", candidate.address);
+                log::debug!("DHT probe {} returned no verified nodes", candidate.address);
                 last_error = Some("empty verified DHT node response".into());
             }
             Err(error) => {
-                eprintln!("DHT probe {} failed: {error}", candidate.address);
+                log::debug!("DHT probe {} failed: {error}", candidate.address);
                 last_error = Some(error.to_string());
             }
         }
     }
     let error = last_error.unwrap_or_else(|| "no usable peers".into());
     if allow_unavailable {
-        eprintln!("skipping unavailable DHT probe: {error}");
+        log::debug!("skipping unavailable DHT probe: {error}");
     } else {
         panic!("no configured DHT peer answered: {error}");
     }
 }
 
 #[tokio::test]
-#[ignore = "requires live mainnet UDP access"]
+#[ignore = "requires live mainnet QUIC access"]
 async fn mainnet_dht_seed_answers_find_node() {
     probe_dht_from_config("TON_GLOBAL_CONFIG_JSON", false).await;
 }
 
 #[tokio::test]
-#[ignore = "requires live testnet UDP access"]
+#[ignore = "requires live testnet QUIC access"]
 async fn testnet_dht_seed_answers_find_node() {
     probe_dht_from_config("TON_TESTNET_GLOBAL_CONFIG_JSON", true).await;
 }
@@ -165,11 +166,7 @@ async fn configured_seed_delivers_valid_external_message() {
         .reconnect_attempts(2)
         .discovery_timeout(Duration::from_secs(30))
         .dht_overlay_key(dht_overlay_key)
-        .native_udp(
-            "0.0.0.0:0".parse().unwrap(),
-            local_key,
-            Some(Duration::from_secs(10)),
-        )
+        .native_quic("0.0.0.0:0".parse().unwrap(), local_key)
         .start()
         .await
         .expect("configured seed scanner must start");

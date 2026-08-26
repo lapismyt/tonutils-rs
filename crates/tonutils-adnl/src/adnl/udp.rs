@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use aes::cipher::{KeyIvInit, StreamCipher};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 use tonutils_tl::tl::network::{
@@ -23,6 +24,20 @@ use crate::{AdnlAddress, AdnlAesParams, AdnlCodec, AdnlError};
 
 /// Maximum encoded ADNL datagram accepted by the native UDP helper.
 pub const MAX_UDP_PACKET_SIZE: usize = 64 * 1024;
+
+/// Current Unix timestamp clamped to i32::MAX.
+///
+/// The ADNL wire protocol uses i32 for dates, which overflows after 2038-01-19
+/// 03:14:07 UTC. This helper clamps the value so callers never panic on
+/// conversion. Callers that need to store or send dates beyond 2038 should use
+/// a wider type internally and only convert at the wire boundary.
+pub fn now_i32() -> i32 {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    secs.min(i32::MAX as u64) as i32
+}
 
 /// AES-CTR channel cipher used after an ADNL channel is established.
 ///
@@ -78,7 +93,7 @@ impl AdnlChannelCipher {
         let mut plaintext = packet[32..].to_vec();
         ctr::Ctr128BE::<aes::Aes256>::new((&key).into(), (&iv).into())
             .apply_keystream(&mut plaintext);
-        if Sha256::digest(&plaintext).as_slice() != digest {
+        if !bool::from(Sha256::digest(&plaintext).as_slice().ct_eq(&digest)) {
             return Err(AdnlError::IntegrityError);
         }
         Ok(Bytes::from(plaintext))
@@ -161,7 +176,7 @@ fn aes_decrypt(secret: [u8; 32], packet: &[u8]) -> Result<Bytes, AdnlError> {
     iv[4..].copy_from_slice(&secret[20..]);
     let mut plaintext = packet[32..].to_vec();
     ctr::Ctr128BE::<aes::Aes256>::new((&key).into(), (&iv).into()).apply_keystream(&mut plaintext);
-    if Sha256::digest(&plaintext).as_slice() != digest {
+    if !bool::from(Sha256::digest(&plaintext).as_slice().ct_eq(&digest)) {
         return Err(AdnlError::IntegrityError);
     }
     Ok(Bytes::from(plaintext))
@@ -287,11 +302,7 @@ impl AdnlUdpSession {
         self.next_seqno = self.next_seqno.saturating_add(1);
         contents.seqno = Some(self.next_seqno);
         contents.confirm_seqno = Some(self.highest_seqno);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .min(i32::MAX as u64) as i32;
+        let now = now_i32();
         contents.reinit_date.get_or_insert(now);
         contents.dst_reinit_date.get_or_insert(0);
         let mut unsigned = contents.clone();
@@ -310,7 +321,9 @@ impl AdnlUdpSession {
 
     #[allow(clippy::unnecessary_join)]
     pub async fn recv_contents(&mut self) -> Result<PacketContents, AdnlError> {
+        const MAX_CONSECUTIVE_FAILURES: u32 = 256;
         let mut packet = vec![0u8; MAX_UDP_PACKET_SIZE + 1];
+        let mut consecutive_failures: u32 = 0;
         loop {
             let size = self.socket.recv(&mut packet).await?;
             if size > MAX_UDP_PACKET_SIZE {
@@ -321,38 +334,90 @@ impl AdnlUdpSession {
                 && packet[..channel.inbound_id.len()] == channel.inbound_id
             {
                 match channel.decode(&packet[..size]) {
-                    Ok(contents) => return Ok(contents),
-                    Err(error) => log::debug!("dropping invalid ADNL channel packet: {error}"),
+                    Ok(contents) => {
+                        return Ok(contents);
+                    }
+                    Err(error) => {
+                        log::debug!("dropping invalid ADNL channel packet: {error}");
+                    }
+                }
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures == MAX_CONSECUTIVE_FAILURES / 2 {
+                    log::warn!(
+                        "ADNL channel degraded: {consecutive_failures} consecutive decode failures"
+                    );
+                }
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    log::warn!(
+                        "ADNL channel killed after {consecutive_failures} consecutive decode failures"
+                    );
+                    return Err(AdnlError::IntegrityError);
                 }
                 continue;
             }
             if size < self.local_id.len() || packet[..self.local_id.len()] != self.local_id {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             }
             let Ok((_, payload)) = decrypt_direct(&self.local, &packet[32..size]) else {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             };
             let Ok(contents) = tl_proto::deserialize::<PacketContents>(&payload) else {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             };
             let Some(TlPublicKey::Ed25519 { key }) = &contents.from else {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             };
             let Some(sender) = PublicKey::from_bytes(key.0) else {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             };
             if sender != self.remote {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             }
             if let Some(from_short) = &contents.from_short
                 && from_short.id.0 != self.remote_id
             {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             }
             let Some(signature) = &contents.signature else {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             };
             let Ok(signature) = signature.as_slice().try_into() else {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             };
             let mut unsigned = contents.clone();
@@ -361,6 +426,10 @@ impl AdnlUdpSession {
                 .remote
                 .verify_raw(&tl_proto::serialize(unsigned), &signature)
             {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             }
             if let Some(seqno) = contents.seqno {
@@ -368,6 +437,10 @@ impl AdnlUdpSession {
                     || self.received.contains(&seqno)
                     || (self.highest_seqno > 4096 && seqno + 4096 < self.highest_seqno)
                 {
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                        return Err(AdnlError::IntegrityError);
+                    }
                     continue;
                 }
                 self.highest_seqno = self.highest_seqno.max(seqno);
@@ -377,6 +450,10 @@ impl AdnlUdpSession {
                 }
             }
             if self.process_channel_control(&contents).await.is_err() {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
+                }
                 continue;
             }
             return Ok(contents);
@@ -432,7 +509,15 @@ impl AdnlUdpSession {
                         continue;
                     };
                     if peer_key.0 != local_channel.public_key.to_bytes() || *date < local_date {
-                        return Err(AdnlError::InvalidPacket);
+                        log::warn!(
+                            "ADNL channel confirmation mismatch: expected peer_key={:?}, got peer_key={:?}",
+                            local_channel.public_key.to_bytes(),
+                            peer_key.0
+                        );
+                        return Err(AdnlError::ChannelConfirmMismatch {
+                            expected: local_channel.public_key.to_bytes(),
+                            got: peer_key.0,
+                        });
                     }
                     self.install_channel(&local_channel, key.0, *date)?;
                 }
@@ -464,62 +549,88 @@ impl AdnlUdpSession {
     }
 
     pub async fn establish_channel(&mut self, timeout: Duration) -> Result<(), AdnlError> {
+        const MAX_RETRIES: u32 = 3;
         if self.channel.is_some() {
             return Ok(());
         }
-        let local_channel = KeyPair::generate(&mut rand::rngs::OsRng);
-        let date = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .min(i32::MAX as u64) as i32;
-        self.pending_channel = Some((local_channel, date));
-        self.send_direct_contents(PacketContents {
-            rand1: vec![0; 7],
-            flags: (),
-            from: None,
-            from_short: None,
-            message: None,
-            messages: Some(vec![
-                AdnlMessage::CreateChannel {
-                    key: Int256(local_channel.public_key.to_bytes()),
-                    date,
-                },
-                AdnlMessage::Query {
-                    query_id: Int256::random(),
-                    query: tl_proto::serialize(DhtMessage::GetSignedAddressList),
-                },
-            ]),
-            address: Some(AddressList {
-                addrs: Vec::new(),
-                version: date,
-                reinit_date: date,
-                priority: 0,
-                expire_at: 0,
-            }),
-            priority_address: None,
-            seqno: None,
-            confirm_seqno: None,
-            recv_addr_list_version: Some(date),
-            recv_priority_addr_list_version: None,
-            reinit_date: None,
-            dst_reinit_date: Some(0),
-            signature: None,
-            rand2: vec![0; 7],
-        })
-        .await?;
+        let mut attempt = 0u32;
         let deadline = tokio::time::Instant::now() + timeout;
-        while self.channel.is_none() {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(AdnlError::Timeout {
+        loop {
+            attempt += 1;
+            let local_channel = KeyPair::generate(&mut rand::rngs::OsRng);
+            let date = now_i32();
+            self.pending_channel = Some((local_channel, date));
+            self.send_direct_contents(PacketContents {
+                rand1: vec![0; 7],
+                flags: (),
+                from: None,
+                from_short: None,
+                message: None,
+                messages: Some(vec![
+                    AdnlMessage::CreateChannel {
+                        key: Int256(
+                            self.pending_channel
+                                .as_ref()
+                                .unwrap()
+                                .0
+                                .public_key
+                                .to_bytes(),
+                        ),
+                        date,
+                    },
+                    AdnlMessage::Query {
+                        query_id: Int256::random(),
+                        query: tl_proto::serialize(DhtMessage::GetSignedAddressList),
+                    },
+                ]),
+                address: Some(AddressList {
+                    addrs: Vec::new(),
+                    version: date,
+                    reinit_date: date,
+                    priority: 0,
+                    expire_at: 0,
+                }),
+                priority_address: None,
+                seqno: None,
+                confirm_seqno: None,
+                recv_addr_list_version: Some(date),
+                recv_priority_addr_list_version: None,
+                reinit_date: None,
+                dst_reinit_date: Some(0),
+                signature: None,
+                rand2: vec![0; 7],
+            })
+            .await?;
+            let mut last_err = None;
+            while self.channel.is_none() {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(AdnlError::Timeout {
+                        operation: "ADNL UDP channel handshake",
+                        timeout,
+                    });
+                }
+                match self.recv_timeout(remaining).await {
+                    Ok(_) => {}
+                    Err(e) => {
+                        last_err = Some(e);
+                        break;
+                    }
+                }
+            }
+            if self.channel.is_some() {
+                return Ok(());
+            }
+            if attempt >= MAX_RETRIES {
+                return Err(last_err.unwrap_or(AdnlError::Timeout {
                     operation: "ADNL UDP channel handshake",
                     timeout,
-                });
+                }));
             }
-            let _ = self.recv_timeout(remaining).await?;
+            let backoff = Duration::from_millis(100 * 2u64.pow(attempt - 1));
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            tokio::time::sleep(backoff.min(remaining)).await;
         }
-        Ok(())
     }
 
     pub async fn send_timeout(
@@ -598,11 +709,7 @@ impl AdnlUdpSession {
                 {
                     let nodes: DhtNodesBoxed = tl_proto::deserialize(&answer)
                         .map_err(|error| AdnlError::MalformedPacket(error.to_string()))?;
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()
-                        .min(i32::MAX as u64) as i32;
+                    let now = now_i32();
                     let total = nodes.nodes.len();
                     let selected: Vec<_> = nodes
                         .nodes
@@ -759,11 +866,7 @@ impl AdnlUdpSession {
     }
 
     fn local_overlay_node(&self, overlay: Int256) -> tonutils_tl::tl::network::OverlayNode {
-        let version = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-            .min(i32::MAX as u64) as i32;
+        let version = now_i32();
         let to_sign = tonutils_tl::tl::network::OverlayNodeToSign {
             id: tonutils_tl::tl::network::AdnlIdShort {
                 id: Int256(self.local_id),

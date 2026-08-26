@@ -590,7 +590,7 @@ impl PeerManager {
                             replacement = Some(session);
                             break;
                         }
-                        Err(error) => log::debug!("reconnect for {peer:?} failed: {error}"),
+                        Err(error) => log::warn!("overlay reconnect for {peer:?} failed: {error}"),
                     }
                 }
                 let Some(session) = replacement else {

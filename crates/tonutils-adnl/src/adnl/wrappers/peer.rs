@@ -31,7 +31,7 @@ impl AdnlPeer<TcpStream> {
         server_public: impl AsRef<[u8]>,
         server_address: A,
     ) -> Result<AdnlPeer<TcpStream>, AdnlError> {
-        log::debug!("Connecting to TCP server");
+        log::debug!("Connecting to TCP server (unbounded)");
         let transport = TcpStream::connect(server_address).await?;
         log::debug!("Connected to {:?}, handshaking...", transport.peer_addr());
         let client = Self::perform_handshake(transport, server_public).await?;
@@ -48,7 +48,7 @@ impl AdnlPeer<TcpStream> {
         server_address: A,
         timeout: Duration,
     ) -> Result<AdnlPeer<TcpStream>, AdnlError> {
-        log::debug!("Connecting to TCP server");
+        log::debug!("Connecting to TCP server (timeout={timeout:?})");
         let transport = tokio::time::timeout(timeout, TcpStream::connect(server_address))
             .await
             .map_err(|_| AdnlError::Timeout {

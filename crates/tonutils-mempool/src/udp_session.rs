@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Instant;
 use tl_proto::TlRead;
-use tonutils_adnl::{AdnlAddress, AdnlUdpSession, KeyPair, PublicKey as AdnlPublicKey};
+use tonutils_adnl::{AdnlAddress, AdnlUdpSession, KeyPair, PublicKey as AdnlPublicKey, now_i32};
 use tonutils_overlay::{
     OverlayId, OverlaySession, PeerId, SeedDiscoveryLookup, SeedPeer, TypedDiscoveryLookup,
 };
@@ -77,11 +77,7 @@ pub fn udp_iterative_dht_lookup(
             let mut frontier = seeds;
             let mut discovered = Vec::new();
             let mut seen = std::collections::HashSet::new();
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs()
-                .min(i32::MAX as u64) as i32;
+            let now = now_i32();
             for _ in 0..rounds.max(1) {
                 let responses = join_all(frontier.into_iter().filter_map(|seed| {
                     let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
@@ -196,11 +192,7 @@ async fn query_overlay_seed(
     );
     let mut frontier = vec![initial.clone()];
     let mut seen = std::collections::HashSet::new();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        .min(i32::MAX as u64) as i32;
+    let now = now_i32();
 
     for _ in 0..6 {
         let responses = join_all(frontier.drain(..).filter_map(|seed| {
@@ -323,9 +315,6 @@ async fn query_overlay_seed(
     log::debug!(
         "query_overlay_seed: DHT lookup missed, falling back to overlay getRandomPeers at {address}"
     );
-    eprintln!(
-        "query_overlay_seed: DHT lookup missed, falling back to overlay_get_random_peers at {address}"
-    );
     if let Some(fallback) = query_overlay_random_peers(
         local_addr,
         local_keypair,
@@ -340,15 +329,10 @@ async fn query_overlay_seed(
             "query_overlay_seed: overlay getRandomPeers fallback found {} peers at {address}",
             fallback.len()
         );
-        eprintln!(
-            "query_overlay_seed: overlay_get_random_peers fallback found {} peers at {address}",
-            fallback.len()
-        );
         return Some(fallback);
     }
 
     log::debug!("query_overlay_seed: returning None for {address}");
-    eprintln!("query_overlay_seed: returning None for {address}");
     None
 }
 
@@ -366,7 +350,6 @@ async fn query_overlay_random_peers(
             Ok(session) => session,
             Err(error) => {
                 log::debug!("query_overlay_random_peers: connect to {address} failed: {error}");
-                eprintln!("query_overlay_random_peers: connect to {address} failed: {error}");
                 return None;
             }
         };
@@ -377,19 +360,10 @@ async fn query_overlay_random_peers(
             log::debug!(
                 "query_overlay_random_peers: overlay_get_random_peers to {address} failed: {error}"
             );
-            eprintln!(
-                "query_overlay_random_peers: overlay_get_random_peers to {address} failed: {error}"
-            );
             return None;
         }
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs()
-        .min(i32::MAX as u64) as i32;
-    let node_count = nodes.nodes.len();
-    eprintln!("query_overlay_random_peers: got {node_count} overlay nodes from {address}");
+    let now = now_i32();
     let mut result = Vec::new();
     for node in nodes.nodes {
         if !valid_overlay_node(&node, overlay, now) {
@@ -733,7 +707,7 @@ impl AdnlUdpOverlaySession {
             .overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()), timeout)
             .await
         {
-            log::debug!("overlay handshake skipped for {peer:?}: {error}");
+            log::warn!("overlay handshake skipped for {peer:?}: {error}");
         }
         Ok(session)
     }
@@ -936,13 +910,7 @@ impl AdnlUdpOverlaySession {
         match tl_proto::deserialize::<OverlayBroadcast>(data) {
             Ok(OverlayBroadcast::Unicast { data }) => Ok(data),
             Ok(broadcast) => broadcast
-                .payload_if_valid(
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs()
-                        .min(i32::MAX as u64) as i32,
-                )
+                .payload_if_valid(now_i32())
                 .map(ToOwned::to_owned)
                 .ok_or_else(|| "invalid overlay broadcast".to_owned()),
             Err(_) => Err("invalid overlay payload".to_owned()),

@@ -543,6 +543,32 @@ pub enum DhtValueResult {
     Found { value: DhtValue },
 }
 
+/// quic.message data:bytes = quic.Message;
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0x6d2960d1)]
+pub struct QuicMessage {
+    pub data: Vec<u8>,
+}
+
+/// quic.query id:int256 data:bytes = quic.Query;
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0xb37ffe6e)]
+pub struct QuicQuery {
+    pub id: Int256,
+    pub data: Vec<u8>,
+}
+
+/// quic.answer id:int256 data:bytes = quic.Answer;
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0x32f8f49f)]
+pub struct QuicAnswer {
+    pub id: Int256,
+    pub data: Vec<u8>,
+}
+
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
 #[tl(boxed)]
@@ -706,5 +732,34 @@ mod tests {
         assert_eq!(&bytes[..4], &0x3d1b1867u32.to_le_bytes());
         let decoded: TonNodeExternalMessageBroadcast = deserialize(&bytes).unwrap();
         assert_eq!(decoded.message.data, vec![0xb5, 0xee, 0x9c, 0x72]);
+    }
+
+    #[test]
+    fn quic_framing_types_use_canonical_constructors() {
+        let msg = QuicMessage {
+            data: vec![1, 2, 3],
+        };
+        let bytes = serialize(msg.clone());
+        assert_eq!(&bytes[..4], &0x6d2960d1u32.to_le_bytes());
+        let decoded: QuicMessage = deserialize(&bytes).unwrap();
+        assert_eq!(decoded, msg);
+
+        let query = QuicQuery {
+            id: Int256([0xAA; 32]),
+            data: vec![4, 5, 6],
+        };
+        let bytes = serialize(query.clone());
+        assert_eq!(&bytes[..4], &0xb37ffe6eu32.to_le_bytes());
+        let decoded: QuicQuery = deserialize(&bytes).unwrap();
+        assert_eq!(decoded, query);
+
+        let answer = QuicAnswer {
+            id: Int256([0xBB; 32]),
+            data: vec![7, 8, 9],
+        };
+        let bytes = serialize(answer.clone());
+        assert_eq!(&bytes[..4], &0x32f8f49fu32.to_le_bytes());
+        let decoded: QuicAnswer = deserialize(&bytes).unwrap();
+        assert_eq!(decoded, answer);
     }
 }

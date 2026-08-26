@@ -152,6 +152,12 @@ pub enum AdnlError {
     InvalidPacket,
     #[error("Malformed ADNL packet: {0}")]
     MalformedPacket(String),
+    #[error("TLS/QUIC configuration error: {0}")]
+    TlsConfig(String),
+    #[error("TLS certificate key mismatch: expected {expected:?}, got {got:?}")]
+    CertificateKeyMismatch { expected: [u8; 32], got: [u8; 32] },
+    #[error("channel confirmation mismatch: expected peer_key={expected:?}, got peer_key={got:?}")]
+    ChannelConfirmMismatch { expected: [u8; 32], got: [u8; 32] },
 }
 
 /// Information about connected peers.
