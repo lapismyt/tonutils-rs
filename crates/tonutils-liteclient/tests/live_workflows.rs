@@ -70,7 +70,6 @@ async fn live_get_version_and_time_smoke() {
 
 #[tokio::test]
 #[ignore = "requires public liteserver configuration, network access, and a contract"]
-#[allow(clippy::assert_is_empty)]
 async fn live_run_get_method_smoke() {
     let address = match std::env::var("TON_CONTRACT_ADDRESS") {
         Ok(address) => address,

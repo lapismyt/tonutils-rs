@@ -21,11 +21,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
-
       - name: Cache Cargo
         uses: actions/cache@v6
         with:
@@ -65,11 +60,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
 
       - name: Load public TON global config
         run: |

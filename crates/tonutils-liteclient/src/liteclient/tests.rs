@@ -235,7 +235,6 @@ async fn contract_get_method_requests_result_stack() {
 }
 
 #[tokio::test]
-#[allow(clippy::assert_is_empty)]
 async fn liteclient_basic_methods_build_requests_and_decode_responses() {
     let mut client = response_client(Response::MasterchainInfoExt(
         tonutils_tl::response::MasterchainInfoExt {
