@@ -3,7 +3,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use futures::StreamExt;
-use tonutils_adnl::adnl::quic::QuicSession;
+use tonutils_adnl::AdnlUdpSession;
 use tonutils_adnl::{KeyPair, PublicKey};
 use tonutils_mempool::MempoolScannerBuilder;
 use tonutils_mempool::{MempoolConfig, MempoolEvent};
@@ -61,9 +61,9 @@ async fn probe_dht_from_config(variable: &str, allow_unavailable: bool) {
         let Some(remote_public) = PublicKey::from_bytes(public_key) else {
             continue;
         };
-        let session = match tokio::time::timeout(
+        let mut session = match tokio::time::timeout(
             Duration::from_secs(5),
-            QuicSession::connect(
+            AdnlUdpSession::connect(
                 "0.0.0.0:0".parse().unwrap(),
                 candidate.address,
                 local,
@@ -108,7 +108,8 @@ async fn probe_dht_from_config(variable: &str, allow_unavailable: bool) {
 #[tokio::test]
 #[ignore = "requires live mainnet QUIC access"]
 async fn mainnet_dht_seed_answers_find_node() {
-    probe_dht_from_config("TON_GLOBAL_CONFIG_JSON", false).await;
+    let allow_unavailable = std::env::var("TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE").is_ok();
+    probe_dht_from_config("TON_GLOBAL_CONFIG_JSON", allow_unavailable).await;
 }
 
 #[tokio::test]

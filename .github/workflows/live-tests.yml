@@ -88,6 +88,8 @@ jobs:
         run: cargo test -p tonutils-mempool --test seed_scanner -- --nocapture
 
       - name: Run mempool mainnet DHT probe
+        env:
+          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
         run: cargo test -p tonutils-mempool --test live mainnet_dht_seed_answers_find_node -- --ignored --nocapture
 
       - name: Run mempool testnet DHT probe
