@@ -198,6 +198,38 @@ async fn builder_connects_validated_peers_through_factory() {
 }
 
 #[tokio::test]
+async fn builder_retains_explicit_seeds_when_discovery_succeeds() {
+    let seed_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let discovered_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let seed = SeedPeer::from_public_key(seed_key.public_key.to_bytes(), "127.0.0.1:30303");
+    let discovered =
+        SeedPeer::from_public_key(discovered_key.public_key.to_bytes(), "127.0.0.1:30304");
+    let factory: OverlaySessionFactory = Arc::new(move |candidate| {
+        Box::pin(async move {
+            Ok(Box::new(PendingSession {
+                peer: candidate.peer,
+            }) as Box<dyn OverlaySession>)
+        })
+    });
+    let lookup: SeedDiscoveryLookup = Arc::new(move |_| {
+        let discovered = discovered.clone();
+        Box::pin(async move { vec![discovered] })
+    });
+    let (_scanner, manager, _events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .seed(seed)
+        .seed_discovery_lookup(lookup)
+        .session_factory(factory)
+        .start()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    assert_eq!(manager.peer_count().await, 2);
+    manager.shutdown();
+}
+
+#[tokio::test]
 async fn dedup_capacity_is_global_across_shards() {
     let scanner = MempoolScanner::new(MempoolConfig {
         dedup_shards: 8,

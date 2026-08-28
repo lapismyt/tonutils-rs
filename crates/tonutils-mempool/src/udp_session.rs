@@ -353,7 +353,9 @@ async fn query_overlay_random_peers(
                 return None;
             }
         };
+    log::debug!("query_overlay_random_peers: direct UDP ADNL session established to {address}");
     let overlay_int = tonutils_tl::Int256(overlay.as_bytes());
+    log::debug!("query_overlay_random_peers: sending overlay.getRandomPeers to {address}");
     let nodes = match session.overlay_get_random_peers(overlay_int, timeout).await {
         Ok(nodes) => nodes,
         Err(error) => {
@@ -667,6 +669,10 @@ impl AdnlUdpOverlaySession {
     ) -> Result<Self, String> {
         let mut session =
             Self::connect(peer, local_addr, remote_addr, local_keypair, remote_public).await?;
+        log::debug!(
+            "overlay UDP session established: peer={peer:?} address={remote_addr} overlay={overlay}"
+        );
+        log::debug!("overlay UDP session sending overlay.getRandomPeers: peer={peer:?}");
         session
             .session
             .send_overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()))
@@ -736,7 +742,10 @@ impl OverlaySession for AdnlUdpOverlaySession {
                 .await
                 {
                     Ok(packet) => packet.map_err(|error| error.to_string())?,
-                    Err(_) => continue,
+                    Err(_) => {
+                        log::trace!("overlay UDP receive timeout: peer={:?}", self.peer);
+                        continue;
+                    }
                 };
                 let messages = packet
                     .message
@@ -744,6 +753,18 @@ impl OverlaySession for AdnlUdpOverlaySession {
                     .chain(packet.messages.into_iter().flatten());
                 let mut channel_changed = false;
                 for message in messages {
+                    log::trace!(
+                        "overlay UDP packet classified: peer={:?} message={}",
+                        self.peer,
+                        match &message {
+                            AdnlMessage::Query { .. } => "query",
+                            AdnlMessage::Answer { .. } => "answer",
+                            AdnlMessage::Custom { .. } => "custom",
+                            AdnlMessage::CreateChannel { .. } => "create-channel",
+                            AdnlMessage::ConfirmChannel { .. } => "confirm-channel",
+                            _ => "control",
+                        }
+                    );
                     if let AdnlMessage::Query { query_id, query } = &message
                         && let Ok(OverlayQuery::Ping) =
                             OverlayQuery::read_from(&mut query.as_slice())
@@ -774,18 +795,34 @@ impl OverlaySession for AdnlUdpOverlaySession {
                             }
                             match self.unwrap_overlay_payload(data) {
                                 Ok(data) => data,
-                                Err(_) => continue,
+                                Err(error) => {
+                                    log::trace!(
+                                        "overlay UDP custom payload rejected: peer={:?} reason={error}",
+                                        self.peer
+                                    );
+                                    continue;
+                                }
                             }
                         } else {
                             match self.unwrap_overlay_payload(&data) {
                                 Ok(data) => data,
-                                Err(_) => continue,
+                                Err(error) => {
+                                    log::trace!(
+                                        "direct UDP payload rejected: peer={:?} reason={error}",
+                                        self.peer
+                                    );
+                                    continue;
+                                }
                             }
                         };
                         return Ok(Arc::from(data));
                     }
                 }
                 if channel_changed && let Some(overlay) = self.overlay {
+                    log::debug!(
+                        "overlay UDP channel changed; resubscribing with overlay.getRandomPeers: peer={:?}",
+                        self.peer
+                    );
                     let _ = self
                         .session
                         .send_overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()))

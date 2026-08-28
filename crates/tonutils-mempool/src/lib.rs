@@ -498,22 +498,29 @@ impl MempoolScannerBuilder {
                 .await
                 .ok()
                 .filter(|peers| !peers.is_empty());
-            match &result {
-                Some(peers) => {
-                    log::debug!("seed_discovery_lookup: found {} overlay peers", peers.len());
-                }
-                None => {
-                    log::debug!(
-                        "seed_discovery_lookup: timed out or empty, falling back to {} raw seeds",
-                        seeds.len()
-                    );
-                    log::debug!(
-                        "seed_discovery_lookup: timed out or empty, falling back to {} raw seeds",
-                        seeds.len()
-                    );
+            let mut peers = result.unwrap_or_default();
+            let discovered_count = peers.len();
+            let mut seen = peers
+                .iter()
+                .map(|peer| (peer.peer, peer.address.clone()))
+                .collect::<std::collections::HashSet<_>>();
+            for seed in &seeds {
+                if seen.insert((seed.peer, seed.address.clone())) {
+                    peers.push(seed.clone());
                 }
             }
-            result.unwrap_or(seeds)
+            if discovered_count == 0 {
+                log::debug!(
+                    "seed_discovery_lookup: timed out or empty, using {} raw seeds",
+                    seeds.len()
+                );
+            } else {
+                log::debug!(
+                    "seed_discovery_lookup: found {discovered_count} overlay peers and retained {} raw seeds",
+                    peers.len().saturating_sub(discovered_count)
+                );
+            }
+            peers
         } else if let Some(lookup) = self.typed_discovery_lookup.clone() {
             discovery.discover_typed(move |seeds| lookup(seeds)).await
         } else if let Some(lookup) = self.discovery_lookup.clone() {
@@ -571,7 +578,27 @@ impl MempoolScannerBuilder {
             };
             let results = join_all(peers.into_iter().map(|peer| {
                 let factory = factory.clone();
-                async move { factory(peer).await }
+                async move {
+                    log::debug!(
+                        "mempool bootstrap: attempting peer={:?} address={}",
+                        peer.peer,
+                        peer.address
+                    );
+                    let result = factory(peer.clone()).await;
+                    match &result {
+                        Ok(_) => log::debug!(
+                            "mempool bootstrap: direct overlay session established for peer={:?} address={}",
+                            peer.peer,
+                            peer.address
+                        ),
+                        Err(error) => log::warn!(
+                            "mempool bootstrap: peer={:?} address={} failed: {error}",
+                            peer.peer,
+                            peer.address
+                        ),
+                    }
+                    result
+                }
             }))
             .await;
             let mut connected = 0;

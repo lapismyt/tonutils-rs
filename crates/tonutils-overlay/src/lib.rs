@@ -540,6 +540,7 @@ impl PeerManager {
                 sessions.write().await.insert(peer, shared.clone());
                 pool.register_peer(peer).await;
                 let _ = pool.report_status(PeerStatus::Connected { peer });
+                log::debug!("overlay peer session active: peer={peer:?}");
                 loop {
                     tokio::select! {
                         _ = shutdown.changed() => break,
@@ -555,6 +556,7 @@ impl PeerManager {
                                     scores.write().await.entry(peer).and_modify(|score| *score += 1);
                                 }
                                 Ok(Err(_)) | Err(_) => {
+                                    log::warn!("overlay peer session lost: peer={peer:?}");
                                     break;
                                 }
                             }
@@ -575,6 +577,9 @@ impl PeerManager {
                 let mut replacement = None;
                 for attempt in 1..=max_attempts {
                     let _ = pool.report_status(PeerStatus::Reconnecting { peer, attempt });
+                    log::debug!(
+                        "overlay reconnect attempt {attempt}/{max_attempts}: peer={peer:?}"
+                    );
                     let multiplier = 1u32
                         .checked_shl(attempt.saturating_sub(1))
                         .unwrap_or(u32::MAX);
