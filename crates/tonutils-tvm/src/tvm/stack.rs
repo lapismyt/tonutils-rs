@@ -285,7 +285,7 @@ mod tests {
         let vectors = fixture["vectors"].as_array().unwrap();
         assert_eq!(vectors.len(), 6);
         let captured = fixture["captured_or_opt_in"].as_array().unwrap();
-        assert!(!captured.is_empty());
+        assert_ne!(captured.as_slice(), &[] as &[serde_json::Value]);
         for vector in captured {
             for key in [
                 "source_sdk_or_tool",

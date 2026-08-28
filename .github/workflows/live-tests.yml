@@ -21,11 +21,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
-
       - name: Cache Cargo
         uses: actions/cache@v6
         with:
@@ -59,17 +54,12 @@ jobs:
           fi
 
   live-tests:
-    name: Live liteserver smoke tests
+    name: Live liteserver and mempool smoke tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
 
       - name: Load public TON global config
         run: |
@@ -80,6 +70,64 @@ jobs:
               https://ton.org/global.config.json
             echo 'TON_GLOBAL_CONFIG_JSON_EOF'
           } >> "$GITHUB_ENV"
+          {
+            echo 'TON_TESTNET_GLOBAL_CONFIG_JSON<<TON_TESTNET_GLOBAL_CONFIG_JSON_EOF'
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-all-errors --retry-delay 2 \
+              https://ton.org/testnet-global.config.json
+            echo 'TON_TESTNET_GLOBAL_CONFIG_JSON_EOF'
+          } >> "$GITHUB_ENV"
 
       - name: Run live workflow smoke tests
         run: cargo test -p tonutils-liteclient --test live_workflows -- --ignored --nocapture
+
+      - name: Run mempool bootstrap smoke test
+        run: cargo test -p tonutils-mempool --test live configured_global_config_can_start_scanner -- --ignored --nocapture
+
+      - name: Run seed-only scanner stream test
+        run: cargo test -p tonutils-mempool --test seed_scanner -- --nocapture
+
+      - name: Run mempool mainnet DHT probe
+        env:
+          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
+        run: cargo test -p tonutils-mempool --test live mainnet_dht_seed_answers_find_node -- --ignored --nocapture
+
+      - name: Run mempool testnet DHT probe
+        env:
+          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
+        run: cargo test -p tonutils-mempool --test live testnet_dht_seed_answers_find_node -- --ignored --nocapture
+
+      - name: Derive mempool live seeds from global config
+        run: |
+          seeds=$(
+            echo "$TON_GLOBAL_CONFIG_JSON" | jq -r '
+              [.dht.static_nodes.nodes[]? |
+               .id.key as $key |
+               .addr_list.addrs[]? |
+               select(.ip != null and .port != null) |
+               (.ip + if .ip < 0 then 4294967296 else 0 end) as $ip |
+               $key + "@" +
+               (($ip / 16777216 | floor | tostring) + "." +
+                (($ip % 16777216) / 65536 | floor | tostring) + "." +
+                (($ip % 65536) / 256 | floor | tostring) + "." +
+                ($ip % 256 | tostring)) + ":" + (.port | tostring)
+              ] | join("\n")
+            ' | while IFS='@' read -r b64key rest; do
+              hexkey=$(printf '%s' "$b64key" | base64 -d | xxd -p | tr -d ' \n')
+              printf '%s@%s\n' "$hexkey" "$rest"
+            done | paste -sd ';'
+          )
+          if [ -n "$seeds" ]; then
+            echo "TON_MEMPOOL_LIVE_SEEDS=$seeds" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set default mempool overlay ID
+        run: |
+          if [ -z "${TON_MEMPOOL_LIVE_OVERLAY_ID:-}" ]; then
+            echo "TON_MEMPOOL_LIVE_OVERLAY_ID=12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run configured seed-only mempool live test
+        env:
+          TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS }}
+        run: cargo test -p tonutils-mempool --test live configured_seed_delivers_valid_external_message -- --ignored --nocapture

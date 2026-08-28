@@ -153,6 +153,70 @@ fn test_config_global_multiple_servers() {
 }
 
 #[test]
+fn test_extract_bootstrap_addresses_from_global_config() {
+    let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+    let json = format!(
+        r#"{{
+            "liteservers": [{{"ip": 2130706433, "port": 8001,
+                "id": {{"@type":"pub.ed25519", "key":"{key}"}}}}],
+            "dht": {{"static_nodes": {{"nodes": [{{
+                "id": {{"@type":"pub.ed25519", "key":"{key}"}},
+                "addr_list": {{"addrs": [{{"ip": 2130706434, "port": 30303}}]}}
+            }}]}}}}
+        }}"#
+    );
+
+    let addresses = extract_bootstrap_addresses(&json).unwrap();
+    assert_eq!(addresses.len(), 2);
+    assert!(addresses.iter().any(|item| item.address.port() == 30303));
+    assert!(
+        addresses
+            .iter()
+            .all(|item| item.public_key == Some([7; 32]))
+    );
+}
+
+#[test]
+fn test_extract_dht_addresses_excludes_liteservers() {
+    let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+    let json = format!(
+        r#"{{
+            "liteservers": [{{"ip": 2130706433, "port": 8001,
+                "id": {{"@type":"pub.ed25519", "key":"{key}"}}}}],
+            "dht": {{"static_nodes": {{"nodes": [{{
+                "id": {{"@type":"pub.ed25519", "key":"{key}"}},
+                "addr_list": {{"addrs": [{{"ip": 2130706434, "port": 30303}}]}}
+            }}]}}}}
+        }}"#
+    );
+    let addresses = extract_dht_addresses(&json).unwrap();
+    assert_eq!(addresses.len(), 1);
+    assert_eq!(addresses[0].address.port(), 30303);
+}
+
+#[test]
+fn test_extract_bootstrap_addresses_discards_unusable_records() {
+    let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+    let json = format!(
+        r#"{{
+            "liteservers": [
+                {{"ip": 0, "port": 0, "id": {{"@type":"pub.ed25519", "key":"{key}"}}}},
+                {{"ip": 2130706433, "port": 30303, "id": {{"@type":"pub.ed25519", "key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}}}
+            ],
+            "dht": {{"static_nodes": {{"nodes": [{{
+                "id": {{"@type":"pub.ed25519", "key":"{key}"}},
+                "addr_list": {{"addrs": [{{"ip": 2130706434, "port": 0}}]}}
+            }}]}}}}
+        }}"#
+    );
+
+    assert!(matches!(
+        extract_bootstrap_addresses(&json),
+        Err(ConfigError::NoBootstrapAddresses)
+    ));
+}
+
+#[test]
 fn test_config_global_liteserver_selection() {
     let config = ConfigGlobal {
         liteservers: vec![

@@ -25,6 +25,10 @@ From bottom to top:
 8. Smart-contract get-method and message APIs.
 9. Wallet, jetton, NFT, DHT, overlay, and mempool utilities.
 
+`tonutils-overlay` is transport-neutral peer/routing infrastructure with
+bounded queues. `tonutils-mempool` consumes raw overlay payloads and exposes a
+Rust `Stream`; it does not add a WebSocket or LiteServer indexing facade.
+
 ## Dependency Direction
 
 Lower layers must not depend on higher layers.
@@ -49,6 +53,8 @@ Forbidden directions:
 - `src/liteclient/`: client, peer, balancer, service layers.
 - `src/tvm/`: cells, BoC, addresses, dictionaries, stack.
 - `src/network_config/`: global config parser.
+- `crates/tonutils-overlay/`: overlay IDs, routing metadata, bounded peer pool.
+- `crates/tonutils-mempool/`: fast-path external-message dedup and event stream.
 - `src/cli/`: optional CLI.
 
 ## Public API Principles
