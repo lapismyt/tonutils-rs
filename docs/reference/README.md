@@ -26,25 +26,26 @@ wire formats, invariants, source priorities, and crate mapping belong here.
 6. [Checked-in schema inventory](schema-inventory.tsv)
 7. [LiteAPI schema](tl/lite-api.md)
 8. [ADNL TCP](network/adnl-tcp.md)
-9. [TVM cells](tvm/cells.md)
-10. [BoC format](tvm/boc.md)
-11. [TL-B data models](tvm/tlb.md)
-12. [Blockchain data model](blockchain/data-model.md)
-13. [Blockchain TL-B coverage](blockchain/tlb-coverage.md)
-14. [Block, config, and proof TL-B slice](blockchain/block-config-proof.md)
+9. [ADNL/overlay protocol matrix](network/protocol-matrix.md)
+10. [TVM cells](tvm/cells.md)
+11. [BoC format](tvm/boc.md)
+12. [TL-B data models](tvm/tlb.md)
+13. [Blockchain data model](blockchain/data-model.md)
+14. [Blockchain TL-B coverage](blockchain/tlb-coverage.md)
+15. [Block, config, and proof TL-B slice](blockchain/block-config-proof.md)
 
 The block TL-B slice is pinned to upstream revision
 `3d478cbde854be03a18ab2a59f8fc3c565cf7d14`; typed-family fixture metadata is
 tracked in `fixtures/compatibility/block_tlb_extended.json`.
-15. [LiteClient request flow](liteclient/request-flow.md)
-16. [LiteClient rate limiting](liteclient/rate-limiting.md)
-17. [LiteClient workflow coverage](liteclient/workflow-coverage.md)
-18. [Smart-contract get-methods](contracts/get-methods.md)
-19. [Wallet V5R1](contracts/wallet-v5r1.md)
-20. [Wallet V4R2 and TON mnemonics](contracts/wallet-v4r2-mnemonics.md)
-21. [TEP metadata roadmap](contracts/tep-metadata.md)
-22. [Overlay protocol design](network/overlay.md)
-23. [Mempool scanner design](mempool/scanner.md)
+16. [LiteClient request flow](liteclient/request-flow.md)
+17. [LiteClient rate limiting](liteclient/rate-limiting.md)
+18. [LiteClient workflow coverage](liteclient/workflow-coverage.md)
+19. [Smart-contract get-methods](contracts/get-methods.md)
+20. [Wallet V5R1](contracts/wallet-v5r1.md)
+21. [Wallet V4R2 and TON mnemonics](contracts/wallet-v4r2-mnemonics.md)
+22. [TEP metadata roadmap](contracts/tep-metadata.md)
+23. [Overlay protocol design](network/overlay.md)
+24. [Mempool scanner design](mempool/scanner.md)
 
 ## Directory Map
 

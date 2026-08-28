@@ -33,7 +33,6 @@ use tonutils_tl::Int256;
 const MAX_FRAME_SIZE: usize = 1 << 20;
 
 /// TL constructor IDs for QUIC framing.
-const QUIC_ANSWER_ID: u32 = 0x32f8f49f;
 
 /// Derives the SNI hostname for a TON QUIC connection.
 ///
@@ -284,20 +283,14 @@ impl QuicSession {
             })?
             .map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
 
-        // Parse the answer — try quic.answer first, then raw bytes
-        if buf.len() >= 4 {
-            let id = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-            if id == QUIC_ANSWER_ID {
-                let answer: QuicAnswer =
-                    tl_proto::deserialize(&buf).map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
-                if answer.id == query_id {
-                    return Ok(answer.data);
-                }
-            }
+        let answer: QuicAnswer = tl_proto::deserialize(&buf)
+            .map_err(|error| AdnlError::InvalidQuicAnswer(error.to_string()))?;
+        if answer.id != query_id {
+            return Err(AdnlError::InvalidQuicAnswer(
+                "answer query id does not match request".to_owned(),
+            ));
         }
-
-        // If not a valid quic.answer, return raw bytes
-        Ok(buf)
+        Ok(answer.data)
     }
 
     /// Sends a `quic.message` (fire and forget).
@@ -552,5 +545,48 @@ mod tests {
             client.connection().remote_address(),
             server.endpoint.local_addr().unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn quic_query_rejects_mismatched_answer_id() {
+        let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+        let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+        let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair).unwrap();
+        let server_addr = server.endpoint.local_addr().unwrap();
+
+        let client_handle = tokio::spawn(async move {
+            QuicSession::connect(
+                "127.0.0.1:0".parse().unwrap(),
+                server_addr,
+                client_keypair,
+                server_keypair.public_key,
+            )
+            .await
+            .unwrap()
+        });
+
+        let (server_conn, _) = server.accept().await.unwrap();
+        let server_fut = async move {
+            let (mut send, mut recv) = server_conn.accept_bi().await.unwrap();
+            let query: QuicQuery =
+                tl_proto::deserialize(&recv.read_to_end(MAX_FRAME_SIZE).await.unwrap()).unwrap();
+            send.write_all(&tl_proto::serialize(QuicAnswer {
+                id: Int256([9; 32]),
+                data: query.data,
+            }))
+            .await
+            .unwrap();
+            send.finish().unwrap();
+        };
+
+        let client_fut = async move {
+            let client = client_handle.await.unwrap();
+            client
+                .send_query(Int256([1; 32]), vec![1, 2, 3], Duration::from_secs(5))
+                .await
+        };
+
+        let (_, result) = tokio::join!(server_fut, client_fut);
+        assert!(result.is_err(), "mismatched QUIC answer must fail closed");
     }
 }

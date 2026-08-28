@@ -385,6 +385,8 @@ postponed work moves to `# BACKLOG`.
   - [ ] Model stream and datagram semantics with rate limiting and backpressure #quic #network #perf
   - [ ] Integrate QUIC with block-sync, fast-sync, and overlay communication #quic #network #overlay
   - [ ] Add offline fixtures and interoperability tests #quic #network #tests
+- [ ] Add official-node wire fixtures for ADNL UDP, overlay FEC, and QUIC #network #tests #overlay #quic
+- [ ] Implement feature-gated RLDP2 typed transfer path; keep legacy RLDP decode-only until fixtures exist #rldp #network #tests
 - [x] Build mempool scanning support #mempool
   - [x] Study `yungwine/ton-mempool` behavior and map required overlay flows #mempool #docs
   - [x] Identify public API for pending external messages #mempool

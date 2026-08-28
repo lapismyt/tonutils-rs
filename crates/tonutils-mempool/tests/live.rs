@@ -157,6 +157,15 @@ async fn configured_seed_delivers_valid_external_message() {
         }
         Err(error) => panic!("failed to read TON_MEMPOOL_LIVE_SEEDS: {error}"),
     };
+    assert!(
+        !seeds.is_empty(),
+        "live seed phase failed: no seeds were configured"
+    );
+    assert!(
+        seeds.iter().all(SeedPeer::is_valid),
+        "live seed phase failed: every seed must contain a nonzero Ed25519 key and usable IP:port"
+    );
+    eprintln!("live mempool phase=seed validated={}", seeds.len());
     let overlay_bytes = configured_bytes("TON_MEMPOOL_LIVE_OVERLAY_ID")
         .expect("TON_MEMPOOL_LIVE_OVERLAY_ID must be set to 32-byte hex");
     let timeout = std::env::var("TON_MEMPOOL_LIVE_TIMEOUT_SECS")
@@ -166,7 +175,7 @@ async fn configured_seed_delivers_valid_external_message() {
     let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let overlay = OverlayId::from_bytes(overlay_bytes);
     let dht_overlay_key: [u8; 32] = overlay_bytes;
-    let (_scanner, manager, stream) = MempoolScannerBuilder::new()
+    let (scanner, manager, stream) = MempoolScannerBuilder::new()
         .download_config(false)
         .overlay_id(overlay)
         .config(MempoolConfig::default())
@@ -177,7 +186,11 @@ async fn configured_seed_delivers_valid_external_message() {
         .native_udp("0.0.0.0:0".parse().unwrap(), local_key, None)
         .start()
         .await
-        .expect("configured seed scanner must start");
+        .unwrap_or_else(|error| panic!("live mempool phase=start failed: {error}"));
+    eprintln!(
+        "live mempool phase=connected peers={} overlay={overlay}",
+        manager.peer_count().await
+    );
     let mut events = Box::pin(stream);
     let event = tokio::time::timeout(Duration::from_secs(timeout), async {
         loop {
@@ -187,7 +200,16 @@ async fn configured_seed_delivers_valid_external_message() {
         }
     })
     .await;
-    let event = event.expect("configured overlay seed did not deliver an external message");
+    let event = match event {
+        Ok(event) => event,
+        Err(_) => {
+            let peers = manager.peer_count().await;
+            let metrics = scanner.metrics();
+            panic!(
+                "live mempool phase=delivery timed out after {timeout}s: peers={peers} metrics={metrics:?}"
+            );
+        }
+    };
     let lazy = event
         .lazy_message()
         .expect("external event must expose lazy message");
@@ -204,6 +226,7 @@ async fn configured_seed_delivers_valid_external_message() {
 fn parse_live_seeds(value: &str) -> Vec<SeedPeer> {
     value
         .split(';')
+        .filter(|entry| !entry.trim().is_empty())
         .map(|entry| {
             let (key, address) = entry
                 .split_once('@')
@@ -225,4 +248,12 @@ fn configured_seed_parser_accepts_ipv4_and_ipv6() {
     for value in ["127.0.0.1:30303", "[::1]:30303"] {
         assert!(SocketAddr::from_str(value).is_ok());
     }
+}
+
+#[test]
+fn configured_seed_parser_ignores_empty_separators() {
+    let key = "11".repeat(32);
+    let seeds = parse_live_seeds(&format!(";{key}@127.0.0.1:30303;;"));
+    assert_eq!(seeds.len(), 1);
+    assert!(seeds[0].is_valid());
 }
