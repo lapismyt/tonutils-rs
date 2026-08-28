@@ -174,11 +174,7 @@ async fn configured_seed_delivers_valid_external_message() {
         .reconnect_attempts(2)
         .discovery_timeout(Duration::from_secs(30))
         .dht_overlay_key(dht_overlay_key)
-        .native_udp(
-            "0.0.0.0:0".parse().unwrap(),
-            local_key,
-            Some(Duration::from_secs(10)),
-        )
+        .native_udp("0.0.0.0:0".parse().unwrap(), local_key, None)
         .start()
         .await
         .expect("configured seed scanner must start");
