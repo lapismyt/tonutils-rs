@@ -430,6 +430,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::case_sensitive_file_extension_comparisons)]
     fn sni_for_public_key_produces_valid_format() {
         let keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
         let sni = sni_for_public_key(&keypair.public_key);
@@ -481,8 +482,7 @@ mod tests {
         let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
         let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
 
-        let server =
-            QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair.clone()).unwrap();
+        let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair).unwrap();
         let server_addr = server.endpoint.local_addr().unwrap();
 
         let client_handle = tokio::spawn({
@@ -491,7 +491,7 @@ mod tests {
                 QuicSession::connect(
                     "127.0.0.1:0".parse().unwrap(),
                     server_addr,
-                    client_keypair.clone(),
+                    client_keypair,
                     pk,
                 )
                 .await
@@ -532,15 +532,14 @@ mod tests {
         let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
         let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
 
-        let server =
-            QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair.clone()).unwrap();
+        let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair).unwrap();
         let server_addr = server.endpoint.local_addr().unwrap();
 
         let client_handle = tokio::spawn(async move {
             QuicSession::connect(
                 "127.0.0.1:0".parse().unwrap(),
                 server_addr,
-                client_keypair.clone(),
+                client_keypair,
                 server_keypair.public_key,
             )
             .await

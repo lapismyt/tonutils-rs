@@ -1,3 +1,5 @@
+#![allow(clippy::large_types_passed_by_value)]
+
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -61,13 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let start = Instant::now();
         match tokio::time::timeout(
             Duration::from_secs(10),
-            test_dht_value(
-                local_addr,
-                local_key.clone(),
-                remote_pub,
-                addr,
-                key_hash.clone(),
-            ),
+            test_dht_value(local_addr, local_key, remote_pub, addr, key_hash.clone()),
         )
         .await
         {

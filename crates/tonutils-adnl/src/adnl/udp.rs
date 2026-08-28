@@ -391,19 +391,19 @@ impl AdnlUdpSession {
                 TlPublicKey::Ed25519 { key } => PublicKey::from_bytes(key.0),
                 _ => None,
             });
-            if let Some(ref sender) = sender_from_from {
-                if sender != &self.remote {
-                    log::trace!(
-                        "recv_contents: sender key mismatch (expected={:?}, got={:?})",
-                        self.remote,
-                        sender
-                    );
-                    consecutive_failures = consecutive_failures.saturating_add(1);
-                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                        return Err(AdnlError::IntegrityError);
-                    }
-                    continue;
+            if let Some(ref sender) = sender_from_from
+                && sender != &self.remote
+            {
+                log::trace!(
+                    "recv_contents: sender key mismatch (expected={:?}, got={:?})",
+                    self.remote,
+                    sender
+                );
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                    return Err(AdnlError::IntegrityError);
                 }
+                continue;
             }
             if let Some(from_short) = &contents.from_short
                 && from_short.id.0 != self.remote_id
@@ -521,13 +521,13 @@ impl AdnlUdpSession {
                     peer_key,
                     date,
                 } => {
-                    let Some((local_channel, local_date)) = self.pending_channel.take() else {
-                        continue;
-                    };
                     // Allow a generous clock skew tolerance (600 s ≈ 10 min) because
                     // some DHT nodes report a date slightly in the past relative to our
                     // local clock.  The important thing is that peer_key matches.
                     const CLOCK_SKEW_TOLERANCE: i32 = 600;
+                    let Some((local_channel, local_date)) = self.pending_channel.take() else {
+                        continue;
+                    };
                     if peer_key.0 != local_channel.public_key.to_bytes()
                         || *date < local_date - CLOCK_SKEW_TOLERANCE
                     {
@@ -807,8 +807,7 @@ impl AdnlUdpSession {
                         Ok(result) => return Ok(result),
                         Err(value_err) => {
                             // Log raw bytes for debugging
-                            let hex_full: String =
-                                answer.iter().map(|b| format!("{b:02x}")).collect();
+                            let hex_full = hex::encode(&answer);
                             log::debug!(
                                 "dht_find_value: DhtValueResult deserialize failed ({}), \
                                  answer len={}, hex_full={hex_full}, \

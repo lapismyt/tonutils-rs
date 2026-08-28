@@ -876,7 +876,7 @@ mod tests {
             DhtValueResult::Found { value: v } => {
                 assert_eq!(v, value);
             }
-            other => panic!("Expected Found, got {:?}", other),
+            DhtValueResult::NotFound { .. } => panic!("Expected Found, got NotFound"),
         }
     }
 

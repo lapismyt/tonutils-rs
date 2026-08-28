@@ -24,6 +24,7 @@ mod offline_fixture_tests {
         Base64(&'static str),
     }
 
+    #[allow(clippy::assert_is_empty)]
     fn assert_fixture<T>(fixture: &TlbFixture, expected: &T)
     where
         T: TlbSerialize + TlbDeserialize + PartialEq + Debug,
@@ -519,6 +520,7 @@ mod compatibility_checked_fixture_tests {
         boc_hex: String,
     }
 
+    #[allow(clippy::assert_is_empty)]
     fn fixture_set(json: &str) -> FixtureSet {
         let set: FixtureSet = serde_json::from_str(json).unwrap();
         assert!(!set.schema_revision.is_empty());
@@ -526,6 +528,7 @@ mod compatibility_checked_fixture_tests {
         set
     }
 
+    #[allow(clippy::assert_is_empty)]
     fn assert_fixture<T>(fixture: &Fixture, expected_type: &str, expected_value: T)
     where
         T: TlbSerialize + TlbDeserialize + PartialEq + Debug,

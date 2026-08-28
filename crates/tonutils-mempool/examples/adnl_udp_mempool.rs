@@ -1,3 +1,11 @@
+#![allow(
+    clippy::cast_precision_loss,
+    clippy::match_wildcard_for_single_variants,
+    clippy::format_collect,
+    clippy::wildcard_enum_match_arm,
+    clippy::ignored_unit_patterns
+)]
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

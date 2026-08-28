@@ -163,6 +163,7 @@ async fn direct_session_roundtrips_signed_packet_and_rejects_replay() {
 }
 
 #[tokio::test]
+#[allow(clippy::assert_is_empty)]
 async fn dht_find_node_query_routes_matching_answer() {
     let sender_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let receiver_key = KeyPair::generate(&mut rand::rngs::OsRng);
@@ -298,6 +299,7 @@ async fn channel_create_confirm_switches_to_directional_channel_packets() {
 }
 
 #[tokio::test]
+#[allow(clippy::assert_is_empty)]
 async fn overlay_random_peers_query_routes_boxed_response() {
     let client_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let server_key = KeyPair::generate(&mut rand::rngs::OsRng);

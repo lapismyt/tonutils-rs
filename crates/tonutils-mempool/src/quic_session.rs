@@ -1,3 +1,5 @@
+#![allow(clippy::large_types_passed_by_value)]
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -208,9 +210,8 @@ impl OverlaySession for QuicOverlaySession {
                 if message_overlay.0 != self.overlay {
                     continue;
                 }
-                match self.unwrap_overlay_payload(data_slice) {
-                    Ok(data) => return Ok(Arc::from(data)),
-                    Err(_) => {}
+                if let Ok(data) = self.unwrap_overlay_payload(data_slice) {
+                    return Ok(Arc::from(data));
                 }
             }
         })
@@ -397,8 +398,6 @@ async fn quic_query_overlay_seed(
             let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
             let address = seed.address.parse().ok()?;
             let overlay_dht_key = overlay_dht_key.clone();
-            let local_addr = local_addr;
-            let local_keypair = local_keypair;
             Some(async move {
                 let response = quic_query_dht_value_seed(
                     local_addr,
@@ -604,8 +603,6 @@ pub fn quic_overlay_lookup(
             let responses = join_all(seeds.into_iter().filter_map(|seed| {
                 let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
                 let address = seed.address.parse().ok()?;
-                let overlay = overlay;
-                let overlay_key = overlay_key;
                 Some(quic_query_overlay_seed(
                     local_addr,
                     local_keypair,
