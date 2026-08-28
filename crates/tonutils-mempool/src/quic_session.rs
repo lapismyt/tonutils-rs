@@ -78,6 +78,13 @@ impl QuicOverlaySession {
             if self.fec.len() >= 128 && !self.fec.contains_key(&fec.data_hash.0) {
                 return Err("overlay FEC reassembly capacity exceeded".to_owned());
             }
+            if fec.data.len() < 4 {
+                return Err("overlay FEC packet is truncated".to_owned());
+            }
+            let packet = EncodingPacket::deserialize(&fec.data);
+            if packet.data().len() != symbol_size as usize {
+                return Err("overlay FEC symbol has invalid length".to_owned());
+            }
             let state = self
                 .fec
                 .entry(fec.data_hash.0)
@@ -102,7 +109,6 @@ impl QuicOverlaySession {
             }
             state.last_seen = Instant::now();
             let expected_size = state.data_size;
-            let packet = EncodingPacket::deserialize(&fec.data);
             if packet.payload_id().source_block_number() != 0 {
                 return Err("overlay FEC packet has invalid source block".to_owned());
             }

@@ -32,8 +32,6 @@ use tonutils_tl::Int256;
 /// Default maximum QUIC stream buffer size (1 MiB).
 const MAX_FRAME_SIZE: usize = 1 << 20;
 
-/// TL constructor IDs for QUIC framing.
-
 /// Derives the SNI hostname for a TON QUIC connection.
 ///
 /// Format: `<hex[0:32]>.<hex[32:64]>.adnl` (lowercase)
@@ -586,7 +584,7 @@ mod tests {
                 .await
         };
 
-        let (_, result) = tokio::join!(server_fut, client_fut);
+        let ((), result) = tokio::join!(server_fut, client_fut);
         assert!(result.is_err(), "mismatched QUIC answer must fail closed");
     }
 }

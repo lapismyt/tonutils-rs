@@ -152,6 +152,7 @@ pub struct MempoolMetrics {
     pub rejected: u64,
     pub broadcast_failures: u64,
     pub invalid_warnings: u64,
+    pub overlay_packets: u64,
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -482,6 +483,7 @@ impl MempoolScannerBuilder {
         let _identity = self.identity;
         let _ = self.queue_policy;
         let seeds = self.resolve_bootstrap().await?;
+        let seed_count = seeds.len();
         let discovery = DiscoveryConfig {
             overlay: self.overlay_id,
             seeds: seeds.clone(),
@@ -528,11 +530,14 @@ impl MempoolScannerBuilder {
         } else {
             discovery.discover(|| async { Vec::new() }).await
         };
+        let discovered_count = peers.len().saturating_sub(seed_count);
         if peers.is_empty() {
             return Err(MempoolError::NoBootstrapPeers);
         }
         log::info!(
-            "mempool::start: {} peers from discovery, attempting {} session(s)",
+            "mempool::start: seeds={} discovery_results={} peers={} attempting {} session(s)",
+            seed_count,
+            discovered_count,
             peers.len(),
             peers.len()
         );
@@ -601,7 +606,8 @@ impl MempoolScannerBuilder {
                 }
             }))
             .await;
-            let mut connected = 0;
+            let mut factory_successes = 0;
+            let mut factory_failures = 0;
             for result in results {
                 match result {
                     Ok(session) => {
@@ -613,18 +619,41 @@ impl MempoolScannerBuilder {
                                 self.reconnect_backoff,
                             )
                             .await;
-                        connected += 1;
+                        factory_successes += 1;
                     }
                     Err(error) => {
+                        factory_failures += 1;
                         log::warn!("bootstrap session failed: {error}");
                     }
                 }
             }
-            if connected == 0 {
+            log::info!(
+                "mempool bootstrap: factory_successes={} factory_failures={}",
+                factory_successes,
+                factory_failures
+            );
+            if factory_successes == 0 {
                 manager.shutdown();
                 return Err(MempoolError::Session(
                     "all validated bootstrap sessions failed".into(),
                 ));
+            }
+            if self.bootstrap_timeout != Duration::ZERO {
+                let deadline = tokio::time::Instant::now() + self.bootstrap_timeout;
+                while manager.peer_count().await == 0 {
+                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    if remaining.is_zero() {
+                        manager.shutdown();
+                        return Err(MempoolError::Session(
+                            "bootstrap sessions did not register any peers".into(),
+                        ));
+                    }
+                    tokio::time::sleep(remaining.min(Duration::from_millis(10))).await;
+                }
+                log::info!(
+                    "mempool bootstrap ready: registered_peers={}",
+                    manager.peer_count().await
+                );
             }
         }
         Ok((scanner, manager, stream))
@@ -720,6 +749,7 @@ pub struct MempoolScanner {
     rejected: AtomicU64,
     broadcast_failures: AtomicU64,
     invalid_warnings: AtomicU64,
+    overlay_packets: AtomicU64,
     last_invalid_warning: Mutex<Option<Instant>>,
 }
 
@@ -751,6 +781,7 @@ impl MempoolScanner {
             rejected: AtomicU64::new(0),
             broadcast_failures: AtomicU64::new(0),
             invalid_warnings: AtomicU64::new(0),
+            overlay_packets: AtomicU64::new(0),
             last_invalid_warning: Mutex::new(None),
         })
     }
@@ -787,6 +818,7 @@ impl MempoolScanner {
             rejected: self.rejected.load(Ordering::Relaxed),
             broadcast_failures: self.broadcast_failures.load(Ordering::Relaxed),
             invalid_warnings: self.invalid_warnings.load(Ordering::Relaxed),
+            overlay_packets: self.overlay_packets.load(Ordering::Relaxed),
         }
     }
 
@@ -900,6 +932,7 @@ impl MempoolScanner {
                     _ = shutdown.changed() => break,
                     packet = pool.next_packet() => {
                         let Some(OverlayPacket { payload, routing }) = packet else { break; };
+                        self.overlay_packets.fetch_add(1, Ordering::Relaxed);
                         match self.ingest(payload, routing).await {
                             Ok(_) => {}
                             Err(MempoolError::QueueClosed) => break,

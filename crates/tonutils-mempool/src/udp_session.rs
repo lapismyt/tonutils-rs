@@ -900,6 +900,13 @@ impl AdnlUdpOverlaySession {
             if self.fec.len() >= 128 && !self.fec.contains_key(&fec.data_hash.0) {
                 return Err("overlay FEC reassembly capacity exceeded".to_owned());
             }
+            if fec.data.len() < 4 {
+                return Err("overlay FEC packet is truncated".to_owned());
+            }
+            let packet = EncodingPacket::deserialize(&fec.data);
+            if packet.data().len() != symbol_size as usize {
+                return Err("overlay FEC symbol has invalid length".to_owned());
+            }
             let state = self
                 .fec
                 .entry(fec.data_hash.0)
@@ -924,7 +931,6 @@ impl AdnlUdpOverlaySession {
             }
             state.last_seen = Instant::now();
             let expected_size = state.data_size;
-            let packet = EncodingPacket::deserialize(&fec.data);
             if packet.payload_id().source_block_number() != 0 {
                 return Err("overlay FEC packet has invalid source block".to_owned());
             }
@@ -1081,6 +1087,52 @@ mod tests {
                 assert!(result.is_err());
             }
         }
+    }
+
+    #[tokio::test]
+    async fn rejects_truncated_serialized_fec_packet() {
+        let local = KeyPair::generate(&mut rand::rngs::OsRng);
+        let remote = KeyPair::generate(&mut rand::rngs::OsRng);
+        let local_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let remote_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let session = AdnlUdpSession::connect(local_addr, remote_addr, local, remote.public_key)
+            .await
+            .unwrap();
+        let mut adapter = AdnlUdpOverlaySession {
+            peer: PeerId::from_bytes([3; 32]),
+            session,
+            overlay: None,
+            fec: HashMap::new(),
+            last_keepalive: Instant::now(),
+        };
+        let payload = tl_proto::serialize(OverlayBroadcastFec {
+            src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![3] },
+            certificate: tonutils_tl::tl::network::OverlayCertificate::Empty,
+            data_hash: tonutils_tl::Int256([4; 32]),
+            data_size: 4,
+            flags: 0,
+            data: vec![1, 2, 3],
+            seqno: 0,
+            fec: tonutils_tl::tl::network::FecType::RaptorQ {
+                data_size: 4,
+                symbol_size: 4,
+                symbols_count: 1,
+            },
+            date: 0,
+            signature: Vec::new(),
+        });
+        assert_eq!(
+            adapter.unwrap_overlay_payload(&payload).unwrap_err(),
+            "overlay FEC packet is truncated"
+        );
     }
 
     #[tokio::test]

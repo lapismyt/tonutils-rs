@@ -123,6 +123,7 @@ async fn builder_merges_and_deduplicates_explicit_seeds() {
     let (scanner, manager, events) = MempoolScannerBuilder::new()
         .download_config(false)
         .config(config())
+        .bootstrap_timeout(Duration::ZERO)
         .seeds([seed.clone(), seed])
         .start()
         .await
@@ -162,6 +163,7 @@ async fn seed_only_mode_ignores_global_discovery_sources() {
     let result = MempoolScannerBuilder::new()
         .global_config_json("not json")
         .seed(seed)
+        .bootstrap_timeout(Duration::ZERO)
         .native_udp_seeds_only("0.0.0.0:0".parse().unwrap(), key, None)
         .start()
         .await;

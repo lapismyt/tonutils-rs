@@ -165,7 +165,10 @@ async fn configured_seed_delivers_valid_external_message() {
         seeds.iter().all(SeedPeer::is_valid),
         "live seed phase failed: every seed must contain a nonzero Ed25519 key and usable IP:port"
     );
-    eprintln!("live mempool phase=seed validated={}", seeds.len());
+    eprintln!(
+        "live mempool phase=seed validated={} discovery_results=pending",
+        seeds.len()
+    );
     let overlay_bytes = configured_bytes("TON_MEMPOOL_LIVE_OVERLAY_ID")
         .expect("TON_MEMPOOL_LIVE_OVERLAY_ID must be set to 32-byte hex");
     let timeout = std::env::var("TON_MEMPOOL_LIVE_TIMEOUT_SECS")
@@ -187,10 +190,12 @@ async fn configured_seed_delivers_valid_external_message() {
         .start()
         .await
         .unwrap_or_else(|error| panic!("live mempool phase=start failed: {error}"));
-    eprintln!(
-        "live mempool phase=connected peers={} overlay={overlay}",
-        manager.peer_count().await
+    let connected_peers = manager.peer_count().await;
+    assert!(
+        connected_peers > 0,
+        "live mempool phase=bootstrap readiness failed: registered_peers=0"
     );
+    eprintln!("live mempool phase=connected registered_peers={connected_peers} overlay={overlay}");
     let mut events = Box::pin(stream);
     let event = tokio::time::timeout(Duration::from_secs(timeout), async {
         loop {
@@ -206,7 +211,7 @@ async fn configured_seed_delivers_valid_external_message() {
             let peers = manager.peer_count().await;
             let metrics = scanner.metrics();
             panic!(
-                "live mempool phase=delivery timed out after {timeout}s: peers={peers} metrics={metrics:?}"
+                "live mempool phase=delivery timed out after {timeout}s: registered_peers={peers} metrics={metrics:?}"
             );
         }
     };
