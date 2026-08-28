@@ -150,9 +150,10 @@ fn aes_encrypt(secret: [u8; 32], plaintext: &[u8]) -> Bytes {
     let mut key = [0u8; 32];
     key[..16].copy_from_slice(&secret[..16]);
     key[16..].copy_from_slice(&digest[16..]);
-    let mut iv = [0u8; 16];
-    iv[..4].copy_from_slice(&digest[..4]);
-    iv[4..].copy_from_slice(&secret[20..]);
+    let iv: [u8; 16] = [&digest[..4], &secret[20..]]
+        .concat()
+        .try_into()
+        .expect("digest prefix and secret suffix must form a 16-byte IV");
     let mut ciphertext = plaintext.to_vec();
     ctr::Ctr128BE::<aes::Aes256>::new((&key).into(), (&iv).into()).apply_keystream(&mut ciphertext);
     let mut output = Vec::with_capacity(32 + ciphertext.len());
@@ -171,9 +172,10 @@ fn aes_decrypt(secret: [u8; 32], packet: &[u8]) -> Result<Bytes, AdnlError> {
     let mut key = [0u8; 32];
     key[..16].copy_from_slice(&secret[..16]);
     key[16..].copy_from_slice(&digest[16..]);
-    let mut iv = [0u8; 16];
-    iv[..4].copy_from_slice(&digest[..4]);
-    iv[4..].copy_from_slice(&secret[20..]);
+    let iv: [u8; 16] = [&digest[..4], &secret[20..]]
+        .concat()
+        .try_into()
+        .map_err(|_| AdnlError::IntegrityError)?;
     let mut plaintext = packet[32..].to_vec();
     ctr::Ctr128BE::<aes::Aes256>::new((&key).into(), (&iv).into()).apply_keystream(&mut plaintext);
     if !bool::from(Sha256::digest(&plaintext).as_slice().ct_eq(&digest)) {
