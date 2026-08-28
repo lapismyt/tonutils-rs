@@ -381,10 +381,7 @@ pub struct QuicServer {
 
 impl QuicServer {
     /// Creates a new QUIC server listening on the given address.
-    pub fn bind(
-        local_addr: SocketAddr,
-        local_keypair: AdnlKeyPair,
-    ) -> Result<Self, AdnlError> {
+    pub fn bind(local_addr: SocketAddr, local_keypair: AdnlKeyPair) -> Result<Self, AdnlError> {
         let server_config = make_quinn_server_config(&local_keypair)?;
 
         let socket = std::net::UdpSocket::bind(local_addr)?;
@@ -484,8 +481,8 @@ mod tests {
         let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
         let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
 
-        let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair.clone())
-            .unwrap();
+        let server =
+            QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair.clone()).unwrap();
         let server_addr = server.endpoint.local_addr().unwrap();
 
         let client_handle = tokio::spawn({
@@ -535,8 +532,8 @@ mod tests {
         let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
         let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
 
-        let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair.clone())
-            .unwrap();
+        let server =
+            QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair.clone()).unwrap();
         let server_addr = server.endpoint.local_addr().unwrap();
 
         let client_handle = tokio::spawn(async move {

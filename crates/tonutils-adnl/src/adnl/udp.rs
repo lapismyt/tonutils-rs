@@ -14,8 +14,8 @@ use subtle::ConstantTimeEq;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 use tonutils_tl::tl::network::{
-    AddressList, DhtMessage, DhtNodesBoxed, DhtValueResult, OverlayNodes, OverlayNodesBoxed,
-    OverlayQuery, PacketContents, PublicKey as TlPublicKey,
+    AddressList, DhtMessage, DhtNodes, DhtNodesBoxed, DhtValueResult, OverlayNodes,
+    OverlayNodesBoxed, OverlayQuery, PacketContents, PublicKey as TlPublicKey,
 };
 use tonutils_tl::{Int256, Message as AdnlMessage};
 
@@ -356,6 +356,10 @@ impl AdnlUdpSession {
                 continue;
             }
             if size < self.local_id.len() || packet[..self.local_id.len()] != self.local_id {
+                log::trace!(
+                    "recv_contents: dropping packet (size={size}, local_id_match={})",
+                    size >= self.local_id.len() && packet[..self.local_id.len()] == self.local_id
+                );
                 consecutive_failures = consecutive_failures.saturating_add(1);
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                     return Err(AdnlError::IntegrityError);
@@ -363,6 +367,7 @@ impl AdnlUdpSession {
                 continue;
             }
             let Ok((_, payload)) = decrypt_direct(&self.local, &packet[32..size]) else {
+                log::trace!("recv_contents: decrypt_direct failed for packet of size {size}");
                 consecutive_failures = consecutive_failures.saturating_add(1);
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                     return Err(AdnlError::IntegrityError);
@@ -370,36 +375,38 @@ impl AdnlUdpSession {
                 continue;
             };
             let Ok(contents) = tl_proto::deserialize::<PacketContents>(&payload) else {
+                log::trace!(
+                    "recv_contents: PacketContents deserialization failed, payload len={}",
+                    payload.len()
+                );
                 consecutive_failures = consecutive_failures.saturating_add(1);
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                     return Err(AdnlError::IntegrityError);
                 }
                 continue;
             };
-            let Some(TlPublicKey::Ed25519 { key }) = &contents.from else {
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
+            let sender_from_from = contents.from.as_ref().and_then(|pk| match pk {
+                TlPublicKey::Ed25519 { key } => PublicKey::from_bytes(key.0),
+                _ => None,
+            });
+            if let Some(ref sender) = sender_from_from {
+                if sender != &self.remote {
+                    log::trace!(
+                        "recv_contents: sender key mismatch (expected={:?}, got={:?})",
+                        self.remote,
+                        sender
+                    );
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                        return Err(AdnlError::IntegrityError);
+                    }
+                    continue;
                 }
-                continue;
-            };
-            let Some(sender) = PublicKey::from_bytes(key.0) else {
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
-                continue;
-            };
-            if sender != self.remote {
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
-                continue;
             }
             if let Some(from_short) = &contents.from_short
                 && from_short.id.0 != self.remote_id
             {
+                log::trace!("recv_contents: from_short id mismatch");
                 consecutive_failures = consecutive_failures.saturating_add(1);
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                     return Err(AdnlError::IntegrityError);
@@ -407,6 +414,7 @@ impl AdnlUdpSession {
                 continue;
             }
             let Some(signature) = &contents.signature else {
+                log::trace!("recv_contents: missing signature");
                 consecutive_failures = consecutive_failures.saturating_add(1);
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                     return Err(AdnlError::IntegrityError);
@@ -426,6 +434,7 @@ impl AdnlUdpSession {
                 .remote
                 .verify_raw(&tl_proto::serialize(unsigned), &signature)
             {
+                log::trace!("recv_contents: signature verification failed");
                 consecutive_failures = consecutive_failures.saturating_add(1);
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                     return Err(AdnlError::IntegrityError);
@@ -437,6 +446,11 @@ impl AdnlUdpSession {
                     || self.received.contains(&seqno)
                     || (self.highest_seqno > 4096 && seqno + 4096 < self.highest_seqno)
                 {
+                    log::trace!(
+                        "recv_contents: seqno dropped (seqno={seqno}, highest={}, received_len={})",
+                        self.highest_seqno,
+                        self.received.len()
+                    );
                     consecutive_failures = consecutive_failures.saturating_add(1);
                     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
                         return Err(AdnlError::IntegrityError);
@@ -508,11 +522,20 @@ impl AdnlUdpSession {
                     let Some((local_channel, local_date)) = self.pending_channel.take() else {
                         continue;
                     };
-                    if peer_key.0 != local_channel.public_key.to_bytes() || *date < local_date {
+                    // Allow a generous clock skew tolerance (600 s ≈ 10 min) because
+                    // some DHT nodes report a date slightly in the past relative to our
+                    // local clock.  The important thing is that peer_key matches.
+                    const CLOCK_SKEW_TOLERANCE: i32 = 600;
+                    if peer_key.0 != local_channel.public_key.to_bytes()
+                        || *date < local_date - CLOCK_SKEW_TOLERANCE
+                    {
                         log::warn!(
-                            "ADNL channel confirmation mismatch: expected peer_key={:?}, got peer_key={:?}",
+                            "ADNL channel confirmation mismatch: expected peer_key={:?}, got peer_key={:?}, \
+                             expected date >= {}, got date = {}",
                             local_channel.public_key.to_bytes(),
-                            peer_key.0
+                            peer_key.0,
+                            local_date - CLOCK_SKEW_TOLERANCE,
+                            *date,
                         );
                         return Err(AdnlError::ChannelConfirmMismatch {
                             expected: local_channel.public_key.to_bytes(),
@@ -777,8 +800,59 @@ impl AdnlUdpSession {
                 } = message
                     && id == query_id
                 {
-                    return tl_proto::deserialize(&answer)
-                        .map_err(|error| AdnlError::MalformedPacket(error.to_string()));
+                    // Try to deserialize as DhtValueResult first
+                    match tl_proto::deserialize::<DhtValueResult>(&answer) {
+                        Ok(result) => return Ok(result),
+                        Err(value_err) => {
+                            // Log raw bytes for debugging
+                            let hex_full: String =
+                                answer.iter().map(|b| format!("{b:02x}")).collect();
+                            log::debug!(
+                                "dht_find_value: DhtValueResult deserialize failed ({}), \
+                                 answer len={}, hex_full={hex_full}, \
+                                 trying DhtNodesBoxed fallback",
+                                value_err,
+                                answer.len()
+                            );
+
+                            // Step-by-step: try to read constructor ID
+                            if answer.len() >= 4 {
+                                let ctor = u32::from_le_bytes(answer[..4].try_into().unwrap());
+                                log::debug!(
+                                    "dht_find_value: step-by-step: constructor=0x{ctor:08x} \
+                                     (expected Found=0xe40cf774, NotFound=0xa2620568)"
+                                );
+                                if ctor == 0xe40cf774 && answer.len() >= 8 {
+                                    let inner_ctor =
+                                        u32::from_le_bytes(answer[4..8].try_into().unwrap());
+                                    log::debug!(
+                                        "dht_find_value: step-by-step: inner constructor=0x{inner_ctor:08x} \
+                                         (expected DhtValue=0x90ad27cb)"
+                                    );
+                                }
+                            }
+
+                            // Fallback: try DhtNodesBoxed (some nodes respond with
+                            // dht.Nodes constructor 0x7974a0be instead of DhtValueResult)
+                            if let Ok(nodes_boxed) = tl_proto::deserialize::<DhtNodesBoxed>(&answer)
+                            {
+                                log::debug!(
+                                    "dht_find_value: got DhtNodesBoxed fallback with {} nodes",
+                                    nodes_boxed.nodes.len()
+                                );
+                                return Ok(DhtValueResult::NotFound {
+                                    nodes: DhtNodes {
+                                        nodes: nodes_boxed.nodes,
+                                    },
+                                });
+                            }
+
+                            // Both failed, return the original error with hex context
+                            return Err(AdnlError::MalformedPacket(format!(
+                                "DhtValueResult={value_err}, hex_full={hex_full}"
+                            )));
+                        }
+                    }
                 }
             }
         }

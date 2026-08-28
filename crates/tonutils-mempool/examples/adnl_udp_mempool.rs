@@ -7,7 +7,6 @@ use futures::StreamExt;
 use tonutils_adnl::KeyPair;
 use tonutils_mempool::{MempoolEvent, MempoolScannerBuilder};
 
-/// Mainnet zero state file hash.
 const MAINNET_ZERO_STATE_HASH: [u8; 32] = [
     0x5e, 0x99, 0x4f, 0xcf, 0x4d, 0x42, 0x5c, 0x0a, 0x6c, 0xe6, 0xa7, 0x92, 0x59, 0x4b, 0x71, 0x73,
     0x20, 0x5f, 0x74, 0x0a, 0x39, 0xcd, 0x56, 0xf5, 0x37, 0xde, 0xfd, 0x28, 0xb4, 0x8a, 0x0f, 0x6e,
@@ -42,14 +41,23 @@ impl Stats {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pretty_env_logger = pretty_env_logger::try_init();
-    let _ = pretty_env_logger;
+    pretty_env_logger::init();
 
     let config_path = std::env::args().nth(1);
     let testnet = std::env::var("TON_NETWORK").as_deref() == Ok("testnet");
 
     let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let local_addr: SocketAddr = "0.0.0.0:0".parse()?;
+
+    let network_label = if testnet { "testnet" } else { "mainnet" };
+    println!("adnl-udp mempool scanner ({network_label})");
+    println!("  local addr:   {local_addr}");
+    println!(
+        "  local pubkey: {}",
+        hex::encode(local_key.public_key.as_bytes())
+    );
+
+    let start = Instant::now();
 
     let mut builder = MempoolScannerBuilder::new()
         .testnet(testnet)
@@ -61,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             0,
             i64::MIN,
             MAINNET_ZERO_STATE_HASH,
-            None,
+            Some(Duration::from_secs(15)),
         );
 
     if let Some(path) = config_path {
@@ -69,12 +77,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder = builder.global_config_json(json);
     }
 
-    println!("starting mempool scanner...");
+    println!(
+        "[{:>6.1}s] starting scanner...",
+        start.elapsed().as_secs_f64()
+    );
     let (_scanner, manager, stream) = builder.start().await?;
-    println!("connected. listening for external messages...\n");
+    println!(
+        "[{:>6.1}s] connected. listening for external messages...\n",
+        start.elapsed().as_secs_f64()
+    );
 
     let stats = Arc::new(Stats::new());
-    let start = Instant::now();
     let mut stream = Box::pin(stream);
 
     let shutdown = Arc::new(tokio::sync::Notify::new());

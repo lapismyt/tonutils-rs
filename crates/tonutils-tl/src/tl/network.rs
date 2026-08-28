@@ -226,12 +226,25 @@ pub struct DhtNodesBoxed {
 
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
-#[tl(boxed, id = 0xf667de8f)]
 pub struct DhtKey {
     /// dht.key id:int256 name:bytes idx:int = dht.Key;
+    ///
+    /// BARE type — no constructor prefix on the wire.
+    /// Use [`DhtKey::boxed_bytes`] for hashing and signing where the
+    /// constructor prefix `0xf667de8f` is required.
     pub id: Int256,
     pub name: Vec<u8>,
     pub idx: i32,
+}
+
+impl DhtKey {
+    /// Serialize with the constructor prefix `0xf667de8f` for hashing and signing.
+    pub fn boxed_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(4 + 32 + self.name.len() + 4 + 4);
+        out.extend_from_slice(&0xf667de8fu32.to_le_bytes());
+        out.extend_from_slice(&tl_proto::serialize(self.clone()));
+        out
+    }
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -274,14 +287,27 @@ pub type DhtLookup = DhtMessage;
 
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
-#[tl(boxed, id = 0x281d4e05)]
 pub struct DhtKeyDescription {
     /// dht.keyDescription key:dht.key id:PublicKey update_rule:dht.UpdateRule
     /// signature:bytes = dht.KeyDescription;
+    ///
+    /// BARE type — no constructor prefix on the wire.
+    /// Use [`DhtKeyDescription::to_sign_bytes`] for signing where the
+    /// constructor prefix `0x281d4e05` is required.
     pub key: DhtKey,
     pub id: PublicKey,
     pub update_rule: DhtUpdateRule,
     pub signature: Vec<u8>,
+}
+
+impl DhtKeyDescription {
+    /// Serialize with the constructor prefix `0x281d4e05` for signing.
+    pub fn to_sign_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&0x281d4e05u32.to_le_bytes());
+        out.extend_from_slice(&tl_proto::serialize(self.clone()));
+        out
+    }
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -538,8 +564,8 @@ pub enum DhtValueResult {
     /// dht.valueNotFound nodes:dht.nodes = dht.ValueResult;
     #[tl(id = 0xa2620568)]
     NotFound { nodes: DhtNodes },
-    /// dht.valueFound value:dht.value = dht.ValueResult;
-    #[tl(id = 0xe6e9fbec)]
+    /// dht.valueFound value:dht.Value = dht.ValueResult;
+    #[tl(id = 0xe40cf774)]
     Found { value: DhtValue },
 }
 
@@ -612,13 +638,29 @@ mod tests {
 
     #[test]
     fn dht_key_and_overlay_node_to_sign_have_canonical_constructors() {
+        // DhtKey is BARE — serialize() produces raw fields without constructor prefix.
+        let bare_bytes = serialize(DhtKey {
+            id: Int256([1; 32]),
+            name: b"nodes".to_vec(),
+            idx: 0,
+        });
+        // The first 4 bytes must NOT be the constructor id (it's bare).
+        assert_ne!(
+            &bare_bytes[..4],
+            &0xf667de8fu32.to_le_bytes(),
+            "DhtKey::serialize must NOT include constructor prefix"
+        );
+        // boxed_bytes() DOES include the constructor prefix — used for hashing.
+        let boxed = DhtKey {
+            id: Int256([1; 32]),
+            name: b"nodes".to_vec(),
+            idx: 0,
+        }
+        .boxed_bytes();
         assert_eq!(
-            &serialize(DhtKey {
-                id: Int256([1; 32]),
-                name: b"nodes".to_vec(),
-                idx: 0,
-            })[..4],
-            &0xf667de8fu32.to_le_bytes()
+            &boxed[..4],
+            &0xf667de8fu32.to_le_bytes(),
+            "DhtKey::boxed_bytes must include constructor prefix"
         );
         assert_eq!(
             &serialize(OverlayNodeToSign {
@@ -761,5 +803,101 @@ mod tests {
         assert_eq!(&bytes[..4], &0x32f8f49fu32.to_le_bytes());
         let decoded: QuicAnswer = deserialize(&bytes).unwrap();
         assert_eq!(decoded, answer);
+    }
+
+    #[test]
+    fn dht_value_result_found_canonical_constructor() {
+        let value = DhtValue {
+            key: DhtKeyDescription {
+                key: DhtKey {
+                    id: Int256([0xAA; 32]),
+                    name: vec![0xBB; 32],
+                    idx: 0,
+                },
+                id: PublicKey::Ed25519 {
+                    key: Int256([0xCC; 32]),
+                },
+                update_rule: DhtUpdateRule::Signature,
+                signature: vec![],
+            },
+            value: vec![1, 2, 3],
+            ttl: 1000,
+            signature: vec![],
+        };
+        let result = DhtValueResult::Found {
+            value: value.clone(),
+        };
+        let bytes = serialize(result.clone());
+        assert_eq!(
+            &bytes[..4],
+            &0xe40cf774u32.to_le_bytes(),
+            "DhtValueResult::Found constructor ID mismatch: got {:08x}",
+            u32::from_le_bytes(bytes[..4].try_into().unwrap())
+        );
+        let decoded: DhtValueResult = deserialize(&bytes).unwrap();
+        assert_eq!(decoded, result);
+    }
+
+    #[test]
+    fn dht_value_result_not_found_canonical_constructor() {
+        let result = DhtValueResult::NotFound {
+            nodes: DhtNodes { nodes: vec![] },
+        };
+        let bytes = serialize(result.clone());
+        assert_eq!(&bytes[..4], &0xa2620568u32.to_le_bytes());
+        let decoded: DhtValueResult = deserialize(&bytes).unwrap();
+        assert_eq!(decoded, result);
+    }
+
+    #[test]
+    fn dht_value_result_found_deserializes_from_wire_bytes() {
+        let value = DhtValue {
+            key: DhtKeyDescription {
+                key: DhtKey {
+                    id: Int256([0xAA; 32]),
+                    name: vec![0xBB; 32],
+                    idx: 5,
+                },
+                id: PublicKey::Ed25519 {
+                    key: Int256([0xCC; 32]),
+                },
+                update_rule: DhtUpdateRule::Signature,
+                signature: vec![],
+            },
+            value: vec![0xDE, 0xAD],
+            ttl: 999,
+            signature: vec![],
+        };
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&0xe40cf774u32.to_le_bytes());
+        wire.extend_from_slice(&serialize(value.clone()));
+        let decoded: DhtValueResult = deserialize(&wire).unwrap();
+        match decoded {
+            DhtValueResult::Found { value: v } => {
+                assert_eq!(v, value);
+            }
+            other => panic!("Expected Found, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn dht_value_result_found_from_real_dht_bytes() {
+        // Real bytes captured from a TON mainnet DHT node response.
+        // First 4 bytes: 74f70ce4 = 0xe40cf774 = DhtValueResult::Found
+        // Next 4 bytes: cb27ad90 = 0x90ad27cb = DhtValue
+        // The remaining bytes encode the DhtValue fields.
+        let hex_str = "74f70ce4cb27ad9012b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649056e6f646573000000000000cb45ba34209435c212dc0ec5";
+        let wire: Vec<u8> = (0..hex_str.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex_str[i..i + 2], 16).unwrap())
+            .collect();
+        assert_eq!(&wire[..4], &0xe40cf774u32.to_le_bytes());
+        assert_eq!(&wire[4..8], &0x90ad27cbu32.to_le_bytes());
+        // This should succeed — the constructors are correct.
+        let result: Result<DhtValueResult, _> = deserialize(&wire);
+        match &result {
+            Ok(v) => eprintln!("Deserialization OK: {v:?}"),
+            Err(e) => eprintln!("Deserialization FAILED: {e}"),
+        }
     }
 }

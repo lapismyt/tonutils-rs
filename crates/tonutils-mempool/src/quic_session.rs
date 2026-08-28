@@ -3,15 +3,20 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::future::BoxFuture;
+use futures::future::join_all;
 use raptorq::{Decoder, EncodingPacket, ObjectTransmissionInformation, PayloadId};
 use sha2::{Digest, Sha256};
 use tl_proto::TlRead;
 use tonutils_adnl::adnl::quic::QuicSession;
-use tonutils_adnl::{KeyPair, now_i32};
-use tonutils_overlay::{OverlayId, OverlaySession, PeerId, SeedPeer};
+use tonutils_adnl::{AdnlAddress, KeyPair, PublicKey as AdnlPublicKey, now_i32};
+use tonutils_overlay::{OverlayId, OverlaySession, PeerId, SeedDiscoveryLookup, SeedPeer};
+
+/// QUIC port offset: upstream TON nodes listen for QUIC on `adnl_udp_port + 1000`.
+const QUIC_PORT_OFFSET: u16 = 1000;
 use tonutils_tl::tl::network::{
-    OverlayBroadcast, OverlayBroadcastFec, OverlayMessage, QuicMessage,
-    TonNodeExternalMessageBroadcast,
+    Address, AddressListBoxed, DhtKey, DhtValueResult, OverlayBroadcast, OverlayBroadcastFec,
+    OverlayMessage, OverlayNode, OverlayNodeToSign, OverlayNodesBoxed, PublicKey as TlPublicKey,
+    QuicMessage, TonNodeExternalMessageBroadcast,
 };
 
 struct FecAssembly {
@@ -250,6 +255,10 @@ pub fn quic_overlay_factory(
                 .address
                 .parse()
                 .map_err(|e| format!("invalid seed address {}: {e}", seed.address))?;
+            let remote_addr = SocketAddr::new(
+                remote_addr.ip(),
+                remote_addr.port().wrapping_add(QUIC_PORT_OFFSET),
+            );
             let session = QuicSession::connect(local_addr, remote_addr, local_keypair, remote_key)
                 .await
                 .map_err(|e| format!("QUIC connect failed: {e}"))?;
@@ -264,6 +273,365 @@ pub fn quic_overlay_factory(
                 Box::new(QuicOverlaySession::new(session, overlay.as_bytes()))
                     as Box<dyn OverlaySession>,
             )
+        })
+    })
+}
+
+#[allow(dead_code)]
+fn quic_dht_key_id(id: [u8; 32], name: &[u8]) -> tonutils_tl::Int256 {
+    let dht_key = DhtKey {
+        id: tonutils_tl::Int256(id),
+        name: name.to_vec(),
+        idx: 0,
+    };
+    // Hash the BOXED form (with constructor prefix) per upstream TON.
+    tonutils_tl::Int256(Sha256::digest(dht_key.boxed_bytes()).into())
+}
+
+#[allow(dead_code)]
+fn quic_valid_overlay_node(node: &OverlayNode, overlay: OverlayId, now: i32) -> bool {
+    if node.overlay.0 != overlay.as_bytes() || node.version < now.saturating_sub(600) {
+        return false;
+    }
+    let TlPublicKey::Ed25519 { key } = &node.id else {
+        return false;
+    };
+    let Some(public_key) = AdnlPublicKey::from_bytes(key.0) else {
+        return false;
+    };
+    let adnl_id = AdnlAddress::from(&public_key).to_bytes();
+    let unsigned = OverlayNodeToSign {
+        id: tonutils_tl::tl::network::AdnlIdShort {
+            id: tonutils_tl::Int256(adnl_id),
+        },
+        overlay: node.overlay.clone(),
+        version: node.version,
+    };
+    let signature = match node.signature.as_slice() {
+        signature if signature.len() == 64 => signature,
+        signature if signature.len() == 68 => &signature[4..],
+        _ => return false,
+    };
+    let Ok(signature) = signature.try_into() else {
+        return false;
+    };
+    public_key.verify_raw(&tl_proto::serialize(unsigned), &signature)
+}
+
+#[allow(dead_code)]
+async fn quic_connect_to_seed(
+    local_addr: SocketAddr,
+    local_keypair: KeyPair,
+    remote: AdnlPublicKey,
+    address: SocketAddr,
+) -> Option<QuicSession> {
+    let quic_addr = SocketAddr::new(address.ip(), address.port().wrapping_add(QUIC_PORT_OFFSET));
+    match tokio::time::timeout(
+        Duration::from_secs(5),
+        QuicSession::connect(local_addr, quic_addr, local_keypair, remote),
+    )
+    .await
+    {
+        Err(_timeout) => {
+            log::debug!("quic_connect_to_seed: connect to {quic_addr} timed out");
+            None
+        }
+        Ok(Err(error)) => {
+            log::debug!("quic_connect_to_seed: connect to {quic_addr} failed: {error}");
+            None
+        }
+        Ok(Ok(session)) => Some(session),
+    }
+}
+
+#[allow(dead_code)]
+async fn quic_query_dht_value_seed(
+    local_addr: SocketAddr,
+    local_keypair: KeyPair,
+    remote: AdnlPublicKey,
+    address: SocketAddr,
+    key: tonutils_tl::Int256,
+    count: usize,
+    timeout: Duration,
+) -> Option<DhtValueResult> {
+    let session = quic_connect_to_seed(local_addr, local_keypair, remote, address).await?;
+    match session
+        .dht_find_value(key, count.min(i32::MAX as usize) as i32, timeout)
+        .await
+    {
+        Ok(result) => Some(result),
+        Err(error) => {
+            log::debug!("quic_query_dht_value_seed: dht_find_value to {address} failed: {error}");
+            None
+        }
+    }
+}
+
+#[allow(dead_code, clippy::too_many_arguments)]
+async fn quic_query_overlay_seed(
+    local_addr: SocketAddr,
+    local_keypair: KeyPair,
+    remote: AdnlPublicKey,
+    address: SocketAddr,
+    overlay: OverlayId,
+    overlay_key: [u8; 32],
+    max_records: usize,
+    timeout: Duration,
+) -> Option<Vec<SeedPeer>> {
+    let initial = SeedPeer {
+        peer: PeerId::from_bytes(remote.to_bytes()),
+        address: address.to_string(),
+    };
+    let overlay_dht_key = quic_dht_key_id(overlay_key, b"nodes");
+    let per_query_timeout = timeout.min(Duration::from_secs(15));
+    log::debug!(
+        "quic_query_overlay_seed: seed={address} overlay_dht_key={}",
+        overlay_dht_key.to_hex()
+    );
+    let mut frontier = vec![initial.clone()];
+    let mut seen = std::collections::HashSet::new();
+    let now = now_i32();
+
+    for _ in 0..6 {
+        let responses = join_all(frontier.drain(..).filter_map(|seed| {
+            let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
+            let address = seed.address.parse().ok()?;
+            let overlay_dht_key = overlay_dht_key.clone();
+            let local_addr = local_addr;
+            let local_keypair = local_keypair;
+            Some(async move {
+                let response = quic_query_dht_value_seed(
+                    local_addr,
+                    local_keypair,
+                    remote,
+                    address,
+                    overlay_dht_key,
+                    max_records,
+                    per_query_timeout,
+                )
+                .await?;
+                Some((seed, response))
+            })
+        }))
+        .await;
+        let mut next = Vec::new();
+        for response in responses.into_iter().flatten() {
+            let (seed, response) = response;
+            match response {
+                DhtValueResult::Found { value } => {
+                    let nodes: OverlayNodesBoxed = tl_proto::deserialize(&value.value).ok()?;
+                    log::debug!(
+                        "quic_query_overlay_seed: found {} overlay nodes from {address}",
+                        nodes.nodes.len()
+                    );
+                    let mut result = Vec::new();
+                    for node in nodes.nodes {
+                        if !quic_valid_overlay_node(&node, overlay, now) {
+                            continue;
+                        }
+                        if result.len() >= max_records {
+                            continue;
+                        }
+                        let TlPublicKey::Ed25519 { key } = node.id else {
+                            continue;
+                        };
+                        let overlay_public = AdnlPublicKey::from_bytes(key.0)?;
+                        let address_key = quic_dht_key_id(
+                            AdnlAddress::from(&overlay_public).to_bytes(),
+                            b"address",
+                        );
+                        let Some(DhtValueResult::Found { value }) = quic_query_dht_value_seed(
+                            local_addr,
+                            local_keypair,
+                            AdnlPublicKey::from_bytes(seed.peer.as_bytes())?,
+                            seed.address.parse().ok()?,
+                            address_key,
+                            1,
+                            per_query_timeout,
+                        )
+                        .await
+                        else {
+                            continue;
+                        };
+                        let address_list: AddressListBoxed =
+                            tl_proto::deserialize(&value.value).ok()?;
+                        let Some((peer, resolved_address)) =
+                            address_list.addrs.into_iter().find_map(|address| {
+                                let Address::Udp { ip, port } = address else {
+                                    return None;
+                                };
+                                let port = u16::try_from(port).ok()?;
+                                if port == 0 || ip == 0 {
+                                    return None;
+                                }
+                                let TlPublicKey::Ed25519 { key } = &value.key.id else {
+                                    return None;
+                                };
+                                Some((
+                                    PeerId::from_bytes(key.0),
+                                    format!(
+                                        "{}:{port}",
+                                        std::net::Ipv4Addr::from(ip.cast_unsigned())
+                                    ),
+                                ))
+                            })
+                        else {
+                            continue;
+                        };
+                        if result
+                            .iter()
+                            .all(|candidate: &SeedPeer| candidate.peer != peer)
+                        {
+                            result.push(SeedPeer {
+                                peer,
+                                address: resolved_address,
+                            });
+                        }
+                    }
+                    if !result.is_empty() {
+                        return Some(result);
+                    }
+                }
+                DhtValueResult::NotFound { nodes } => {
+                    log::debug!(
+                        "quic_query_overlay_seed: not found, got {} closer nodes from {address}",
+                        nodes.nodes.len()
+                    );
+                    for seed in
+                        tonutils_overlay::select_typed_dht_peers(nodes.nodes, max_records, now)
+                    {
+                        if seen.insert((seed.peer, seed.address.clone())) {
+                            next.push(seed);
+                        }
+                    }
+                }
+            }
+        }
+        frontier = next;
+        if frontier.is_empty() {
+            log::debug!("quic_query_overlay_seed: frontier exhausted at {address}");
+            break;
+        }
+    }
+
+    log::debug!(
+        "quic_query_overlay_seed: DHT lookup missed at {address}, trying overlay getRandomPeers"
+    );
+    let session = quic_connect_to_seed(local_addr, local_keypair, remote, address).await?;
+    let overlay_int = tonutils_tl::Int256(overlay.as_bytes());
+    let nodes = match session
+        .overlay_get_random_peers(overlay_int, per_query_timeout)
+        .await
+    {
+        Ok(nodes) => nodes,
+        Err(error) => {
+            log::debug!(
+                "quic_query_overlay_seed: overlay_get_random_peers to {address} failed: {error}"
+            );
+            return None;
+        }
+    };
+    let mut result = Vec::new();
+    for node in nodes.nodes {
+        if !quic_valid_overlay_node(&node, overlay, now) {
+            continue;
+        }
+        let TlPublicKey::Ed25519 { key } = node.id else {
+            continue;
+        };
+        let overlay_public = AdnlPublicKey::from_bytes(key.0)?;
+        let adnl_id = AdnlAddress::from(&overlay_public).to_bytes();
+        let address_key = quic_dht_key_id(adnl_id, b"address");
+        let Some(DhtValueResult::Found { value }) = quic_query_dht_value_seed(
+            local_addr,
+            local_keypair,
+            remote,
+            address,
+            address_key,
+            1,
+            per_query_timeout,
+        )
+        .await
+        else {
+            continue;
+        };
+        let address_list: AddressListBoxed = tl_proto::deserialize(&value.value).ok()?;
+        let Some((peer, resolved_address)) = address_list.addrs.into_iter().find_map(|addr| {
+            let Address::Udp { ip, port } = addr else {
+                return None;
+            };
+            let port = u16::try_from(port).ok()?;
+            if port == 0 || ip == 0 {
+                return None;
+            }
+            let TlPublicKey::Ed25519 { key } = &value.key.id else {
+                return None;
+            };
+            Some((
+                PeerId::from_bytes(key.0),
+                format!("{}:{port}", std::net::Ipv4Addr::from(ip.cast_unsigned())),
+            ))
+        }) else {
+            continue;
+        };
+        if result
+            .iter()
+            .all(|candidate: &SeedPeer| candidate.peer != peer)
+        {
+            result.push(SeedPeer {
+                peer,
+                address: resolved_address,
+            });
+        }
+    }
+    if !result.is_empty() {
+        return Some(result);
+    }
+    None
+}
+
+#[allow(dead_code)]
+pub fn quic_overlay_lookup(
+    local_addr: SocketAddr,
+    local_keypair: KeyPair,
+    overlay: OverlayId,
+    overlay_key: [u8; 32],
+    max_records: usize,
+    timeout: Duration,
+) -> SeedDiscoveryLookup {
+    Arc::new(move |seeds: Vec<SeedPeer>| {
+        Box::pin(async move {
+            let responses = join_all(seeds.into_iter().filter_map(|seed| {
+                let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
+                let address = seed.address.parse().ok()?;
+                let overlay = overlay;
+                let overlay_key = overlay_key;
+                Some(quic_query_overlay_seed(
+                    local_addr,
+                    local_keypair,
+                    remote,
+                    address,
+                    overlay,
+                    overlay_key,
+                    max_records,
+                    timeout,
+                ))
+            }))
+            .await;
+            let mut result = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for peers in responses.into_iter().flatten() {
+                for peer in peers {
+                    if seen.insert((peer.peer, peer.address.clone())) {
+                        result.push(peer);
+                    }
+                }
+            }
+            log::debug!(
+                "quic_overlay_lookup: returning {} peers from discovery",
+                result.len()
+            );
+            result
         })
     })
 }

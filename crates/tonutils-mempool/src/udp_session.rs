@@ -488,14 +488,13 @@ fn valid_overlay_node(node: &OverlayNode, overlay: OverlayId, now: i32) -> bool 
 }
 
 fn dht_key_id(id: [u8; 32], name: &[u8]) -> tonutils_tl::Int256 {
-    tonutils_tl::Int256(
-        Sha256::digest(tl_proto::serialize(DhtKey {
-            id: tonutils_tl::Int256(id),
-            name: name.to_vec(),
-            idx: 0,
-        }))
-        .into(),
-    )
+    let dht_key = DhtKey {
+        id: tonutils_tl::Int256(id),
+        name: name.to_vec(),
+        idx: 0,
+    };
+    // Hash the BOXED form (with constructor prefix) per upstream TON.
+    tonutils_tl::Int256(Sha256::digest(dht_key.boxed_bytes()).into())
 }
 
 #[allow(clippy::large_types_passed_by_value)]

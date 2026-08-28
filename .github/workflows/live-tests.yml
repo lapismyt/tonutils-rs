@@ -132,7 +132,7 @@ jobs:
       - name: Set default mempool overlay ID
         run: |
           if [ -z "${TON_MEMPOOL_LIVE_OVERLAY_ID:-}" ]; then
-            echo "TON_MEMPOOL_LIVE_OVERLAY_ID=e75e650c6ddff59891a3b3362aa12a5c7911aeefdc1b2baa2f6601e452cccc06" >> "$GITHUB_ENV"
+            echo "TON_MEMPOOL_LIVE_OVERLAY_ID=12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649" >> "$GITHUB_ENV"
           fi
 
       - name: Run configured seed-only mempool live test
