@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use futures::future::BoxFuture;
 use futures::future::join_all;
-use raptorq::{Decoder, EncodingPacket, ObjectTransmissionInformation, PayloadId};
+use raptorq::{Decoder, EncodingPacket, ObjectTransmissionInformation};
 use sha2::{Digest, Sha256};
 use tl_proto::TlRead;
 use tonutils_adnl::adnl::quic::QuicSession;
@@ -102,11 +102,14 @@ impl QuicOverlaySession {
             }
             state.last_seen = Instant::now();
             let expected_size = state.data_size;
+            let packet = EncodingPacket::deserialize(&fec.data);
+            if packet.payload_id().source_block_number() != 0 {
+                return Err("overlay FEC packet has invalid source block".to_owned());
+            }
             let max_symbol_id = symbols_count as u32 + (symbols_count as u32 / 2) + 1024;
-            if fec.seqno as u32 > max_symbol_id {
+            if packet.payload_id().encoding_symbol_id() > max_symbol_id {
                 return Err("overlay FEC packet has an excessive symbol id".to_owned());
             }
-            let packet = EncodingPacket::new(PayloadId::new(0, fec.seqno as u32), fec.data);
             let Some(reconstructed) = state.decoder.decode(packet) else {
                 return Err("overlay FEC payload is incomplete".to_owned());
             };
