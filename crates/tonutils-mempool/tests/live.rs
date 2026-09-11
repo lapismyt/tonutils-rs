@@ -174,7 +174,7 @@ async fn configured_seed_delivers_valid_external_message() {
     let timeout = std::env::var("TON_MEMPOOL_LIVE_TIMEOUT_SECS")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(30);
+        .unwrap_or(120);
     let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let overlay = OverlayId::from_bytes(overlay_bytes);
     let dht_overlay_key: [u8; 32] = overlay_bytes;

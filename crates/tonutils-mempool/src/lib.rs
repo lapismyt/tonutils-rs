@@ -750,7 +750,6 @@ pub struct MempoolScanner {
     broadcast_failures: AtomicU64,
     invalid_warnings: AtomicU64,
     overlay_packets: AtomicU64,
-    last_invalid_warning: Mutex<Option<Instant>>,
 }
 
 impl MempoolScanner {
@@ -782,7 +781,6 @@ impl MempoolScanner {
             broadcast_failures: AtomicU64::new(0),
             invalid_warnings: AtomicU64::new(0),
             overlay_packets: AtomicU64::new(0),
-            last_invalid_warning: Mutex::new(None),
         })
     }
 
@@ -901,20 +899,17 @@ impl MempoolScanner {
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             while let Some(OverlayPacket { payload, routing }) = pool.next_packet().await {
+                self.overlay_packets.fetch_add(1, Ordering::Relaxed);
+                let pkt_size = payload.len();
+                let pkt_prefix = hex::encode(&payload[..pkt_size.min(8)]);
                 match self.ingest(payload, routing).await {
                     Ok(_) => {}
                     Err(MempoolError::QueueClosed) => break,
                     Err(error) => {
-                        let now = Instant::now();
-                        let mut last_warning = self.last_invalid_warning.lock().await;
-                        if last_warning
-                            .map(|last| now.duration_since(last) >= Duration::from_secs(1))
-                            .unwrap_or(true)
-                        {
-                            log::warn!("dropping invalid overlay external message: {error}");
-                            self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
-                            *last_warning = Some(now);
-                        }
+                        log::warn!(
+                            "dropping invalid overlay packet: size={pkt_size} first_bytes={pkt_prefix} error={error}",
+                        );
+                        self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
                     }
                 }
             }
@@ -933,20 +928,16 @@ impl MempoolScanner {
                     packet = pool.next_packet() => {
                         let Some(OverlayPacket { payload, routing }) = packet else { break; };
                         self.overlay_packets.fetch_add(1, Ordering::Relaxed);
+                        let pkt_size = payload.len();
+                        let pkt_prefix = hex::encode(&payload[..pkt_size.min(8)]);
                         match self.ingest(payload, routing).await {
                             Ok(_) => {}
                             Err(MempoolError::QueueClosed) => break,
                             Err(error) => {
-                                let now = Instant::now();
-                                let mut last_warning = self.last_invalid_warning.lock().await;
-                                if last_warning
-                                    .map(|last| now.duration_since(last) >= Duration::from_secs(1))
-                                    .unwrap_or(true)
-                                {
-                                    log::warn!("dropping invalid overlay external message: {error}");
-                                    self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
-                                    *last_warning = Some(now);
-                                }
+                                log::warn!(
+                                    "dropping invalid overlay packet: size={pkt_size} first_bytes={pkt_prefix} error={error}",
+                                );
+                                self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                     }

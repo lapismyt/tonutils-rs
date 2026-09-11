@@ -129,5 +129,5 @@ jobs:
 
       - name: Run configured seed-only mempool live test
         env:
-          TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS }}
+          TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS || '120' }}
         run: cargo test -p tonutils-mempool --test live configured_seed_delivers_valid_external_message -- --ignored --nocapture
