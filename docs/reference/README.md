@@ -46,6 +46,7 @@ tracked in `fixtures/compatibility/block_tlb_extended.json`.
 22. [TEP metadata roadmap](contracts/tep-metadata.md)
 23. [Overlay protocol design](network/overlay.md)
 24. [Mempool scanner design](mempool/scanner.md)
+25. [Cross-SDK byte comparison](testing/cross-sdk-comparison.md)
 
 ## Directory Map
 
@@ -60,7 +61,7 @@ tracked in `fixtures/compatibility/block_tlb_extended.json`.
 - `contracts/`: get-methods, external messages, high-level contract API.
 - `operations/`: source tracking, diagnostics, maintenance workflow.
 - `research/`: mempool scanning notes and future protocol investigations.
-- `testing/`: fixtures, live tests, benchmarks.
+- `testing/`: fixtures, live tests, benchmarks, cross-SDK byte comparison.
 
 ## Documentation Contract
 

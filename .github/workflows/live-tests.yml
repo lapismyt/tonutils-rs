@@ -53,6 +53,38 @@ jobs:
             exit 1
           fi
 
+  cross-sdk:
+    name: Cross-SDK TL byte comparison
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: scripts/cross_sdk/gen_go/go.mod
+          cache-dependency-path: scripts/cross_sdk/gen_go/go.sum
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned pytoniq-core
+        run: python3 -m pip install pytoniq-core==0.2.0
+
+      - name: Verify fixtures against tonutils-go
+        working-directory: scripts/cross_sdk/gen_go
+        run: go run .
+
+      - name: Verify fixtures against pytoniq-core
+        run: python3 scripts/cross_sdk/gen_py.py
+
+      - name: Verify fixtures against tonutils-rs
+        run: cargo test -p tonutils-tl --lib
+
   live-tests:
     name: Live liteserver and mempool smoke tests
     runs-on: ubuntu-latest

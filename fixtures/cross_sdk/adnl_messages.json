@@ -1,0 +1,41 @@
+{
+  "schema_revision": "upstream:3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+  "cases": [
+    {
+      "name": "adnl-message-query",
+      "constructor": "adnl.message.query",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "query_id": "9999999999999999999999999999999999999999999999999999999999999999",
+        "query": "01020304"
+      },
+      "raw_hex": "7af98bb499999999999999999999999999999999999999999999999999999999999999990401020304000000"
+    },
+    {
+      "name": "adnl-message-answer",
+      "constructor": "adnl.message.answer",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "query_id": "9999999999999999999999999999999999999999999999999999999999999999",
+        "answer": "05060708"
+      },
+      "raw_hex": "1684ac0f99999999999999999999999999999999999999999999999999999999999999990405060708000000"
+    },
+    {
+      "name": "adnl-message-nop",
+      "constructor": "adnl.message.nop",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {},
+      "raw_hex": "dadff817"
+    }
+  ]
+}

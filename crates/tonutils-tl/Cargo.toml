@@ -26,4 +26,5 @@ thiserror.workspace = true
 tl-proto.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 tl-scheme.workspace = true

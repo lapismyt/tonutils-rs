@@ -10,6 +10,8 @@ use tonutils_mempool::{MempoolConfig, MempoolEvent};
 use tonutils_network_config::extract_dht_addresses;
 use tonutils_overlay::{OverlayId, PeerId, SeedPeer};
 use tonutils_tl::Int256;
+use tonutils_tl::tl::adnl::Message as AdnlMessage;
+use tonutils_tl::tl::network::{DhtMessage, DhtNodesBoxed, PacketContents};
 
 fn configured_seed(variable: &str) -> SocketAddr {
     let value = std::env::var(variable)
@@ -116,6 +118,170 @@ async fn mainnet_dht_seed_answers_find_node() {
 #[ignore = "requires live testnet QUIC access"]
 async fn testnet_dht_seed_answers_find_node() {
     probe_dht_from_config("TON_TESTNET_GLOBAL_CONFIG_JSON", true).await;
+}
+
+/// Sends a real `dht.findNode` over ADNL/UDP to a mainnet config seed and
+/// records the raw boxed `dht.nodes` answer bytes as the cross-SDK live
+/// capture fixture `fixtures/cross_sdk/live_dht_answers.json`.
+///
+/// The fixture is committed and consumed offline by the tonutils-tl
+/// `cross_sdk` tests (roundtrip-only: live answers have no canonical input
+/// fields). Set `TON_CAPTURE_CROSS_SDK=1` together with
+/// `TON_GLOBAL_CONFIG_JSON` to (re)capture it; without the variable the test
+/// succeeds without touching the fixture so plain `--ignored` runs do not
+/// overwrite committed evidence.
+#[tokio::test]
+#[ignore = "requires live mainnet DHT access to capture cross-SDK fixtures"]
+async fn capture_cross_sdk_dht_answer_from_mainnet() {
+    if std::env::var("TON_CAPTURE_CROSS_SDK").is_err() {
+        eprintln!(
+            "set TON_CAPTURE_CROSS_SDK=1 to (re)capture \
+             fixtures/cross_sdk/live_dht_answers.json; skipping"
+        );
+        return;
+    }
+    let json = std::env::var("TON_GLOBAL_CONFIG_JSON")
+        .expect("set TON_GLOBAL_CONFIG_JSON to run this ignored live test");
+    let candidates =
+        extract_dht_addresses(&json).expect("global config must contain DHT static nodes");
+    let local = KeyPair::generate(&mut rand::rngs::OsRng);
+    let mut last_error = None;
+    for candidate in candidates.into_iter().take(16) {
+        let Some(public_key) = candidate.public_key else {
+            continue;
+        };
+        let Some(remote_public) = PublicKey::from_bytes(public_key) else {
+            continue;
+        };
+        let mut session = match tokio::time::timeout(
+            Duration::from_secs(5),
+            AdnlUdpSession::connect(
+                "0.0.0.0:0".parse().unwrap(),
+                candidate.address,
+                local,
+                remote_public,
+            ),
+        )
+        .await
+        {
+            Err(_timeout) => {
+                last_error = Some(format!("connect timeout for {}", candidate.address));
+                continue;
+            }
+            Ok(Err(error)) => {
+                last_error = Some(error.to_string());
+                continue;
+            }
+            Ok(Ok(session)) => session,
+        };
+        match capture_find_node_answer(&mut session).await {
+            Ok(answer) => {
+                let nodes: DhtNodesBoxed = tl_proto::deserialize(&answer)
+                    .unwrap_or_else(|error| panic!("captured answer must parse: {error:?}"));
+                assert!(
+                    !nodes.nodes.is_empty(),
+                    "captured dht.nodes answer from {} must not be empty",
+                    candidate.address
+                );
+                write_live_fixture(&candidate.address.to_string(), &answer);
+                return;
+            }
+            Err(error) => {
+                last_error = Some(format!("{}: {error}", candidate.address));
+            }
+        }
+    }
+    let error = last_error.unwrap_or_else(|| "no usable DHT seed".into());
+    panic!("no configured DHT seed answered findNode: {error}");
+}
+
+/// Performs the same `dht.findNode` exchange as `AdnlUdpSession::dht_find_node`
+/// but returns the raw `AdnlMessage::Answer` payload bytes before any
+/// parsing, so the wire bytes can be recorded verbatim.
+async fn capture_find_node_answer(session: &mut AdnlUdpSession) -> Result<Vec<u8>, String> {
+    let query_id = Int256::random();
+    let query = tl_proto::serialize(DhtMessage::FindNode {
+        key: Int256::random(),
+        k: 8,
+    });
+    session
+        .send_contents(PacketContents {
+            rand1: vec![0; 7],
+            flags: (),
+            from: None,
+            from_short: None,
+            message: Some(AdnlMessage::Query {
+                query_id: query_id.clone(),
+                query,
+            }),
+            messages: None,
+            address: None,
+            priority_address: None,
+            seqno: None,
+            confirm_seqno: None,
+            recv_addr_list_version: None,
+            recv_priority_addr_list_version: None,
+            reinit_date: None,
+            dst_reinit_date: None,
+            signature: None,
+            rand2: vec![0; 7],
+        })
+        .await
+        .map_err(|error| format!("send findNode: {error}"))?;
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Err("timeout waiting for findNode answer".into());
+        }
+        let packet = session
+            .recv_timeout(remaining)
+            .await
+            .map_err(|error| format!("recv: {error}"))?;
+        let messages = packet
+            .message
+            .into_iter()
+            .chain(packet.messages.into_iter().flatten());
+        for message in messages {
+            if let AdnlMessage::Answer {
+                query_id: id,
+                answer,
+            } = message
+                && id == query_id
+            {
+                return Ok(answer);
+            }
+        }
+    }
+}
+
+fn write_live_fixture(peer: &str, answer: &[u8]) {
+    let captured_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock must be after the Unix epoch")
+        .as_secs();
+    let fixture = serde_json::json!({
+        "schema_revision": "upstream:3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+        "cases": [{
+            "name": "live-dht-nodes-mainnet",
+            "constructor": "dht.nodes",
+            "references": [],
+            "source": "live_capture",
+            "captured_at_unix": captured_at,
+            "peer": peer,
+            "query": "dht.findNode k=8 with a random key over ADNL/UDP",
+            "raw_hex": hex::encode(answer),
+        }],
+    });
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/cross_sdk/live_dht_answers.json"
+    );
+    let mut text = serde_json::to_string_pretty(&fixture).expect("fixture must serialize");
+    text.push('\n');
+    std::fs::write(path, text).unwrap_or_else(|error| panic!("write {path}: {error}"));
+    eprintln!("wrote {path} ({} bytes)", answer.len());
 }
 
 fn configured_bytes(variable: &str) -> Option<[u8; 32]> {

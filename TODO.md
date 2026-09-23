@@ -192,6 +192,7 @@ postponed work moves to `# BACKLOG`.
 ## TL Schema And Code Generation
 
 - [ ] Build a checked TL schema workflow #tl
+  - [x] Add an offline audit of ADNL, DHT, overlay, and QUIC constructor ids and schema-shaped doc blocks against pinned upstream `ton_api.tl`, calibrated against live-wire ids #tl #tests
   - [ ] Add a local tool that parses `src/tl/schemas/lite_api.tl` and computes constructor ids #tl
     - [ ] Compare computed ids with handwritten `#[tl(id = ...)]` values #tl #tests
     - [ ] Fail tests when upstream schema and Rust types drift #tl #tests
@@ -386,6 +387,14 @@ postponed work moves to `# BACKLOG`.
   - [ ] Integrate QUIC with block-sync, fast-sync, and overlay communication #quic #network #overlay
   - [ ] Add offline fixtures and interoperability tests #quic #network #tests
 - [ ] Add official-node wire fixtures for ADNL UDP, overlay FEC, and QUIC #network #tests #overlay #quic
+  - [x] Add live mainnet DHT answer capture fixture `fixtures/cross_sdk/live_dht_answers.json` with manifest provenance #dht #tests
+  - [ ] Capture live QUIC query frames; local NAT currently blocks QUIC reachability #quic #tests
+  - [ ] Capture live `adnl.packetContents` and overlay FEC broadcast frames #network #overlay #tests
+- [x] Detect and fix cross-SDK wire divergence for DHT, overlay, ADNL, and QUIC TL frames #tl #quic #dht #tests
+  - [x] Audit hard-coded constructor ids and field layouts against pinned upstream `ton_api.tl`, tonutils-go v1.18.0, and pytoniq-core 0.2.0 #tl #tests
+  - [x] Fix `quic.message`, `quic.query`, and `quic.answer` ids and drop the non-existent query id field; correlate QUIC answers per bidirectional stream #quic #tl
+  - [x] Add cross-SDK byte-comparison fixtures, reference generators, tonutils-rs byte tests, and a `cross-sdk` CI job #tests #tl #ci
+  - [x] Document the CRC paren-stripping rule, cross-SDK mechanism, and verified QUIC framing in `docs/reference/` #docs #tl #quic
 - [ ] Implement feature-gated RLDP2 typed transfer path; keep legacy RLDP decode-only until fixtures exist #rldp #network #tests
 - [x] Build mempool scanning support #mempool
   - [x] Study `yungwine/ton-mempool` behavior and map required overlay flows #mempool #docs
@@ -475,6 +484,7 @@ postponed work moves to `# BACKLOG`.
   - [ ] `cargo test` #tests
   - [ ] `cargo test --all-features` #tests #features
 - [ ] Add fixture strategy #tests
+  - [x] Add cross-SDK fixture set with pinned tonutils-go and pytoniq-core reference bytes verified in CI #tests #tl #ci
   - [ ] Store binary fixtures with source notes #tests #docs
   - [ ] Keep live-network tests ignored by default #tests
   - [ ] Add deterministic random seeds where tests do not require cryptographic randomness #tests

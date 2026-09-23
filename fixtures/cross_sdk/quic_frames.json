@@ -1,0 +1,38 @@
+{
+  "schema_revision": "upstream:3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+  "cases": [
+    {
+      "name": "quic-query",
+      "constructor": "quic.query",
+      "references": [
+        "tonutils-go"
+      ],
+      "fields": {
+        "data": "01020304aabbccdd"
+      },
+      "raw_hex": "7e600be60801020304aabbccdd000000"
+    },
+    {
+      "name": "quic-answer",
+      "constructor": "quic.answer",
+      "references": [
+        "tonutils-go"
+      ],
+      "fields": {
+        "data": "cafebabe"
+      },
+      "raw_hex": "b2fba3de04cafebabe000000"
+    },
+    {
+      "name": "quic-message",
+      "constructor": "quic.message",
+      "references": [
+        "tonutils-go"
+      ],
+      "fields": {
+        "data": "deadbeef"
+      },
+      "raw_hex": "31df03e004deadbeef000000"
+    }
+  ]
+}
