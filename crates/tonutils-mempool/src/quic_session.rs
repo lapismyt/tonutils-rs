@@ -192,7 +192,7 @@ impl OverlaySession for QuicOverlaySession {
                 }
                 if buf.len() >= 4 {
                     let id = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-                    if id == 0x6d2960d1
+                    if id == 0xe003df31
                         && let Ok(message) = tl_proto::deserialize::<QuicMessage>(&buf)
                     {
                         let data = message.data;

@@ -10,7 +10,9 @@
 //! - **SNI**: `<hex[0:32]>.<hex[32:64]>.adnl` (lowercase hex of Ed25519 public key)
 //! - **Authentication**: Ed25519 identity key used as the TLS certificate key.
 //!   The SAN encodes the hex-encoded public key for peer verification.
-//! - **Framing**: `quic.message`, `quic.query`, `quic.answer` on bidirectional streams
+//! - **Framing**: `quic.message`, `quic.query`, `quic.answer` (upstream
+//!   `ton_api.tl` definitions, `data:bytes` only) on bidirectional streams;
+//!   query/answer correlation is per-stream, the frames carry no query id
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -247,17 +249,11 @@ impl QuicSession {
         })
     }
 
-    /// Sends a `quic.query` and waits for the corresponding `quic.answer`.
-    pub async fn send_query(
-        &self,
-        query_id: Int256,
-        data: Vec<u8>,
-        timeout: Duration,
-    ) -> Result<Vec<u8>, AdnlError> {
-        let query = QuicQuery {
-            id: query_id.clone(),
-            data,
-        };
+    /// Sends a `quic.query` on a fresh bidirectional stream and waits for the
+    /// matching `quic.answer` on the same stream. Correlation is per-stream;
+    /// the upstream `quic.query`/`quic.answer` framing carries no query id.
+    pub async fn send_query(&self, data: Vec<u8>, timeout: Duration) -> Result<Vec<u8>, AdnlError> {
+        let query = QuicQuery { data };
         let (mut send, mut recv) = self
             .connection
             .open_bi()
@@ -283,11 +279,6 @@ impl QuicSession {
 
         let answer: QuicAnswer = tl_proto::deserialize(&buf)
             .map_err(|error| AdnlError::InvalidQuicAnswer(error.to_string()))?;
-        if answer.id != query_id {
-            return Err(AdnlError::InvalidQuicAnswer(
-                "answer query id does not match request".to_owned(),
-            ));
-        }
         Ok(answer.data)
     }
 
@@ -317,10 +308,9 @@ impl QuicSession {
         count: i32,
         timeout: Duration,
     ) -> Result<tonutils_tl::tl::network::DhtNodesBoxed, AdnlError> {
-        let query_id = Int256::random();
         let query =
             tl_proto::serialize(tonutils_tl::tl::network::DhtMessage::FindNode { key, k: count });
-        let response = self.send_query(query_id, query, timeout).await?;
+        let response = self.send_query(query, timeout).await?;
         tl_proto::deserialize(&response).map_err(|e| AdnlError::TlsConfig(e.to_string()))
     }
 
@@ -331,10 +321,9 @@ impl QuicSession {
         count: i32,
         timeout: Duration,
     ) -> Result<tonutils_tl::tl::network::DhtValueResult, AdnlError> {
-        let query_id = Int256::random();
         let query =
             tl_proto::serialize(tonutils_tl::tl::network::DhtMessage::FindValue { key, k: count });
-        let response = self.send_query(query_id, query, timeout).await?;
+        let response = self.send_query(query, timeout).await?;
         tl_proto::deserialize(&response).map_err(|e| AdnlError::TlsConfig(e.to_string()))
     }
 
@@ -344,11 +333,10 @@ impl QuicSession {
         _overlay: Int256,
         timeout: Duration,
     ) -> Result<tonutils_tl::tl::network::OverlayNodesBoxed, AdnlError> {
-        let query_id = Int256::random();
         let query = tl_proto::serialize(tonutils_tl::tl::network::OverlayQuery::GetRandomPeers {
             peers: tonutils_tl::tl::network::OverlayNodes { nodes: Vec::new() },
         });
-        let response = self.send_query(query_id, query, timeout).await?;
+        let response = self.send_query(query, timeout).await?;
         tl_proto::deserialize(&response).map_err(|e| AdnlError::TlsConfig(e.to_string()))
     }
 
@@ -494,11 +482,8 @@ mod tests {
         let server_fut = async {
             let (mut send, mut recv) = server_conn.accept_bi().await.unwrap();
             let buf = recv.read_to_end(MAX_FRAME_SIZE).await.unwrap();
-            let query: QuicQuery = tl_proto::deserialize(&buf).unwrap();
-            let answer = QuicAnswer {
-                id: query.id.clone(),
-                data: vec![42],
-            };
+            let _query: QuicQuery = tl_proto::deserialize(&buf).unwrap();
+            let answer = QuicAnswer { data: vec![42] };
             let answer_bytes = tl_proto::serialize(answer);
             send.write_all(&answer_bytes).await.unwrap();
             send.finish().unwrap();
@@ -507,9 +492,8 @@ mod tests {
 
         let client_fut = async {
             let client = client_handle.await.unwrap();
-            let query_id = Int256([1; 32]);
             client
-                .send_query(query_id, vec![1, 2, 3], Duration::from_secs(5))
+                .send_query(vec![1, 2, 3], Duration::from_secs(5))
                 .await
                 .unwrap()
         };
@@ -546,7 +530,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quic_query_rejects_mismatched_answer_id() {
+    async fn quic_query_rejects_invalid_answer_frame() {
         let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
         let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
         let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair).unwrap();
@@ -566,25 +550,31 @@ mod tests {
         let (server_conn, _) = server.accept().await.unwrap();
         let server_fut = async move {
             let (mut send, mut recv) = server_conn.accept_bi().await.unwrap();
-            let query: QuicQuery =
+            // Validate inbound framing, then reply with an unknown
+            // constructor instead of a `quic.answer` frame.
+            let _query: QuicQuery =
                 tl_proto::deserialize(&recv.read_to_end(MAX_FRAME_SIZE).await.unwrap()).unwrap();
-            send.write_all(&tl_proto::serialize(QuicAnswer {
-                id: Int256([9; 32]),
-                data: query.data,
-            }))
-            .await
-            .unwrap();
+            send.write_all(&[0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00])
+                .await
+                .unwrap();
             send.finish().unwrap();
+            // Keep the connection open until the client reads the frame,
+            // so the client observes the invalid frame rather than a
+            // transport-level connection loss.
+            server_conn.closed().await;
         };
 
         let client_fut = async move {
             let client = client_handle.await.unwrap();
             client
-                .send_query(Int256([1; 32]), vec![1, 2, 3], Duration::from_secs(5))
+                .send_query(vec![1, 2, 3], Duration::from_secs(5))
                 .await
         };
 
         let ((), result) = tokio::join!(server_fut, client_fut);
-        assert!(result.is_err(), "mismatched QUIC answer must fail closed");
+        assert!(
+            matches!(result, Err(AdnlError::InvalidQuicAnswer(_))),
+            "non-quic.answer reply must fail closed with InvalidQuicAnswer, got {result:?}"
+        );
     }
 }

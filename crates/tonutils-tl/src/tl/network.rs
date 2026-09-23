@@ -457,7 +457,7 @@ pub enum FecType {
 #[derivative(Debug, Clone, PartialEq, Eq)]
 #[tl(boxed, id = 0xbad7c36a)]
 pub struct OverlayBroadcastFec {
-    /// overlay.broadcastFec ... = overlay.Broadcast;
+    /// overlay.broadcastFec src:PublicKey certificate:overlay.Certificate data_hash:int256 data_size:int flags:int data:bytes seqno:int fec:fec.Type date:int signature:bytes = overlay.Broadcast;
     pub src: PublicKey,
     pub certificate: OverlayCertificate,
     pub data_hash: Int256,
@@ -569,29 +569,27 @@ pub enum DhtValueResult {
     Found { value: DhtValue },
 }
 
-/// quic.message data:bytes = quic.Message;
+/// quic.message data:bytes = quic.Request;
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
-#[tl(boxed, id = 0x6d2960d1)]
+#[tl(boxed, id = 0xe003df31)]
 pub struct QuicMessage {
     pub data: Vec<u8>,
 }
 
-/// quic.query id:int256 data:bytes = quic.Query;
+/// quic.query data:bytes = quic.Request;
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
-#[tl(boxed, id = 0xb37ffe6e)]
+#[tl(boxed, id = 0xe60b607e)]
 pub struct QuicQuery {
-    pub id: Int256,
     pub data: Vec<u8>,
 }
 
-/// quic.answer id:int256 data:bytes = quic.Answer;
+/// quic.answer data:bytes = quic.Response;
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
-#[tl(boxed, id = 0x32f8f49f)]
+#[tl(boxed, id = 0xdea3fbb2)]
 pub struct QuicAnswer {
-    pub id: Int256,
     pub data: Vec<u8>,
 }
 
@@ -699,7 +697,7 @@ mod tests {
             messages: None,
             address: Some(AddressList {
                 addrs: vec![Address::Udp {
-                    ip: 0x0100007f,
+                    ip: 0x7f000001,
                     port: 30303,
                 }],
                 version: 1,
@@ -778,29 +776,31 @@ mod tests {
 
     #[test]
     fn quic_framing_types_use_canonical_constructors() {
+        // Constructor ids are the CRC32 of the upstream ton_api.tl
+        // definitions (`quic.message/query data:bytes = quic.Request`,
+        // `quic.answer data:bytes = quic.Response`), verified by
+        // `schema_audit` and cross-SDK fixtures.
         let msg = QuicMessage {
             data: vec![1, 2, 3],
         };
         let bytes = serialize(msg.clone());
-        assert_eq!(&bytes[..4], &0x6d2960d1u32.to_le_bytes());
+        assert_eq!(&bytes[..4], &0xe003df31u32.to_le_bytes());
         let decoded: QuicMessage = deserialize(&bytes).unwrap();
         assert_eq!(decoded, msg);
 
         let query = QuicQuery {
-            id: Int256([0xAA; 32]),
             data: vec![4, 5, 6],
         };
         let bytes = serialize(query.clone());
-        assert_eq!(&bytes[..4], &0xb37ffe6eu32.to_le_bytes());
+        assert_eq!(&bytes[..4], &0xe60b607eu32.to_le_bytes());
         let decoded: QuicQuery = deserialize(&bytes).unwrap();
         assert_eq!(decoded, query);
 
         let answer = QuicAnswer {
-            id: Int256([0xBB; 32]),
             data: vec![7, 8, 9],
         };
         let bytes = serialize(answer.clone());
-        assert_eq!(&bytes[..4], &0x32f8f49fu32.to_le_bytes());
+        assert_eq!(&bytes[..4], &0xdea3fbb2u32.to_le_bytes());
         let decoded: QuicAnswer = deserialize(&bytes).unwrap();
         assert_eq!(decoded, answer);
     }
