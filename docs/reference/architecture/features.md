@@ -13,6 +13,8 @@ The crate should compile in small configurations. Optional features must isolate
 | `adnl-tcp` | async TCP ADNL | ADNL peer, codec, handshake over Tokio |
 | `liteclient` | LiteAPI client | `src/liteclient` |
 | `network-config` | TON global config parsing | `src/network_config` |
+| `overlay` | bounded overlay peer/routing primitives | `tonutils-overlay` |
+| `mempool` | pending external-message stream and dedup | `tonutils-mempool` |
 | `cli` | command line app | `src/cli`, `src/main.rs` |
 
 Default target:

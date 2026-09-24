@@ -1,0 +1,188 @@
+{
+  "schema_revision": "upstream:3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+  "cases": [
+    {
+      "name": "dht-nodes-two",
+      "constructor": "dht.nodes",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "nodes": [
+          {
+            "id": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+            "addr_list": {
+              "addrs": [
+                {
+                  "udp": {
+                    "ip": "188.225.83.20",
+                    "port": 1337
+                  }
+                }
+              ],
+              "version": 1700000000,
+              "reinit_date": 0,
+              "priority": 0,
+              "expire_at": 1700003600
+            },
+            "version": 1700000001,
+            "signature": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+          },
+          {
+            "id": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+            "addr_list": {
+              "addrs": [
+                {
+                  "udp": {
+                    "ip": "127.0.0.1",
+                    "port": 20000
+                  }
+                }
+              ],
+              "version": 1700000000,
+              "reinit_date": 0,
+              "priority": 0,
+              "expire_at": 1700003600
+            },
+            "version": 1700000000,
+            "signature": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6"
+          }
+        ]
+      },
+      "raw_hex": "bea0747902000000c6b41348c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c301000000e7a60d671453e1bc3905000000f15365000000000000000010ff536501f1536540d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4000000c6b41348e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e501000000e7a60d670100007f204e000000f15365000000000000000010ff536500f1536540f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6000000"
+    },
+    {
+      "name": "dht-nodes-empty",
+      "constructor": "dht.nodes",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "nodes": []
+      },
+      "raw_hex": "bea0747900000000"
+    },
+    {
+      "name": "dht-node-sign-base",
+      "constructor": "dht.node",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "id": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+        "addr_list": {
+          "addrs": [
+            {
+              "udp": {
+                "ip": "188.225.83.20",
+                "port": 1337
+              }
+            }
+          ],
+          "version": 1700000000,
+          "reinit_date": 0,
+          "priority": 0,
+          "expire_at": 1700003600
+        },
+        "version": 1700000001,
+        "signature": ""
+      },
+      "raw_hex": "48325384c6b41348c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c301000000e7a60d671453e1bc3905000000f15365000000000000000010ff536501f1536500000000"
+    },
+    {
+      "name": "dht-node-quic-addr",
+      "constructor": "dht.node",
+      "references": [
+        "tonutils-go"
+      ],
+      "note": "pytoniq-core's bundled ton_api.tl has no adnl.address.quic constructor; covered by tonutils-go and the schema_audit test",
+      "fields": {
+        "id": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+        "addr_list": {
+          "addrs": [
+            {
+              "udp": {
+                "ip": "188.225.83.20",
+                "port": 1337
+              }
+            },
+            {
+              "quic": {
+                "ip": "65.21.63.219",
+                "port": 228
+              }
+            }
+          ],
+          "version": 1700000000,
+          "reinit_date": 0,
+          "priority": 0,
+          "expire_at": 1700003600
+        },
+        "version": 1700000001,
+        "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+      },
+      "raw_hex": "48325384c6b41348c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c302000000e7a60d671453e1bc3905000053720178db3f1541e400000000f15365000000000000000010ff536501f1536540abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab000000"
+    },
+    {
+      "name": "dht-value-found",
+      "constructor": "dht.valueFound",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "value": {
+          "key_description": {
+            "key": {
+              "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "name": "6e6f646573",
+              "idx": 0
+            },
+            "id": "0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d",
+            "update_rule": "signature",
+            "signature": "12121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212"
+          },
+          "value": "0a0b0c0d",
+          "ttl": 1700003600,
+          "signature": "44444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444"
+        }
+      },
+      "raw_hex": "74f70ce4cb27ad90aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa056e6f646573000000000000c6b413480d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0df7319fcc4012121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212121212000000040a0b0c0d00000010ff53654044444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444000000"
+    },
+    {
+      "name": "dht-value-not-found",
+      "constructor": "dht.valueNotFound",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "nodes": [
+          {
+            "id": "e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5",
+            "addr_list": {
+              "addrs": [
+                {
+                  "udp": {
+                    "ip": "127.0.0.1",
+                    "port": 20000
+                  }
+                }
+              ],
+              "version": 1700000000,
+              "reinit_date": 0,
+              "priority": 0,
+              "expire_at": 1700003600
+            },
+            "version": 1700000000,
+            "signature": "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6"
+          }
+        ]
+      },
+      "raw_hex": "680562a201000000c6b41348e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e501000000e7a60d670100007f204e000000f15365000000000000000010ff536500f1536540f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6000000"
+    }
+  ]
+}

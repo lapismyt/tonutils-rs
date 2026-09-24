@@ -4,6 +4,7 @@ use crate::{AdnlAddress, AdnlAesParams, AdnlError, AdnlPeer};
 use aes::cipher::KeyIvInit;
 use ctr::cipher::StreamCipher;
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::codec::AdnlCodec;
@@ -126,7 +127,7 @@ impl AdnlHandshake {
         let mut aes = Self::initialize_aes(&secret, &hash);
         aes.apply_keystream(&mut raw_params);
 
-        if hash != Self::sha256(raw_params) {
+        if !bool::from(hash.ct_eq(&Self::sha256(raw_params))) {
             return Err(AdnlError::IntegrityError);
         }
 

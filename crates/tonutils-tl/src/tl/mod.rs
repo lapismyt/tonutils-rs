@@ -14,10 +14,15 @@
 
 pub mod adnl;
 pub mod common;
+#[cfg(test)]
+mod cross_sdk;
 pub mod error;
 pub mod generated;
+pub mod network;
 pub mod request;
 pub mod response;
+#[cfg(test)]
+mod schema_audit;
 #[cfg(test)]
 mod schema_check;
 pub mod utils;

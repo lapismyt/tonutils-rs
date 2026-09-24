@@ -1,0 +1,156 @@
+use std::sync::Arc;
+use std::time::Duration;
+
+use futures::StreamExt;
+use tl_proto::TlRead;
+use tonutils_adnl::{AdnlUdpSession, KeyPair};
+use tonutils_mempool::{AdnlUdpOverlaySession, MempoolConfig, MempoolEvent, MempoolScanner};
+use tonutils_overlay::{OverlayConfig, OverlayId, PeerId};
+use tonutils_tl::tl::adnl::Message as AdnlMessage;
+use tonutils_tl::tl::network::{OverlayBroadcast, OverlayMessage, OverlayQuery, PacketContents};
+use tonutils_tl::{Int256, Message};
+
+#[tokio::test]
+async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
+    let sender_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let receiver_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let sender_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let receiver_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let mut sender = AdnlUdpSession::connect(
+        sender_addr,
+        receiver_addr,
+        sender_key,
+        receiver_key.public_key,
+    )
+    .await
+    .unwrap();
+    let overlay = OverlayId::MAINNET_BASECHAIN_OVERLAY_ID;
+    let adapter = AdnlUdpOverlaySession::connect_for_overlay(
+        PeerId::from_bytes([3; 32]),
+        overlay,
+        receiver_addr,
+        sender_addr,
+        receiver_key,
+        sender_key.public_key,
+    )
+    .await
+    .unwrap();
+    let scanner = Arc::new(
+        MempoolScanner::new(MempoolConfig {
+            validate_message: false,
+            ..Default::default()
+        })
+        .unwrap(),
+    );
+    let manager = tonutils_overlay::PeerManager::with_overlay(
+        OverlayConfig::default(),
+        OverlayId::MAINNET_BASECHAIN_OVERLAY_ID,
+    )
+    .unwrap();
+    manager.add_session(Box::new(adapter)).await;
+    let mut events = Box::pin(scanner.events());
+    let _receiver = scanner.spawn_overlay_receiver(manager.pool());
+    let mut overlay_payload = Vec::new();
+    overlay_payload.extend_from_slice(&0x75252420u32.to_le_bytes());
+    overlay_payload.extend_from_slice(&overlay.as_bytes());
+    overlay_payload.extend(tl_proto::serialize(OverlayBroadcast::Unicast {
+        data: vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3],
+    }));
+    let mut envelope = overlay_payload.as_slice();
+    assert!(matches!(
+        OverlayMessage::read_from(&mut envelope),
+        Ok(OverlayMessage::Message { .. })
+    ));
+    assert!(matches!(
+        OverlayBroadcast::read_from(&mut envelope),
+        Ok(OverlayBroadcast::Unicast { .. })
+    ));
+    sender
+        .send_contents(PacketContents {
+            rand1: vec![1; 7],
+            flags: (),
+            from: None,
+            from_short: None,
+            message: Some(Message::Custom {
+                data: overlay_payload,
+            }),
+            messages: None,
+            address: None,
+            priority_address: None,
+            seqno: None,
+            confirm_seqno: None,
+            recv_addr_list_version: None,
+            recv_priority_addr_list_version: None,
+            reinit_date: None,
+            dst_reinit_date: None,
+            signature: None,
+            rand2: vec![2; 7],
+        })
+        .await
+        .unwrap();
+    let event = tokio::time::timeout(Duration::from_secs(1), events.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(event, MempoolEvent::ExternalMessage { .. }));
+    manager.shutdown();
+}
+
+#[tokio::test]
+async fn adnl_session_sends_answer_to_query() {
+    let client_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let server_key = KeyPair::generate(&mut rand::rngs::OsRng);
+
+    let client_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let server_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let server_addr = server_socket.local_addr().unwrap();
+    drop(server_socket);
+
+    let mut server =
+        AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
+            .await
+            .unwrap();
+    let mut client =
+        AdnlUdpSession::connect(client_addr, server_addr, client_key, server_key.public_key)
+            .await
+            .unwrap();
+
+    // Server sends an answer
+    let query_id = Int256::random();
+    server
+        .send_answer(query_id.clone(), tl_proto::serialize(OverlayQuery::Ping))
+        .await
+        .unwrap();
+
+    // Client receives the answer
+    let packet = tokio::time::timeout(Duration::from_secs(2), client.recv_contents())
+        .await
+        .unwrap()
+        .unwrap();
+
+    match packet.message {
+        Some(AdnlMessage::Answer {
+            answer,
+            query_id: id,
+        }) => {
+            assert_eq!(id, query_id);
+            assert!(matches!(
+                OverlayQuery::read_from(&mut answer.as_slice()),
+                Ok(OverlayQuery::Ping)
+            ));
+        }
+        _ => panic!("expected Answer message with Ping"),
+    }
+}

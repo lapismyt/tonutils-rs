@@ -29,9 +29,13 @@ pub use tonutils_contracts as contracts;
 pub use tonutils_crc as crc;
 pub use tonutils_jetton as jetton;
 pub use tonutils_liteclient as liteclient;
+#[cfg(feature = "mempool")]
+pub use tonutils_mempool as mempool;
 pub use tonutils_metadata as metadata;
 pub use tonutils_network_config as network_config;
 pub use tonutils_nft as nft;
+#[cfg(feature = "overlay")]
+pub use tonutils_overlay as overlay;
 pub use tonutils_tl as tl;
 pub use tonutils_tlb as tlb;
 pub use tonutils_tvm as tvm;

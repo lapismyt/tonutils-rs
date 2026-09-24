@@ -192,6 +192,7 @@ postponed work moves to `# BACKLOG`.
 ## TL Schema And Code Generation
 
 - [ ] Build a checked TL schema workflow #tl
+  - [x] Add an offline audit of ADNL, DHT, overlay, and QUIC constructor ids and schema-shaped doc blocks against pinned upstream `ton_api.tl`, calibrated against live-wire ids #tl #tests
   - [ ] Add a local tool that parses `src/tl/schemas/lite_api.tl` and computes constructor ids #tl
     - [ ] Compare computed ids with handwritten `#[tl(id = ...)]` values #tl #tests
     - [ ] Fail tests when upstream schema and Rust types drift #tl #tests
@@ -360,30 +361,52 @@ postponed work moves to `# BACKLOG`.
 
 ## DHT, Overlay, QUIC, And Mempool
 
-- [ ] Research and implement native ADNL UDP #network #adnl
-  - [ ] Document packet format and channel negotiation #network #docs
-  - [ ] Add UDP codec tests #network #tests
+- [-] Research and implement native ADNL UDP #network #adnl
+  - [x] Add bounded encrypted datagram codec and malformed/trailing packet tests #network #tests
+  - [x] Add upstream-derived direct packet and AES-channel packet primitives with sequence checks #network #tests
+  - [x] Document packet format and channel negotiation #network #docs
+  - [x] Add UDP codec tests #network #tests
   - [ ] Add NAT and address list considerations #network
-- [ ] Implement DHT discovery #dht #network
-  - [ ] Add DHT TL types #dht #tl
-  - [ ] Verify node signatures #dht #crypto
+- [-] Implement DHT discovery #dht #network
+  - [x] Add signed discovery records, verification, and explicit seed fallback #dht #crypto #tests
+  - [x] Extract and validate bootstrap endpoints from caller/global config JSON #dht #network #tests
+  - [x] Add upstream-derived ADNL/DHT/overlay TL packet types and round-trip fixtures #dht #tl #tests
+  - [x] Add canonical shard-public overlay ID derivation #dht #overlay #tests
   - [ ] Resolve liteservers and overlay peers through DHT #dht
-- [ ] Implement overlay protocol #overlay #network
-  - [ ] Add overlay node and peer exchange types #overlay #tl
-  - [ ] Add overlay query transport #overlay
-  - [ ] Add broadcast handling where needed for mempool #overlay #mempool
+- [-] Implement overlay protocol #overlay #network
+  - [x] Add bounded overlay peer/routing/status primitives #overlay #tests
+  - [x] Add transport-neutral sessions, parallel receive loops, scoring, and shutdown #overlay #network #tests
+  - [ ] Add overlay node and peer exchange types from upstream schemas #overlay #tl
+  - [x] Add overlay query transport and live peer bootstrap #overlay
+  - [x] Add bounded broadcast hook for mempool #overlay #mempool
+  - [x] Connect scanner bootstrap to canonical ADNL UDP channels #adnl #overlay #mempool
 - [ ] Implement native Rust QUIC transport #quic #network
   - [ ] Define optional feature gating without native runtime dependencies #quic #features
   - [ ] Add peer and session lifecycle handling #quic #network
   - [ ] Model stream and datagram semantics with rate limiting and backpressure #quic #network #perf
   - [ ] Integrate QUIC with block-sync, fast-sync, and overlay communication #quic #network #overlay
   - [ ] Add offline fixtures and interoperability tests #quic #network #tests
-- [ ] Build mempool scanning support #mempool
-  - [ ] Study `yungwine/ton-mempool` behavior and map required overlay flows #mempool #docs
-  - [ ] Identify public API for pending external messages #mempool
-  - [ ] Add stream API for pending messages #mempool
-  - [ ] Add backpressure and filtering #mempool #perf
-  - [ ] Add tests with captured fixtures before live network tests #mempool #tests
+- [ ] Add official-node wire fixtures for ADNL UDP, overlay FEC, and QUIC #network #tests #overlay #quic
+  - [x] Add live mainnet DHT answer capture fixture `fixtures/cross_sdk/live_dht_answers.json` with manifest provenance #dht #tests
+  - [ ] Capture live QUIC query frames; local NAT currently blocks QUIC reachability #quic #tests
+  - [ ] Capture live `adnl.packetContents` and overlay FEC broadcast frames #network #overlay #tests
+- [x] Detect and fix cross-SDK wire divergence for DHT, overlay, ADNL, and QUIC TL frames #tl #quic #dht #tests
+  - [x] Audit hard-coded constructor ids and field layouts against pinned upstream `ton_api.tl`, tonutils-go v1.18.0, and pytoniq-core 0.2.0 #tl #tests
+  - [x] Fix `quic.message`, `quic.query`, and `quic.answer` ids and drop the non-existent query id field; correlate QUIC answers per bidirectional stream #quic #tl
+  - [x] Add cross-SDK byte-comparison fixtures, reference generators, tonutils-rs byte tests, and a `cross-sdk` CI job #tests #tl #ci
+  - [x] Document the CRC paren-stripping rule, cross-SDK mechanism, and verified QUIC framing in `docs/reference/` #docs #tl #quic
+- [ ] Implement feature-gated RLDP2 typed transfer path; keep legacy RLDP decode-only until fixtures exist #rldp #network #tests
+- [x] Build mempool scanning support #mempool
+  - [x] Study `yungwine/ton-mempool` behavior and map required overlay flows #mempool #docs
+  - [x] Identify public API for pending external messages #mempool
+  - [x] Add stream API for pending messages #mempool
+  - [x] Add bounded backpressure and fast-path filtering #mempool #perf
+  - [x] Add offline structural tests before live network tests #mempool #tests
+  - [x] Add lazy decode, dedup TTL/eviction, diagnostics, and overlay receive adapter #mempool #tests
+  - [x] Add merged bootstrap builder and async global-config resolution #mempool #network #tests
+  - [x] Run mainnet/testnet DHT live probes with the existing live-test workflow #mempool #network #tests #ci
+  - [x] Add canonical `tonNode.externalMessageBroadcast` fixture and seed-only stream delivery #mempool #tests #network
+  - [-] Add live FEC broadcast coverage for external messages - requires live seed configuration in GitHub Actions secrets #mempool #tests #network
 
 ## CLI And Shell Automation
 
@@ -461,6 +484,7 @@ postponed work moves to `# BACKLOG`.
   - [ ] `cargo test` #tests
   - [ ] `cargo test --all-features` #tests #features
 - [ ] Add fixture strategy #tests
+  - [x] Add cross-SDK fixture set with pinned tonutils-go and pytoniq-core reference bytes verified in CI #tests #tl #ci
   - [ ] Store binary fixtures with source notes #tests #docs
   - [ ] Keep live-network tests ignored by default #tests
   - [ ] Add deterministic random seeds where tests do not require cryptographic randomness #tests

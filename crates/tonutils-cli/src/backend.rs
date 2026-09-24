@@ -102,7 +102,7 @@ impl Cli {
             Commands::Balancer { command } => self.execute_balancer(command).await,
             Commands::Contract { command } => self.execute_contract(command).await,
             Commands::Wallet { command } => self.execute_wallet(command).await,
-            Commands::Tvm { command } => self.execute_tvm(command).await,
+            Commands::Tvm { command } => self.execute_tvm(command),
         }
     }
 
@@ -329,7 +329,7 @@ impl Cli {
         }
     }
 
-    pub(super) async fn execute_tvm(&self, command: &TvmCommand) -> Result<()> {
+    pub(super) fn execute_tvm(&self, command: &TvmCommand) -> Result<()> {
         match command {
             TvmCommand::Boc { command } => self.execute_boc(command),
             TvmCommand::Schema { command } => self.execute_schema(command),

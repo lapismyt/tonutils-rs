@@ -99,5 +99,6 @@ payload in the ADNL LiteAPI query envelope before transport.
 The schema checker is active, but the local LiteAPI schema and handwritten Rust
 surface are not complete. Nonfinal candidate calls, queue helpers, and several
 proof helpers exist, but broader generated coverage and full golden binary
-fixtures remain follow-up work. DHT, overlay, and mempool TL types are future
-protocol work.
+fixtures remain follow-up work. Checked ADNL, DHT, overlay, FEC, and mempool
+external-message TL types are available under `tonutils_tl::tl::network`;
+broader generated schema coverage remains follow-up work.

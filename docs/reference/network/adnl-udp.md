@@ -1,6 +1,8 @@
 # ADNL UDP
 
-ADNL UDP is required for general TON peer-to-peer networking, DHT, overlays, and future mempool scanning. It is not the same implementation path as ADNL TCP liteserver connections.
+ADNL UDP is required for general TON peer-to-peer networking, DHT, overlays,
+and mempool scanning. It is not the same implementation path as ADNL TCP
+liteserver connections.
 
 ## Expected Responsibilities
 
@@ -40,10 +42,19 @@ UDP ADNL must handle:
 
 ## Crate Design
 
-The future UDP implementation should not reuse TCP framing. It should share only crypto identity types and TL message types where protocol-compatible.
+`tonutils-adnl` exposes `AdnlUdpPeer`, `AdnlUdpSocket`, and authenticated
+direct/channel packet primitives behind the opt-in `udp` feature. Direct
+packets use the upstream layout of destination id, ephemeral Ed25519 key,
+SHA-256 digest, and AES-CTR ciphertext. Established channel packets use the
+channel id, canonical AES-channel digest/key/IV derivation, TL
+`adnl.packetContents`, bounded sequence replay tracking, and ACK validation.
+All datagram APIs enforce the 64 KiB bound and provide Tokio timeouts.
+
+`AdnlUdpSession` expects the caller to provision the remote identity and now
+supports create/confirm channel negotiation plus typed DHT and overlay query
+helpers. Fragmentation and NAT traversal remain outside this layer.
 
 ## Missing Work
 
-- Parse and document all relevant ADNL UDP TL constructors.
 - Add packet fixtures from official nodes.
 - Add deterministic simulated UDP tests.

@@ -1,0 +1,52 @@
+{
+  "schema_revision": "upstream:3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+  "cases": [
+    {
+      "name": "overlay-get-random-peers-two",
+      "constructor": "overlay.getRandomPeers",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "peers": [
+          {
+            "id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "overlay": "abababababababababababababababababababababababababababababababab",
+            "version": 1700000000,
+            "signature": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          },
+          {
+            "id": "2222222222222222222222222222222222222222222222222222222222222222",
+            "overlay": "abababababababababababababababababababababababababababababababab",
+            "version": 1700000001,
+            "signature": "dededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededede"
+          }
+        ]
+      },
+      "raw_hex": "ab64ee4802000000c6b413481111111111111111111111111111111111111111111111111111111111111111abababababababababababababababababababababababababababababababab00f1536540cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd000000c6b413482222222222222222222222222222222222222222222222222222222222222222abababababababababababababababababababababababababababababababab01f1536540dededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededededede000000"
+    },
+    {
+      "name": "overlay-ping",
+      "constructor": "overlay.ping",
+      "references": [
+        "tonutils-go"
+      ],
+      "note": "pytoniq-core's bundled ton_api.tl has no overlay.ping constructor; covered by tonutils-go and the schema_audit test",
+      "fields": {},
+      "raw_hex": "81b40c69"
+    },
+    {
+      "name": "overlay-query",
+      "constructor": "overlay.query",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "overlay": "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+      },
+      "raw_hex": "4384fdccefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"
+    }
+  ]
+}
