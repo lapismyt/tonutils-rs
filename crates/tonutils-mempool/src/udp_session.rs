@@ -15,9 +15,11 @@ use tonutils_overlay::{
 use tonutils_tl::Message as AdnlMessage;
 use tonutils_tl::tl::network::{
     Address, AddressListBoxed, DhtKey, DhtValueResult, OverlayBroadcast, OverlayBroadcastFec,
-    OverlayMessage, OverlayNode, OverlayNodeToSign, OverlayNodesBoxed, OverlayPong, OverlayQuery,
-    PacketContents, PublicKey as TlPublicKey, TonNodeExternalMessageBroadcast,
+    OverlayMessage, OverlayNode, OverlayNodeToSign, OverlayNodesBoxed, PacketContents,
+    PublicKey as TlPublicKey, TonNodeExternalMessageBroadcast,
 };
+
+use crate::{overlay_inbound, protocol_stats};
 
 /// Adapter exposing an authenticated direct ADNL UDP session to the overlay.
 pub struct AdnlUdpOverlaySession {
@@ -677,6 +679,7 @@ impl AdnlUdpOverlaySession {
             "overlay UDP session established: peer={peer:?} address={remote_addr} overlay={overlay}"
         );
         log::debug!("overlay UDP session sending overlay.getRandomPeers: peer={peer:?}");
+        protocol_stats::record_random_peers_query_sent();
         session
             .session
             .send_overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()))
@@ -718,6 +721,7 @@ impl AdnlUdpOverlaySession {
         {
             log::warn!("overlay handshake skipped for {peer:?}: {error}");
         }
+        protocol_stats::record_random_peers_query_sent();
         Ok(session)
     }
 }
@@ -737,6 +741,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                         .session
                         .send_overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()))
                         .await;
+                    protocol_stats::record_random_peers_query_sent();
                     self.last_keepalive = Instant::now();
                 }
                 let packet = match tokio::time::timeout(
@@ -770,7 +775,12 @@ impl OverlaySession for AdnlUdpOverlaySession {
                         }
                     );
                     if let AdnlMessage::Answer { answer, .. } = &message {
-                        self.trace_membership(answer);
+                        overlay_inbound::trace_membership(
+                            &self.peer,
+                            &self.session,
+                            self.overlay,
+                            answer,
+                        );
                         continue;
                     }
                     if let AdnlMessage::Query { query_id, query } = &message
@@ -817,6 +827,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                                 }
                             }
                         };
+                        protocol_stats::record_custom_message();
                         return Ok(Arc::from(data));
                     }
                 }
@@ -829,6 +840,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                         .session
                         .send_overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()))
                         .await;
+                    protocol_stats::record_random_peers_query_sent();
                 }
             }
         })
@@ -873,90 +885,20 @@ impl OverlaySession for AdnlUdpOverlaySession {
 }
 
 impl AdnlUdpOverlaySession {
-    /// Logs whether a peer lists this node among the overlay members it
-    /// returns from `overlay.getRandomPeers`.
-    ///
-    /// Upstream only answers with *verified* members
-    /// (`OverlayImpl::send_random_peers`), so this is the observable signal
-    /// that the peer completed `overlay.ping`/`overlay.pong` and now treats
-    /// this node as a peer that may receive broadcasts.
-    fn trace_membership(&self, answer: &[u8]) {
-        let Some(overlay) = self.overlay else {
-            return;
-        };
-        let mut data = answer;
-        let Ok(nodes) = OverlayNodesBoxed::read_from(&mut data) else {
-            log::debug!(
-                "overlay getRandomPeers answer: peer={:?} (not overlay.nodes)",
-                self.peer
-            );
-            return;
-        };
-        let ours = self
-            .session
-            .local_overlay_node(tonutils_tl::Int256(overlay.as_bytes()));
-        let listed = nodes.nodes.iter().any(|node| node.id == ours.id);
-        log::info!(
-            "overlay getRandomPeers answer: peer={:?} nodes={} listed_us={listed}",
-            self.peer,
-            nodes.nodes.len()
-        );
-    }
-
     /// Answers the overlay queries this node is expected to serve.
     ///
-    /// A peer that receives our `overlay.getRandomPeers` puts us into its
-    /// pending set and then verifies us with `overlay.ping`
-    /// (`OverlayImpl::process_pending_peer` in `overlay/overlay-peers.cpp`).
-    /// Only a node that answers with `overlay.pong` is promoted to a verified
-    /// member, and only verified members receive overlay broadcasts, so an
-    /// unanswered ping leaves the node silent even though it is connected.
+    /// The dispatch, including the `overlay.query` wrapper that upstream
+    /// always adds, lives in [`crate::overlay_inbound`].
     ///
     /// Returns `true` when the query was recognised and answered.
     async fn answer_overlay_query(&mut self, query_id: &tonutils_tl::Int256, query: &[u8]) -> bool {
-        let Some(overlay) = self.overlay else {
-            log::debug!(
-                "overlay query on a session without overlay: peer={:?} id={:08x}",
-                self.peer,
-                query
-                    .get(..4)
-                    .map_or(0, |id| { u32::from_le_bytes([id[0], id[1], id[2], id[3]]) }),
-            );
-            return false;
-        };
-        let mut data = query;
-        let answer = match OverlayQuery::read_from(&mut data) {
-            Ok(OverlayQuery::Ping) => {
-                log::debug!("answering overlay.ping for peer={:?}", self.peer);
-                Some(tl_proto::serialize(OverlayPong))
-            }
-            Ok(OverlayQuery::GetRandomPeers { .. }) => {
-                let nodes = OverlayNodesBoxed {
-                    nodes: vec![
-                        self.session
-                            .local_overlay_node(tonutils_tl::Int256(overlay.as_bytes())),
-                    ],
-                };
-                log::debug!("answering overlay.getRandomPeers for peer={:?}", self.peer);
-                Some(tl_proto::serialize(nodes))
-            }
-            other => {
-                log::debug!(
-                    "unhandled overlay query: peer={:?} id={:08x} len={} recognised={}",
-                    self.peer,
-                    query
-                        .get(..4)
-                        .map_or(0, |id| { u32::from_le_bytes([id[0], id[1], id[2], id[3]]) }),
-                    query.len(),
-                    other.is_ok(),
-                );
-                None
-            }
-        };
-        let Some(answer) = answer else {
+        let Some(answer) =
+            overlay_inbound::build_overlay_answer(&self.peer, &self.session, self.overlay, query)
+        else {
             return false;
         };
         if let Err(error) = self.session.send_answer(query_id.clone(), answer).await {
+            protocol_stats::record_query_answer_failed();
             log::trace!(
                 "overlay query answer failed: peer={:?} error={error}",
                 self.peer
@@ -1058,277 +1000,4 @@ impl AdnlUdpOverlaySession {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use raptorq::Encoder;
-    use tonutils_adnl::KeyPair;
-    use tonutils_tl::tl::network::{TonNodeExternalMessage, TonNodeExternalMessageBroadcast};
-
-    #[tokio::test]
-    async fn reassembles_single_source_raptorq_external_message() {
-        let external = tl_proto::serialize(TonNodeExternalMessageBroadcast {
-            message: TonNodeExternalMessage {
-                data: vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3],
-            },
-        });
-        let encoder = Encoder::with_defaults(&external, 128);
-        let config = encoder.get_config();
-        let packet = encoder
-            .get_encoded_packets(0)
-            .into_iter()
-            .next()
-            .expect("encoder must produce a source packet");
-        let hash: [u8; 32] = Sha256::digest(&external).into();
-        let local = KeyPair::generate(&mut rand::rngs::OsRng);
-        let remote = KeyPair::generate(&mut rand::rngs::OsRng);
-        let local_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-            .await
-            .unwrap()
-            .local_addr()
-            .unwrap();
-        let remote_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-            .await
-            .unwrap()
-            .local_addr()
-            .unwrap();
-        let session = AdnlUdpSession::connect(local_addr, remote_addr, local, remote.public_key)
-            .await
-            .unwrap();
-        let mut adapter = AdnlUdpOverlaySession {
-            peer: PeerId::from_bytes([1; 32]),
-            session,
-            overlay: None,
-            fec: HashMap::new(),
-            last_keepalive: Instant::now(),
-        };
-        let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
-        let fec = OverlayBroadcastFec {
-            src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![1] },
-            certificate: tonutils_tl::tl::network::OverlayCertificate::Empty,
-            data_hash: tonutils_tl::Int256(hash),
-            data_size: external.len() as i32,
-            flags: 0,
-            data: packet.serialize(),
-            seqno: 0,
-            fec: tonutils_tl::tl::network::FecType::RaptorQ {
-                data_size: external.len() as i32,
-                symbol_size: config.symbol_size() as i32,
-                symbols_count,
-            },
-            date: 0,
-            signature: Vec::new(),
-        };
-        let payload = adapter
-            .unwrap_overlay_payload(&tl_proto::serialize(fec))
-            .unwrap();
-        assert_eq!(payload, vec![0xb5, 0xee, 0x9c, 0x72, 1, 2, 3]);
-    }
-
-    #[tokio::test]
-    async fn waits_for_all_source_symbols_before_publishing_fec_payload() {
-        let external = tl_proto::serialize(TonNodeExternalMessageBroadcast {
-            message: TonNodeExternalMessage { data: vec![7; 300] },
-        });
-        let encoder = Encoder::with_defaults(&external, 64);
-        let config = encoder.get_config();
-        let packets = encoder.get_encoded_packets(0);
-        assert!(packets.len() > 1);
-        let hash: [u8; 32] = Sha256::digest(&external).into();
-        let local = KeyPair::generate(&mut rand::rngs::OsRng);
-        let remote = KeyPair::generate(&mut rand::rngs::OsRng);
-        let local_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-            .await
-            .unwrap()
-            .local_addr()
-            .unwrap();
-        let remote_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-            .await
-            .unwrap()
-            .local_addr()
-            .unwrap();
-        let session = AdnlUdpSession::connect(local_addr, remote_addr, local, remote.public_key)
-            .await
-            .unwrap();
-        let mut adapter = AdnlUdpOverlaySession {
-            peer: PeerId::from_bytes([2; 32]),
-            session,
-            overlay: None,
-            fec: HashMap::new(),
-            last_keepalive: Instant::now(),
-        };
-        let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
-        for (index, packet) in packets.into_iter().enumerate() {
-            let fec = OverlayBroadcastFec {
-                src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![2] },
-                certificate: tonutils_tl::tl::network::OverlayCertificate::Empty,
-                data_hash: tonutils_tl::Int256(hash),
-                data_size: external.len() as i32,
-                flags: 0,
-                data: packet.serialize(),
-                seqno: index as i32,
-                fec: tonutils_tl::tl::network::FecType::RaptorQ {
-                    data_size: external.len() as i32,
-                    symbol_size: config.symbol_size() as i32,
-                    symbols_count,
-                },
-                date: 0,
-                signature: Vec::new(),
-            };
-            let result = adapter.unwrap_overlay_payload(&tl_proto::serialize(fec));
-            if index + 1 == symbols_count as usize {
-                assert_eq!(result.unwrap(), vec![7; 300]);
-            } else {
-                assert!(result.is_err());
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn rejects_truncated_serialized_fec_packet() {
-        let local = KeyPair::generate(&mut rand::rngs::OsRng);
-        let remote = KeyPair::generate(&mut rand::rngs::OsRng);
-        let local_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-            .await
-            .unwrap()
-            .local_addr()
-            .unwrap();
-        let remote_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-            .await
-            .unwrap()
-            .local_addr()
-            .unwrap();
-        let session = AdnlUdpSession::connect(local_addr, remote_addr, local, remote.public_key)
-            .await
-            .unwrap();
-        let mut adapter = AdnlUdpOverlaySession {
-            peer: PeerId::from_bytes([3; 32]),
-            session,
-            overlay: None,
-            fec: HashMap::new(),
-            last_keepalive: Instant::now(),
-        };
-        let payload = tl_proto::serialize(OverlayBroadcastFec {
-            src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![3] },
-            certificate: tonutils_tl::tl::network::OverlayCertificate::Empty,
-            data_hash: tonutils_tl::Int256([4; 32]),
-            data_size: 4,
-            flags: 0,
-            data: vec![1, 2, 3],
-            seqno: 0,
-            fec: tonutils_tl::tl::network::FecType::RaptorQ {
-                data_size: 4,
-                symbol_size: 4,
-                symbols_count: 1,
-            },
-            date: 0,
-            signature: Vec::new(),
-        });
-        assert_eq!(
-            adapter.unwrap_overlay_payload(&payload).unwrap_err(),
-            "overlay FEC packet is truncated"
-        );
-    }
-
-    #[tokio::test]
-    async fn ignores_wrong_overlay_packets_without_killing_session() {
-        let client_key = KeyPair::generate(&mut rand::rngs::OsRng);
-        let server_key = KeyPair::generate(&mut rand::rngs::OsRng);
-        let client_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-            .await
-            .unwrap()
-            .local_addr()
-            .unwrap();
-        let server_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let server_addr = server_socket.local_addr().unwrap();
-        let overlay = OverlayId::from_name(b"expected-overlay");
-        let mut receiver = AdnlUdpOverlaySession::connect_for_overlay(
-            PeerId::from_bytes(server_key.public_key.to_bytes()),
-            overlay,
-            client_addr,
-            server_addr,
-            client_key,
-            server_key.public_key,
-        )
-        .await
-        .unwrap();
-        drop(server_socket);
-        let mut sender =
-            AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
-                .await
-                .unwrap();
-
-        let mut wrong_overlay = Vec::new();
-        wrong_overlay.extend_from_slice(&0x75252420u32.to_le_bytes());
-        wrong_overlay.extend_from_slice(&OverlayId::from_name(b"wrong-overlay").as_bytes());
-        wrong_overlay.extend_from_slice(&[1, 2, 3]);
-        let packet = |data| PacketContents {
-            rand1: vec![0; 7],
-            flags: (),
-            from: None,
-            from_short: None,
-            message: Some(AdnlMessage::Custom { data }),
-            messages: None,
-            address: None,
-            priority_address: None,
-            recv_addr_list_version: None,
-            recv_priority_addr_list_version: None,
-            reinit_date: None,
-            dst_reinit_date: None,
-            signature: None,
-            rand2: vec![0; 7],
-            seqno: None,
-            confirm_seqno: None,
-        };
-        sender.send_contents(packet(wrong_overlay)).await.unwrap();
-
-        let mut valid_overlay = Vec::new();
-        valid_overlay.extend_from_slice(&0x75252420u32.to_le_bytes());
-        valid_overlay.extend_from_slice(&overlay.as_bytes());
-        valid_overlay.extend(tl_proto::serialize(TonNodeExternalMessageBroadcast {
-            message: TonNodeExternalMessage {
-                data: vec![9, 8, 7],
-            },
-        }));
-        sender.send_contents(packet(valid_overlay)).await.unwrap();
-
-        let payload = tokio::time::timeout(Duration::from_secs(1), receiver.receive())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(payload.as_ref(), [9, 8, 7]);
-    }
-
-    #[test]
-    fn validates_overlay_node_signature_and_timestamp_window() {
-        let key = KeyPair::generate(&mut rand::rngs::OsRng);
-        let overlay = OverlayId::from_name(b"overlay");
-        let now = 1_000;
-        let version = now + 60;
-        let public_key = tonutils_tl::tl::network::PublicKey::Ed25519 {
-            key: tonutils_tl::Int256(key.public_key.to_bytes()),
-        };
-        let adnl_id = tonutils_adnl::AdnlAddress::from(&key.public_key).to_bytes();
-        let signature = key.sign_raw(&tl_proto::serialize(OverlayNodeToSign {
-            id: tonutils_tl::tl::network::AdnlIdShort {
-                id: tonutils_tl::Int256(adnl_id),
-            },
-            overlay: tonutils_tl::Int256(overlay.as_bytes()),
-            version,
-        }));
-        let node = OverlayNode {
-            id: public_key,
-            overlay: tonutils_tl::Int256(overlay.as_bytes()),
-            version,
-            signature: signature.to_vec(),
-        };
-        assert!(valid_overlay_node(&node, overlay, now));
-        let mut prefixed = vec![0xff, 0xff, 0xff, 0xff];
-        prefixed.extend_from_slice(&signature);
-        let prefixed_node = OverlayNode {
-            signature: prefixed,
-            ..node.clone()
-        };
-        assert!(valid_overlay_node(&prefixed_node, overlay, now));
-        assert!(!valid_overlay_node(&node, overlay, now + 1_100));
-    }
-}
+mod tests;

@@ -573,6 +573,12 @@ pub enum OverlayQuery {
     /// overlay.query overlay:int256 = True;
     #[tl(id = 0xccfd8443)]
     Query { overlay: Int256 },
+    /// overlay.queryWithExtra overlay:int256 extra:overlay.messageExtra = True;
+    #[tl(id = 0x94ffc3e9)]
+    QueryWithExtra {
+        overlay: Int256,
+        extra: OverlayMessageExtra,
+    },
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -724,6 +730,41 @@ mod tests {
             })[..4],
             &0x2227e658u32.to_le_bytes()
         );
+    }
+
+    #[test]
+    fn overlay_query_wrapper_frames_inner_query() {
+        let overlay = Int256([9; 32]);
+        let wrapper = OverlayQuery::Query {
+            overlay: overlay.clone(),
+        };
+        let bytes = serialize(wrapper.clone());
+        // `overlay.query overlay:int256 = True;`
+        assert_eq!(&bytes[..4], &[0x43, 0x84, 0xfd, 0xcc]);
+        assert_eq!(&bytes[4..], &[9; 32]);
+        assert_eq!(deserialize::<OverlayQuery>(&bytes).unwrap(), wrapper);
+
+        let with_extra = OverlayQuery::QueryWithExtra {
+            overlay: overlay.clone(),
+            extra: OverlayMessageExtra {
+                flags: (),
+                certificate: None,
+            },
+        };
+        let bytes = serialize(with_extra.clone());
+        // `overlay.queryWithExtra overlay:int256 extra:overlay.messageExtra = True;`
+        assert_eq!(&bytes[..4], &[0xe9, 0xc3, 0xff, 0x94]);
+        assert_eq!(
+            deserialize::<OverlayQuery>(&bytes).unwrap(),
+            with_extra,
+            "extra is a constructor-typed field and must serialize bare"
+        );
+
+        // Upstream framing: header bytes followed by the raw inner query.
+        let mut framed = serialize(OverlayQuery::Query { overlay });
+        framed.extend_from_slice(&serialize(OverlayQuery::Ping));
+        assert_eq!(&framed[..4], &[0x43, 0x84, 0xfd, 0xcc]);
+        assert_eq!(&framed[36..], &[0x81, 0xb4, 0x0c, 0x69]);
     }
 
     #[test]

@@ -23,9 +23,12 @@ use tonutils_overlay::{
     SeedPeer,
 };
 use tonutils_overlay::{DiscoveryLookup, TypedDiscoveryLookup};
+mod overlay_inbound;
+mod protocol_stats;
 mod quic_session;
 mod udp_session;
 
+pub use protocol_stats::{ProtocolStats, protocol_stats};
 pub use quic_session::{QuicOverlaySession, quic_overlay_factory};
 pub use udp_session::{
     AdnlUdpOverlaySession, channel_factory, direct_factory, overlay_factory, udp_dht_lookup,
@@ -153,6 +156,20 @@ pub struct MempoolMetrics {
     pub broadcast_failures: u64,
     pub invalid_warnings: u64,
     pub overlay_packets: u64,
+}
+
+/// Outcome of the bootstrap discovery performed by
+/// [`MempoolScannerBuilder::start`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DiscoveryStats {
+    /// Seed records resolved from configuration and bootstrap sources.
+    pub seeds: u64,
+    /// Overlay peers returned by the configured discovery lookup on top of
+    /// the seeds. Zero means the lookup timed out, was empty, or was not
+    /// configured, and the raw seeds were used as-is.
+    pub discovered: u64,
+    /// Total peer records handed to the session bootstrap.
+    pub peers: u64,
 }
 
 #[derive(Debug, Error, Eq, PartialEq)]
@@ -544,6 +561,11 @@ impl MempoolScannerBuilder {
         let manager = PeerManager::with_overlay(self.overlay, self.overlay_id)
             .map_err(|error| MempoolError::Overlay(error.to_string()))?;
         let scanner = Arc::new(MempoolScanner::new(self.config)?);
+        scanner.record_discovery(DiscoveryStats {
+            seeds: seed_count as u64,
+            discovered: discovered_count as u64,
+            peers: peers.len() as u64,
+        });
         let stream = scanner.events();
         let _receiver_task = scanner
             .clone()
@@ -750,6 +772,9 @@ pub struct MempoolScanner {
     broadcast_failures: AtomicU64,
     invalid_warnings: AtomicU64,
     overlay_packets: AtomicU64,
+    discovery_seeds: AtomicU64,
+    discovery_results: AtomicU64,
+    discovery_peers: AtomicU64,
 }
 
 impl MempoolScanner {
@@ -781,6 +806,9 @@ impl MempoolScanner {
             broadcast_failures: AtomicU64::new(0),
             invalid_warnings: AtomicU64::new(0),
             overlay_packets: AtomicU64::new(0),
+            discovery_seeds: AtomicU64::new(0),
+            discovery_results: AtomicU64::new(0),
+            discovery_peers: AtomicU64::new(0),
         })
     }
 
@@ -818,6 +846,40 @@ impl MempoolScanner {
             invalid_warnings: self.invalid_warnings.load(Ordering::Relaxed),
             overlay_packets: self.overlay_packets.load(Ordering::Relaxed),
         }
+    }
+
+    /// Returns the outcome of the bootstrap discovery performed by
+    /// [`MempoolScannerBuilder::start`]: how many seeds were resolved, how
+    /// many extra overlay peers the discovery lookup returned, and how many
+    /// peer records were handed to the session bootstrap.
+    ///
+    /// `discovered == 0` means the configured lookup timed out, returned
+    /// nothing, or was not configured, so the scanner fell back to the raw
+    /// seeds.
+    pub fn discovery_stats(&self) -> DiscoveryStats {
+        DiscoveryStats {
+            seeds: self.discovery_seeds.load(Ordering::Relaxed),
+            discovered: self.discovery_results.load(Ordering::Relaxed),
+            peers: self.discovery_peers.load(Ordering::Relaxed),
+        }
+    }
+
+    fn record_discovery(&self, stats: DiscoveryStats) {
+        self.discovery_seeds.store(stats.seeds, Ordering::Relaxed);
+        self.discovery_results
+            .store(stats.discovered, Ordering::Relaxed);
+        self.discovery_peers.store(stats.peers, Ordering::Relaxed);
+    }
+
+    /// Returns process-wide overlay protocol counters.
+    ///
+    /// Unlike [`Self::metrics`], the counters are global: overlay sessions
+    /// live in the peer pool, not in the scanner, so a snapshot explains what
+    /// *all* sessions did — how many queries arrived, how many were wrapped in
+    /// `overlay.query`, how many pings were answered, and whether peers listed
+    /// this node among the verified members. See [`ProtocolStats`].
+    pub fn protocol_stats(&self) -> ProtocolStats {
+        protocol_stats()
     }
 
     /// Validates, deduplicates, publishes, and broadcasts one external BoC.

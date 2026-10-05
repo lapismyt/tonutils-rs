@@ -331,10 +331,7 @@ async fn configured_seed_delivers_valid_external_message() {
         seeds.iter().all(SeedPeer::is_valid),
         "live seed phase failed: every seed must contain a nonzero Ed25519 key and usable IP:port"
     );
-    eprintln!(
-        "live mempool phase=seed validated={} discovery_results=pending",
-        seeds.len()
-    );
+    eprintln!("live mempool phase=seed validated={}", seeds.len());
     let overlay_bytes = configured_bytes("TON_MEMPOOL_LIVE_OVERLAY_ID")
         .expect("TON_MEMPOOL_LIVE_OVERLAY_ID must be set to 32-byte hex");
     let timeout = std::env::var("TON_MEMPOOL_LIVE_TIMEOUT_SECS")
@@ -361,12 +358,29 @@ async fn configured_seed_delivers_valid_external_message() {
         connected_peers > 0,
         "live mempool phase=bootstrap readiness failed: registered_peers=0"
     );
+    eprintln!(
+        "live mempool phase=discovery {:?}",
+        scanner.discovery_stats()
+    );
     eprintln!("live mempool phase=connected registered_peers={connected_peers} overlay={overlay}");
     let mut events = Box::pin(stream);
+    let mut progress = tokio::time::interval(Duration::from_secs(10));
+    progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let event = tokio::time::timeout(Duration::from_secs(timeout), async {
         loop {
-            if let Some(event @ MempoolEvent::ExternalMessage { .. }) = events.next().await {
-                break event;
+            tokio::select! {
+                event = events.next() => {
+                    if let Some(event @ MempoolEvent::ExternalMessage { .. }) = event {
+                        break event;
+                    }
+                }
+                _ = progress.tick() => {
+                    eprintln!(
+                        "live mempool phase=waiting metrics={:?} protocol={:?}",
+                        scanner.metrics(),
+                        scanner.protocol_stats()
+                    );
+                }
             }
         }
     })
@@ -376,8 +390,9 @@ async fn configured_seed_delivers_valid_external_message() {
         Err(_) => {
             let peers = manager.peer_count().await;
             let metrics = scanner.metrics();
+            let protocol = scanner.protocol_stats();
             panic!(
-                "live mempool phase=delivery timed out after {timeout}s: registered_peers={peers} metrics={metrics:?}"
+                "live mempool phase=delivery timed out after {timeout}s: registered_peers={peers} metrics={metrics:?} protocol={protocol:?}"
             );
         }
     };
