@@ -4,8 +4,9 @@
 //! discovery remain owned by the caller because a UDP endpoint can be shared
 //! by several ADNL peers and the protocol does not provide stream semantics.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use aes::cipher::{KeyIvInit, StreamCipher};
@@ -37,6 +38,139 @@ pub fn now_i32() -> i32 {
         .unwrap_or_default()
         .as_secs();
     secs.min(i32::MAX as u64) as i32
+}
+
+/// Process-wide reinit date advertised in outgoing direct packets.
+///
+/// Mirrors upstream `Adnl::adnl_start_time()` (`adnl/adnl-peer-table.cpp`):
+/// the value is the Unix time captured on first use and stays constant for
+/// the lifetime of the process.  It is written into every direct
+/// `adnl.packetContents` as `reinit_date`, with `dst_reinit_date` carrying the
+/// peer's own announced date (see [`AdnlUdpSession::send_direct_contents`]).
+///
+/// A per-packet value (for example `now_i32()`) must never be used here:
+/// upstream treats a strictly increasing `reinit_date` as a peer restart and
+/// calls `AdnlPeerPairImpl::reinit()` on every datagram, which resets the
+/// peer's sequence numbers and unregisters its ADNL channel.  That makes the
+/// peer drop subsequent packets with "new ack seqno", so the channel never
+/// becomes ready and no answers or broadcasts are ever delivered.
+pub fn local_reinit_date() -> i32 {
+    static REINIT_DATE: OnceLock<i32> = OnceLock::new();
+    *REINIT_DATE.get_or_init(now_i32)
+}
+
+/// ADNL state that belongs to a peer pair rather than to one socket.
+///
+/// Upstream keeps a single `AdnlPeerPairImpl` per (local node id, peer node
+/// id) pair, so `out_seqno_`, the acknowledged `in_seqno_` and the peer's
+/// announced `reinit_date` survive socket reconnects.  This crate opens a
+/// fresh [`AdnlUdpSession`] per lookup/bootstrap phase instead, and the peer
+/// keeps validating the *same* pair state for every one of them.  A second
+/// session that restarts `seqno` at 1 therefore has all of its packets
+/// rejected as replays by the peer, which shows up as unanswered queries and
+/// `overlay_packets: 0`.
+///
+/// The counters that the peer validates across the whole pair are kept here
+/// keyed by the remote ADNL id.  Replay-window bookkeeping (`received`) stays
+/// per session: it only guards against duplicates inside one session, and
+/// their sequence numbers are monotonic anyway.
+#[derive(Default)]
+struct PeerPairState {
+    /// Outgoing sequence number; shared by direct and channel packets.
+    next_seqno: u64,
+    /// Highest sequence number received from the peer.
+    highest_seqno: u64,
+    /// Latest `reinit_date` announced by the peer, `0` when none was seen yet.
+    reinit_date: i32,
+}
+
+/// Returns a short name for an `adnl.Message` used in receive traces.
+fn message_kind(message: Option<&AdnlMessage>) -> &'static str {
+    match message {
+        None => "none",
+        Some(AdnlMessage::CreateChannel { .. }) => "createChannel",
+        Some(AdnlMessage::ConfirmChannel { .. }) => "confirmChannel",
+        Some(AdnlMessage::Custom { .. }) => "custom",
+        Some(AdnlMessage::Nop) => "nop",
+        Some(AdnlMessage::Reinit { .. }) => "reinit",
+        Some(AdnlMessage::Query { .. }) => "query",
+        Some(AdnlMessage::Answer { .. }) => "answer",
+        Some(_) => "other",
+    }
+}
+
+/// Renders the message vector of a packet for receive traces.
+fn message_vector(messages: &[AdnlMessage]) -> String {
+    messages
+        .iter()
+        .map(|message| message_kind(Some(message)))
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+fn peer_pair_states() -> &'static Mutex<HashMap<[u8; 32], PeerPairState>> {
+    static STATES: OnceLock<Mutex<HashMap<[u8; 32], PeerPairState>>> = OnceLock::new();
+    STATES.get_or_init(Default::default)
+}
+
+fn with_peer_pair_state<R>(remote_id: &[u8; 32], f: impl FnOnce(&mut PeerPairState) -> R) -> R {
+    let mut states = peer_pair_states()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    f(states.entry(*remote_id).or_default())
+}
+
+/// Allocates the next outgoing sequence number for `remote_id`.
+fn next_outgoing_seqno(remote_id: &[u8; 32]) -> u64 {
+    with_peer_pair_state(remote_id, |state| {
+        state.next_seqno = state.next_seqno.saturating_add(1);
+        state.next_seqno
+    })
+}
+
+/// Current outgoing sequence number of `remote_id` without allocating one.
+fn outgoing_seqno(remote_id: &[u8; 32]) -> u64 {
+    with_peer_pair_state(remote_id, |state| state.next_seqno)
+}
+
+/// Highest sequence number received from `remote_id`.
+fn highest_received_seqno(remote_id: &[u8; 32]) -> u64 {
+    with_peer_pair_state(remote_id, |state| state.highest_seqno)
+}
+
+/// Records a received sequence number and returns the new high-water mark.
+fn record_received_seqno(remote_id: &[u8; 32], seqno: u64) -> u64 {
+    with_peer_pair_state(remote_id, |state| {
+        state.highest_seqno = state.highest_seqno.max(seqno);
+        state.highest_seqno
+    })
+}
+
+/// Latest `reinit_date` announced by `remote_id`.
+fn peer_reinit_date(remote_id: &[u8; 32]) -> i32 {
+    with_peer_pair_state(remote_id, |state| state.reinit_date)
+}
+
+/// Returns whether `date` is a *new* peer epoch, applying the reset when it is.
+///
+/// Mirrors `AdnlPeerPairImpl::reinit`: a strictly later `reinit_date` means
+/// the peer restarted, so both directions of the pair's sequence numbers are
+/// cleared.  Returns `true` when the caller must also drop its session-local
+/// state.
+fn note_peer_reinit_date(remote_id: &[u8; 32], date: i32) -> bool {
+    with_peer_pair_state(remote_id, |state| {
+        if state.reinit_date == 0 {
+            state.reinit_date = date;
+            false
+        } else if state.reinit_date < date {
+            state.reinit_date = date;
+            state.next_seqno = 0;
+            state.highest_seqno = 0;
+            true
+        } else {
+            false
+        }
+    })
 }
 
 /// AES-CTR channel cipher used after an ADNL channel is established.
@@ -219,10 +353,40 @@ pub struct AdnlUdpSession {
     local_id: [u8; 32],
     remote_id: [u8; 32],
     channel: Option<AdnlChannelPacket>,
-    pending_channel: Option<(KeyPair, i32)>,
-    next_seqno: u64,
+    /// Local ADNL channel key for this session.  It is generated once and
+    /// reused for every `adnl.message.createChannel` /
+    /// `adnl.message.confirmChannel` this session sends, so repeated
+    /// negotiation rounds stay idempotent instead of re-keying a channel the
+    /// peer has already accepted.
+    local_channel: KeyPair,
+    /// Whether this session may establish ADNL channels.  One-shot sessions
+    /// (DHT/overlay lookups) disable it: they are dropped right after the
+    /// query, and a peer that keeps the resulting channel would send packets
+    /// this process can no longer decrypt.
+    confirm_channels: bool,
+    /// Peer channel public key the current channel was derived from.
+    peer_channel_key: Option<[u8; 32]>,
+    /// Date of the last channel request sent by this session, used to rate
+    /// limit re-key attempts.
+    channel_requested_at: Option<std::time::Instant>,
+    /// When set, this session has sent `createChannel` and awaits the peer's
+    /// `confirmChannel`.  The value is the date that was sent.
+    pending_channel: Option<i32>,
+    /// Sequence numbers of the peer pair itself are process-wide, see
+    /// [`PeerPairState`]; only the local replay window is session state.
     received: VecDeque<u64>,
-    highest_seqno: u64,
+    /// Version of the address list last received from the peer, echoed back
+    /// as `recv_addr_list_version` so the peer knows we keep its address.
+    peer_addr_list_version: Option<i32>,
+    /// Address list version advertised by this session.
+    ///
+    /// Frozen at connect time: upstream replaces the stored address list only
+    /// on a strictly greater `version`, so a per-packet timestamp would make
+    /// the peer's single stored source address flap between the ports of
+    /// concurrent sessions to the same peer.  A session started later always
+    /// wins, which keeps the peer's answer routing stable for the lifetime of
+    /// a session.
+    address_version: i32,
 }
 
 impl AdnlUdpSession {
@@ -241,10 +405,14 @@ impl AdnlUdpSession {
             local,
             remote,
             channel: None,
+            local_channel: KeyPair::generate(&mut rand::rngs::OsRng),
+            confirm_channels: true,
+            peer_channel_key: None,
+            channel_requested_at: None,
             pending_channel: None,
-            next_seqno: 0,
             received: VecDeque::new(),
-            highest_seqno: 0,
+            peer_addr_list_version: None,
+            address_version: now_i32(),
         })
     }
 
@@ -260,12 +428,83 @@ impl AdnlUdpSession {
         Ok(session)
     }
 
-    pub async fn send_contents(&mut self, contents: PacketContents) -> Result<usize, AdnlError> {
-        if let Some(channel) = self.channel.as_mut() {
-            let packet = channel.encode(contents)?;
-            return Ok(self.socket.send(&packet).await?);
+    /// Enables or disables ADNL channel establishment for this session.
+    ///
+    /// Sessions used for a single query should pass `false`: the session is
+    /// dropped right after the answer, while the peer keeps the negotiated
+    /// channel for as long as it holds our ADNL node id.  Every later session
+    /// would then receive channel packets it cannot decrypt.
+    ///
+    /// Defaults to `true`.
+    pub fn set_confirm_channels(&mut self, enabled: bool) {
+        self.confirm_channels = enabled;
+    }
+
+    /// Assigns the peer pair's shared sequence numbers to an outgoing packet
+    /// and fills the address fields the peer needs to reach us.
+    ///
+    /// Direct and channel packets share one sequence number space per peer
+    /// pair, so both paths allocate from [`PeerPairState`] here instead of
+    /// from any session-local counter.
+    fn seal_seqno(&self, mut contents: PacketContents) -> PacketContents {
+        contents.seqno = Some(next_outgoing_seqno(&self.remote_id));
+        contents.confirm_seqno = Some(highest_received_seqno(&self.remote_id));
+        self.fill_address(&mut contents);
+        contents
+    }
+
+    /// Fills `address`/`recv_addr_list_version` on an outgoing packet.
+    ///
+    /// Upstream learns a peer's address only from `packet.addr_list()`
+    /// (`AdnlPeerPairImpl::receive_packet_checked` in `adnl/adnl-peer.cpp`):
+    /// an initialized but address-less `adnl.addressList` makes the receiver
+    /// record the datagram's source address implicitly.  A peer that never
+    /// learns our address cannot route anything *it* initiates to us -
+    /// neither the `overlay.ping` that turns us into a verified overlay
+    /// member nor the overlay broadcasts - which leaves the node invisible
+    /// to the overlay even though its own queries are answered.
+    ///
+    /// `reinit_date` must equal the packet level reinit date
+    /// ([`local_reinit_date`]): upstream compares it against the pair's own
+    /// `reinit_date_` and calls `AdnlPeerPairImpl::reinit` when the announced
+    /// date is greater, which resets the peer's sequence numbers and drops its
+    /// ADNL channel.  Because that reinit is never signalled back, our replay
+    /// window would then reject the peer's restarted sequence numbers and all
+    /// later answers would be lost.
+    fn fill_address(&self, contents: &mut PacketContents) {
+        if contents.address.is_none() {
+            contents.address = Some(AddressList {
+                addrs: Vec::new(),
+                version: self.address_version,
+                reinit_date: local_reinit_date(),
+                priority: 0,
+                expire_at: 0,
+            });
         }
-        self.send_direct_contents(contents).await
+        if contents.recv_addr_list_version.is_none() {
+            contents.recv_addr_list_version = self.peer_addr_list_version;
+        }
+    }
+
+    pub async fn send_contents(&mut self, contents: PacketContents) -> Result<usize, AdnlError> {
+        if self.channel.is_none() {
+            return self.send_direct_contents(contents).await;
+        }
+        let contents = self.seal_seqno(contents);
+        log::trace!(
+            "send_channel: to={} seqno={:?} confirm={:?}",
+            self.socket
+                .peer_addr()
+                .map_or_else(|_| "?".into(), |address| address.to_string()),
+            contents.seqno,
+            contents.confirm_seqno,
+        );
+        let packet = self
+            .channel
+            .as_mut()
+            .expect("channel presence was checked above")
+            .encode(contents)?;
+        Ok(self.socket.send(&packet).await?)
     }
 
     pub async fn send_answer(
@@ -301,12 +540,23 @@ impl AdnlUdpSession {
         contents.from = Some(TlPublicKey::Ed25519 {
             key: tonutils_tl::Int256(self.local.public_key.to_bytes()),
         });
-        self.next_seqno = self.next_seqno.saturating_add(1);
-        contents.seqno = Some(self.next_seqno);
-        contents.confirm_seqno = Some(self.highest_seqno);
-        let now = now_i32();
-        contents.reinit_date.get_or_insert(now);
-        contents.dst_reinit_date.get_or_insert(0);
+        contents.seqno = Some(next_outgoing_seqno(&self.remote_id));
+        contents.confirm_seqno = Some(highest_received_seqno(&self.remote_id));
+        contents.reinit_date.get_or_insert(local_reinit_date());
+        contents
+            .dst_reinit_date
+            .get_or_insert(peer_reinit_date(&self.remote_id));
+        self.fill_address(&mut contents);
+        log::trace!(
+            "send_direct: to={} seqno={:?} confirm={:?} reinit={:?} dst_reinit={:?}",
+            self.socket
+                .peer_addr()
+                .map_or_else(|_| "?".into(), |address| address.to_string()),
+            contents.seqno,
+            contents.confirm_seqno,
+            contents.reinit_date,
+            contents.dst_reinit_date,
+        );
         let mut unsigned = contents.clone();
         unsigned.signature = None;
         let signature = self.local.sign_raw(&tl_proto::serialize(unsigned));
@@ -321,6 +571,42 @@ impl AdnlUdpSession {
         Ok(self.socket.send(&packet).await?)
     }
 
+    /// Applies upstream's peer-reinit rules to an accepted packet.
+    ///
+    /// Mirrors `AdnlPeerPairImpl::receive_packet_checked` and
+    /// `AdnlPeerPairImpl::reinit` in `adnl/adnl-peer.cpp`: the first announced
+    /// `reinit_date` is only recorded, a *later* one resets the per-peer state
+    /// (sequence numbers and the ADNL channel), and a packet carrying an older
+    /// date is dropped as stale.
+    ///
+    /// Returns `false` when the packet must be ignored.
+    fn apply_peer_reinit(&mut self, reinit_date: Option<i32>) -> bool {
+        let date = reinit_date.unwrap_or(0);
+        if note_peer_reinit_date(&self.remote_id, date) {
+            self.reset_peer_state();
+            log::debug!(
+                "ADNL peer reinitialized: remote_id={} reinit_date={date}",
+                hex::encode(self.remote_id)
+            );
+        }
+        let current = peer_reinit_date(&self.remote_id);
+        if date > 0 && date < current {
+            log::trace!(
+                "recv_contents: dropping stale packet (reinit_date={date}, peer_reinit_date={current})",
+            );
+            return false;
+        }
+        true
+    }
+
+    /// Drops state that only belongs to the peer's previous epoch, mirroring
+    /// `AdnlPeerPairImpl::reinit`.
+    fn reset_peer_state(&mut self) {
+        self.received.clear();
+        self.channel = None;
+        self.pending_channel = None;
+    }
+
     #[allow(clippy::unnecessary_join)]
     pub async fn recv_contents(&mut self) -> Result<PacketContents, AdnlError> {
         const MAX_CONSECUTIVE_FAILURES: u32 = 256;
@@ -331,149 +617,211 @@ impl AdnlUdpSession {
             if size > MAX_UDP_PACKET_SIZE {
                 return Err(AdnlError::TooLongPacket);
             }
-            if let Some(channel) = self.channel.as_mut()
-                && size >= channel.inbound_id.len()
-                && packet[..channel.inbound_id.len()] == channel.inbound_id
-            {
-                match channel.decode(&packet[..size]) {
-                    Ok(contents) => {
-                        return Ok(contents);
-                    }
-                    Err(error) => {
-                        log::debug!("dropping invalid ADNL channel packet: {error}");
-                    }
-                }
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures == MAX_CONSECUTIVE_FAILURES / 2 {
-                    log::warn!(
-                        "ADNL channel degraded: {consecutive_failures} consecutive decode failures"
-                    );
-                }
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    log::warn!(
-                        "ADNL channel killed after {consecutive_failures} consecutive decode failures"
-                    );
-                    return Err(AdnlError::IntegrityError);
-                }
-                continue;
-            }
-            if size < self.local_id.len() || packet[..self.local_id.len()] != self.local_id {
-                log::trace!(
-                    "recv_contents: dropping packet (size={size}, local_id_match={})",
-                    size >= self.local_id.len() && packet[..self.local_id.len()] == self.local_id
-                );
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
-                continue;
-            }
-            let Ok((_, payload)) = decrypt_direct(&self.local, &packet[32..size]) else {
-                log::trace!("recv_contents: decrypt_direct failed for packet of size {size}");
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
+            let Some(contents) = self
+                .decode_packet(&packet[..size], &mut consecutive_failures)
+                .await?
+            else {
                 continue;
             };
-            let Ok(contents) = tl_proto::deserialize::<PacketContents>(&payload) else {
-                log::trace!(
-                    "recv_contents: PacketContents deserialization failed, payload len={}",
-                    payload.len()
-                );
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
-                continue;
-            };
-            let sender_from_from = contents.from.as_ref().and_then(|pk| match pk {
-                TlPublicKey::Ed25519 { key } => PublicKey::from_bytes(key.0),
-                _ => None,
-            });
-            if let Some(ref sender) = sender_from_from
-                && sender != &self.remote
-            {
-                log::trace!(
-                    "recv_contents: sender key mismatch (expected={:?}, got={:?})",
-                    self.remote,
-                    sender
-                );
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
-                continue;
-            }
-            if let Some(from_short) = &contents.from_short
-                && from_short.id.0 != self.remote_id
-            {
-                log::trace!("recv_contents: from_short id mismatch");
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
-                continue;
-            }
-            let Some(signature) = &contents.signature else {
-                log::trace!("recv_contents: missing signature");
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
-                continue;
-            };
-            let Ok(signature) = signature.as_slice().try_into() else {
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
-                continue;
-            };
-            let mut unsigned = contents.clone();
-            unsigned.signature = None;
-            if !self
-                .remote
-                .verify_raw(&tl_proto::serialize(unsigned), &signature)
-            {
-                log::trace!("recv_contents: signature verification failed");
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
+            // Per-peer checks shared by direct and channel packets, mirroring
+            // upstream `AdnlPeerPairImpl::receive_packet_checked`.  ADNL keeps
+            // one sequence number space per peer pair, so both transports are
+            // validated together here.
+            if !self.apply_peer_reinit(contents.reinit_date) {
                 continue;
             }
             if let Some(seqno) = contents.seqno {
+                let highest = highest_received_seqno(&self.remote_id);
                 if seqno == 0
                     || self.received.contains(&seqno)
-                    || (self.highest_seqno > 4096 && seqno + 4096 < self.highest_seqno)
+                    || (highest > 4096 && seqno + 4096 < highest)
                 {
                     log::trace!(
-                        "recv_contents: seqno dropped (seqno={seqno}, highest={}, received_len={})",
-                        self.highest_seqno,
+                        "recv_contents: seqno dropped (seqno={seqno}, highest={highest}, received_len={})",
                         self.received.len()
                     );
-                    consecutive_failures = consecutive_failures.saturating_add(1);
-                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                        return Err(AdnlError::IntegrityError);
-                    }
+                    Self::count_failure(&mut consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
                     continue;
                 }
-                self.highest_seqno = self.highest_seqno.max(seqno);
+                record_received_seqno(&self.remote_id, seqno);
                 self.received.push_back(seqno);
                 while self.received.len() > 4096 {
                     self.received.pop_front();
                 }
             }
+            if let Some(address) = &contents.address
+                && self
+                    .peer_addr_list_version
+                    .is_none_or(|current| address.version > current)
+            {
+                self.peer_addr_list_version = Some(address.version);
+            }
             if self.process_channel_control(&contents).await.is_err() {
-                consecutive_failures = consecutive_failures.saturating_add(1);
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-                    return Err(AdnlError::IntegrityError);
-                }
+                Self::count_failure(&mut consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
                 continue;
             }
+            log::trace!(
+                "recv: from={} seqno={:?} confirm={:?} reinit={:?} kind={} messages={}",
+                self.socket
+                    .peer_addr()
+                    .map_or_else(|_| "?".into(), |address| address.to_string()),
+                contents.seqno,
+                contents.confirm_seqno,
+                contents.reinit_date,
+                message_kind(contents.message.as_ref()),
+                contents
+                    .messages
+                    .as_deref()
+                    .map_or_else(|| "-".into(), message_vector),
+            );
             return Ok(contents);
         }
+    }
+
+    /// Counts one rejected datagram and fails the session once too many
+    /// consecutive datagrams could not be processed.
+    fn count_failure(consecutive_failures: &mut u32, limit: u32) -> Result<(), AdnlError> {
+        *consecutive_failures = consecutive_failures.saturating_add(1);
+        if *consecutive_failures >= limit {
+            return Err(AdnlError::IntegrityError);
+        }
+        Ok(())
+    }
+
+    /// Decodes one received datagram into `adnl.packetContents`.
+    ///
+    /// Returns `None` when the datagram was rejected.  Rejections are counted
+    /// through `consecutive_failures`, and hitting the limit aborts the
+    /// session with [`AdnlError::IntegrityError`].
+    ///
+    /// Sequence numbers are deliberately *not* validated here: they are
+    /// validated once in [`Self::recv_contents`] together with the peer's
+    /// `reinit_date`, exactly like upstream does after a packet has been
+    /// decrypted, because direct and channel packets share the same sequence
+    /// number space.  The channel still performs its own replay guard for
+    /// standalone use, seeded from the shared peer pair counters below.
+    async fn decode_packet(
+        &mut self,
+        packet: &[u8],
+        consecutive_failures: &mut u32,
+    ) -> Result<Option<PacketContents>, AdnlError> {
+        const MAX_CONSECUTIVE_FAILURES: u32 = 256;
+        let size = packet.len();
+        let via_channel = self.channel.as_ref().is_some_and(|channel| {
+            size >= channel.inbound_id.len()
+                && packet[..channel.inbound_id.len()] == channel.inbound_id
+        });
+        if via_channel {
+            let channel = self
+                .channel
+                .as_mut()
+                .expect("channel presence was checked above");
+            channel.next_seqno = outgoing_seqno(&self.remote_id);
+            channel.highest_seqno = highest_received_seqno(&self.remote_id);
+            match channel.decode(packet) {
+                Ok(contents) => {
+                    return Ok(Some(contents));
+                }
+                Err(error) => {
+                    log::debug!("dropping invalid ADNL channel packet: {error}");
+                }
+            }
+            Self::count_failure(consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
+            if *consecutive_failures == MAX_CONSECUTIVE_FAILURES / 2 {
+                log::warn!(
+                    "ADNL channel degraded: {consecutive_failures} consecutive decode failures"
+                );
+            }
+            if *consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
+                log::warn!(
+                    "ADNL channel killed after {consecutive_failures} consecutive decode failures"
+                );
+            }
+            return Ok(None);
+        }
+        if size < self.local_id.len() || packet[..self.local_id.len()] != self.local_id {
+            let channel_ids = self
+                .channel
+                .as_ref()
+                .map(|channel| {
+                    format!(
+                        " in_id={} out_id={}",
+                        hex::encode(channel.inbound_id),
+                        hex::encode(channel.outbound_id)
+                    )
+                })
+                .unwrap_or_default();
+            if self.confirm_channels && self.channel.is_none() {
+                // The prefix is neither ours nor a channel we hold, so the
+                // peer most likely still uses a channel negotiated by an
+                // earlier session of ours.  Ask it to re-key.
+                if let Err(error) = self.request_channel().await {
+                    log::trace!("ADNL channel request failed: {error}");
+                }
+            }
+            log::debug!(
+                "recv_contents: dropping packet (size={size}, prefix={} local_id={}{channel_ids})",
+                hex::encode(&packet[..32.min(size)]),
+                hex::encode(self.local_id),
+            );
+            Self::count_failure(consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
+            return Ok(None);
+        }
+        let Ok((_, payload)) = decrypt_direct(&self.local, &packet[32..size]) else {
+            log::trace!("recv_contents: decrypt_direct failed for packet of size {size}");
+            Self::count_failure(consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
+            return Ok(None);
+        };
+        let Ok(contents) = tl_proto::deserialize::<PacketContents>(&payload) else {
+            log::trace!(
+                "recv_contents: PacketContents deserialization failed, payload len={}",
+                payload.len()
+            );
+            Self::count_failure(consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
+            return Ok(None);
+        };
+        let sender_from_from = contents.from.as_ref().and_then(|pk| match pk {
+            TlPublicKey::Ed25519 { key } => PublicKey::from_bytes(key.0),
+            _ => None,
+        });
+        if let Some(ref sender) = sender_from_from
+            && sender != &self.remote
+        {
+            log::trace!(
+                "recv_contents: sender key mismatch (expected={:?}, got={:?})",
+                self.remote,
+                sender
+            );
+            Self::count_failure(consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
+            return Ok(None);
+        }
+        if let Some(from_short) = &contents.from_short
+            && from_short.id.0 != self.remote_id
+        {
+            log::trace!("recv_contents: from_short id mismatch");
+            Self::count_failure(consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
+            return Ok(None);
+        }
+        let Some(signature) = &contents.signature else {
+            log::trace!("recv_contents: missing signature");
+            Self::count_failure(consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
+            return Ok(None);
+        };
+        let Ok(signature) = signature.as_slice().try_into() else {
+            Self::count_failure(consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
+            return Ok(None);
+        };
+        let mut unsigned = contents.clone();
+        unsigned.signature = None;
+        if !self
+            .remote
+            .verify_raw(&tl_proto::serialize(unsigned), &signature)
+        {
+            log::trace!("recv_contents: signature verification failed");
+            Self::count_failure(consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
+            return Ok(None);
+        }
+        Ok(Some(contents))
     }
 
     async fn process_channel_control(
@@ -487,18 +835,27 @@ impl AdnlUdpSession {
         for message in messages {
             match message {
                 AdnlMessage::CreateChannel { key, date } => {
-                    let Some(peer_channel) = PublicKey::from_bytes(key.0) else {
-                        return Err(AdnlError::InvalidPublicKey);
-                    };
-                    let local_channel = KeyPair::generate(&mut rand::rngs::OsRng);
-                    self.install_channel(&local_channel, peer_channel.to_bytes(), *date)?;
+                    if !self.confirm_channels {
+                        // One-shot sessions leave the peer un-channelled on
+                        // purpose: this session is dropped right after the
+                        // query while the peer keeps the channel.
+                        continue;
+                    }
+                    if self.peer_channel_key == Some(key.0) && self.channel.is_some() {
+                        // Already negotiated with this peer channel key;
+                        // re-negotiating would desynchronise both sides.
+                        continue;
+                    }
+                    self.install_channel(key.0, *date)?;
+                    self.peer_channel_key = Some(key.0);
+                    self.pending_channel = None;
                     self.send_direct_contents(PacketContents {
                         rand1: vec![0; 7],
                         flags: (),
                         from: None,
                         from_short: None,
                         message: Some(AdnlMessage::ConfirmChannel {
-                            key: Int256(local_channel.public_key.to_bytes()),
+                            key: Int256(self.local_channel.public_key.to_bytes()),
                             peer_key: key.clone(),
                             date: *date,
                         }),
@@ -521,30 +878,38 @@ impl AdnlUdpSession {
                     peer_key,
                     date,
                 } => {
-                    // Allow a generous clock skew tolerance (600 s ≈ 10 min) because
-                    // some DHT nodes report a date slightly in the past relative to our
-                    // local clock.  The important thing is that peer_key matches.
-                    const CLOCK_SKEW_TOLERANCE: i32 = 600;
-                    let Some((local_channel, local_date)) = self.pending_channel.take() else {
+                    if !self.confirm_channels {
+                        continue;
+                    }
+                    let Some(pending_date) = self.pending_channel else {
+                        log::trace!(
+                            "ADNL confirmChannel without a pending request ignored: remote_id={}",
+                            hex::encode(self.remote_id)
+                        );
                         continue;
                     };
-                    if peer_key.0 != local_channel.public_key.to_bytes()
-                        || *date < local_date - CLOCK_SKEW_TOLERANCE
-                    {
-                        log::warn!(
-                            "ADNL channel confirmation mismatch: expected peer_key={:?}, got peer_key={:?}, \
-                             expected date >= {}, got date = {}",
-                            local_channel.public_key.to_bytes(),
-                            peer_key.0,
-                            local_date - CLOCK_SKEW_TOLERANCE,
-                            *date,
-                        );
+                    // `peer_key` must echo the local channel key this session
+                    // sent in `createChannel`.  The `date` field is the peer's
+                    // own channel key date, which legitimately is older than
+                    // our request, so it is not validated here.
+                    if peer_key.0 != self.local_channel.public_key.to_bytes() {
                         return Err(AdnlError::ChannelConfirmMismatch {
-                            expected: local_channel.public_key.to_bytes(),
+                            expected: self.local_channel.public_key.to_bytes(),
                             got: peer_key.0,
                         });
                     }
-                    self.install_channel(&local_channel, key.0, *date)?;
+                    if self.peer_channel_key == Some(key.0) && self.channel.is_some() {
+                        self.pending_channel = None;
+                        continue;
+                    }
+                    log::debug!(
+                        "ADNL channel confirmed by peer: remote_id={} date={} requested_date={pending_date}",
+                        hex::encode(self.remote_id),
+                        date
+                    );
+                    self.install_channel(key.0, *date)?;
+                    self.peer_channel_key = Some(key.0);
+                    self.pending_channel = None;
                 }
                 _ => {}
             }
@@ -552,24 +917,74 @@ impl AdnlUdpSession {
         Ok(())
     }
 
-    fn install_channel(
-        &mut self,
-        local_channel: &KeyPair,
-        remote_channel: [u8; 32],
-        _date: i32,
-    ) -> Result<(), AdnlError> {
+    fn install_channel(&mut self, remote_channel: [u8; 32], date: i32) -> Result<(), AdnlError> {
         let remote_channel =
             PublicKey::from_bytes(remote_channel).ok_or(AdnlError::InvalidPublicKey)?;
-        let shared = local_channel.compute_shared_secret(&remote_channel);
+        let shared = self.local_channel.compute_shared_secret(&remote_channel);
         let (outbound, inbound) = ordered_channel_ciphers(self.local_id, self.remote_id, shared);
         let outbound_id = channel_id_for_secret(outbound.secret());
         let inbound_id = channel_id_for_secret(inbound.secret());
+        log::debug!(
+            "ADNL channel installed: local_id={} remote_id={} out_id={} in_id={} date={date}",
+            hex::encode(self.local_id),
+            hex::encode(self.remote_id),
+            hex::encode(outbound_id),
+            hex::encode(inbound_id)
+        );
         self.channel = Some(AdnlChannelPacket::new_directional(
             outbound_id,
             inbound_id,
             outbound,
             inbound,
         ));
+        Ok(())
+    }
+
+    /// Sends `adnl.message.createChannel` for this session's local channel key.
+    ///
+    /// Used both to initiate a channel and to re-key a channel the peer still
+    /// holds from an earlier session of ours: upstream only accepts the new key
+    /// when the carried `date` is strictly greater than the date it recorded,
+    /// which is why the current time is used here.
+    async fn request_channel(&mut self) -> Result<(), AdnlError> {
+        const REQUEST_INTERVAL: Duration = Duration::from_secs(10);
+        if self
+            .channel_requested_at
+            .is_some_and(|at| at.elapsed() < REQUEST_INTERVAL)
+        {
+            return Ok(());
+        }
+        self.channel_requested_at = Some(std::time::Instant::now());
+        let date = now_i32();
+        self.pending_channel = Some(date);
+        log::debug!(
+            "ADNL channel requested: local_id={} remote_id={} key={} date={date}",
+            hex::encode(self.local_id),
+            hex::encode(self.remote_id),
+            hex::encode(self.local_channel.public_key.to_bytes())
+        );
+        self.send_direct_contents(PacketContents {
+            rand1: vec![0; 7],
+            flags: (),
+            from: None,
+            from_short: None,
+            message: Some(AdnlMessage::CreateChannel {
+                key: Int256(self.local_channel.public_key.to_bytes()),
+                date,
+            }),
+            messages: None,
+            address: None,
+            priority_address: None,
+            seqno: None,
+            confirm_seqno: None,
+            recv_addr_list_version: None,
+            recv_priority_addr_list_version: None,
+            reinit_date: None,
+            dst_reinit_date: None,
+            signature: None,
+            rand2: vec![0; 7],
+        })
+        .await?;
         Ok(())
     }
 
@@ -582,9 +997,8 @@ impl AdnlUdpSession {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             attempt += 1;
-            let local_channel = KeyPair::generate(&mut rand::rngs::OsRng);
             let date = now_i32();
-            self.pending_channel = Some((local_channel, date));
+            self.pending_channel = Some(date);
             self.send_direct_contents(PacketContents {
                 rand1: vec![0; 7],
                 flags: (),
@@ -593,14 +1007,7 @@ impl AdnlUdpSession {
                 message: None,
                 messages: Some(vec![
                     AdnlMessage::CreateChannel {
-                        key: Int256(
-                            self.pending_channel
-                                .as_ref()
-                                .unwrap()
-                                .0
-                                .public_key
-                                .to_bytes(),
-                        ),
+                        key: Int256(self.local_channel.public_key.to_bytes()),
                         date,
                     },
                     AdnlMessage::Query {
@@ -608,17 +1015,11 @@ impl AdnlUdpSession {
                         query: tl_proto::serialize(DhtMessage::GetSignedAddressList),
                     },
                 ]),
-                address: Some(AddressList {
-                    addrs: Vec::new(),
-                    version: date,
-                    reinit_date: date,
-                    priority: 0,
-                    expire_at: 0,
-                }),
+                address: None,
                 priority_address: None,
                 seqno: None,
                 confirm_seqno: None,
-                recv_addr_list_version: Some(date),
+                recv_addr_list_version: None,
                 recv_priority_addr_list_version: None,
                 reinit_date: None,
                 dst_reinit_date: Some(0),
@@ -940,7 +1341,13 @@ impl AdnlUdpSession {
         .await
     }
 
-    fn local_overlay_node(&self, overlay: Int256) -> tonutils_tl::tl::network::OverlayNode {
+    /// Returns this session's signed `overlay.node` record for `overlay`.
+    ///
+    /// The record carries no address: overlay peers resolve the ADNL address
+    /// through the DHT `address` value for our node id.  It is what
+    /// `overlay.getRandomPeers` answers must contain, see
+    /// `adnl.message.query` handling in the overlay session.
+    pub fn local_overlay_node(&self, overlay: Int256) -> tonutils_tl::tl::network::OverlayNode {
         let version = now_i32();
         let to_sign = tonutils_tl::tl::network::OverlayNodeToSign {
             id: tonutils_tl::tl::network::AdnlIdShort {
@@ -993,13 +1400,23 @@ impl AdnlChannelPacket {
         self.outbound_id
     }
 
+    /// Encrypts `contents` for an established channel.
+    ///
+    /// `seqno` and `confirm_seqno` are assigned from the channel's own
+    /// counters when the caller left them unset.  [`AdnlUdpSession`] always
+    /// sets them first, because the peer pair - not the channel - owns that
+    /// counter; standalone users keep the channel-local behaviour.
     pub fn encode(&mut self, mut contents: PacketContents) -> Result<Bytes, AdnlError> {
         if contents.message.is_none() && contents.messages.is_none() {
             return Err(AdnlError::InvalidPacket);
         }
-        self.next_seqno = self.next_seqno.saturating_add(1);
-        contents.seqno = Some(self.next_seqno);
-        contents.confirm_seqno = Some(self.highest_seqno);
+        if contents.seqno.is_none() {
+            self.next_seqno = self.next_seqno.saturating_add(1);
+            contents.seqno = Some(self.next_seqno);
+        }
+        if contents.confirm_seqno.is_none() {
+            contents.confirm_seqno = Some(self.highest_seqno);
+        }
         let payload = tl_proto::serialize(contents);
         let encrypted = self.outbound.encrypt(&payload);
         if encrypted.len() + self.outbound_id.len() > MAX_UDP_PACKET_SIZE {

@@ -162,6 +162,96 @@ async fn direct_session_roundtrips_signed_packet_and_rejects_replay() {
     );
 }
 
+/// A later session from the same node id must continue the peer pair's
+/// outgoing sequence numbers instead of restarting at 1.
+///
+/// Upstream keeps one `AdnlPeerPairImpl` per peer pair, so a session that
+/// restarts `seqno` has every packet rejected as a replay; that is exactly
+/// what made discovery-phase queries unanswered once the process had already
+/// contacted the same seed.  The receiver below stays alive across both
+/// sender sessions, which is what the real peer does.
+#[tokio::test]
+async fn second_session_to_same_peer_continues_sequence_numbers() {
+    let sender_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let receiver_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let sender_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let receiver_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+
+    let packet = |data: Vec<u8>| PacketContents {
+        rand1: vec![1],
+        flags: (),
+        from: None,
+        from_short: None,
+        message: Some(AdnlMessage::Custom { data }),
+        messages: None,
+        address: None,
+        priority_address: None,
+        seqno: None,
+        confirm_seqno: None,
+        recv_addr_list_version: None,
+        recv_priority_addr_list_version: None,
+        reinit_date: None,
+        dst_reinit_date: None,
+        signature: None,
+        rand2: vec![2],
+    };
+
+    let mut receiver = AdnlUdpSession::connect(
+        receiver_addr,
+        sender_addr,
+        receiver_key,
+        sender_key.public_key,
+    )
+    .await
+    .unwrap();
+    {
+        let mut sender = AdnlUdpSession::connect(
+            sender_addr,
+            receiver_addr,
+            sender_key,
+            receiver_key.public_key,
+        )
+        .await
+        .unwrap();
+        sender.send_contents(packet(vec![1, 2, 3])).await.unwrap();
+        let received = receiver.recv_timeout(Duration::from_secs(1)).await.unwrap();
+        assert_eq!(
+            received.message,
+            Some(AdnlMessage::Custom {
+                data: vec![1, 2, 3]
+            })
+        );
+    }
+
+    // The peer keeps its sequence number state after our session is gone, so
+    // the replacement session must pick up where the old one stopped.
+    let mut sender = AdnlUdpSession::connect(
+        sender_addr,
+        receiver_addr,
+        sender_key,
+        receiver_key.public_key,
+    )
+    .await
+    .unwrap();
+    sender.send_contents(packet(vec![7, 8])).await.unwrap();
+    let received = receiver
+        .recv_timeout(Duration::from_secs(1))
+        .await
+        .expect("second session's packet was rejected as a replay");
+    assert_eq!(
+        received.message,
+        Some(AdnlMessage::Custom { data: vec![7, 8] })
+    );
+}
+
 #[tokio::test]
 async fn dht_find_node_query_routes_matching_answer() {
     let sender_key = KeyPair::generate(&mut rand::rngs::OsRng);

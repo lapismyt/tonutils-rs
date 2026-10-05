@@ -15,7 +15,7 @@ use tonutils_overlay::{
 use tonutils_tl::Message as AdnlMessage;
 use tonutils_tl::tl::network::{
     Address, AddressListBoxed, DhtKey, DhtValueResult, OverlayBroadcast, OverlayBroadcastFec,
-    OverlayMessage, OverlayNode, OverlayNodeToSign, OverlayNodesBoxed, OverlayQuery,
+    OverlayMessage, OverlayNode, OverlayNodeToSign, OverlayNodesBoxed, OverlayPong, OverlayQuery,
     PacketContents, PublicKey as TlPublicKey, TonNodeExternalMessageBroadcast,
 };
 
@@ -52,6 +52,7 @@ pub fn udp_dht_lookup(
                         AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
                             .await
                             .ok()?;
+                    session.set_confirm_channels(false);
                     session
                         .dht_find_node(tonutils_tl::Int256::random(), node_count, timeout)
                         .await
@@ -353,6 +354,7 @@ async fn query_overlay_random_peers(
                 return None;
             }
         };
+    session.set_confirm_channels(false);
     log::debug!("query_overlay_random_peers: direct UDP ADNL session established to {address}");
     let overlay_int = tonutils_tl::Int256(overlay.as_bytes());
     log::debug!("query_overlay_random_peers: sending overlay.getRandomPeers to {address}");
@@ -448,6 +450,7 @@ async fn query_dht_value_seed(
                 return None;
             }
         };
+    session.set_confirm_channels(false);
     match session
         .dht_find_value(key, count.min(i32::MAX as usize) as i32, timeout)
         .await
@@ -511,6 +514,7 @@ async fn query_dht_seed(
     let mut session = AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
         .await
         .ok()?;
+    session.set_confirm_channels(false);
     session
         .dht_find_node(tonutils_tl::Int256::random(), node_count, timeout)
         .await
@@ -765,15 +769,13 @@ impl OverlaySession for AdnlUdpOverlaySession {
                             _ => "control",
                         }
                     );
+                    if let AdnlMessage::Answer { answer, .. } = &message {
+                        self.trace_membership(answer);
+                        continue;
+                    }
                     if let AdnlMessage::Query { query_id, query } = &message
-                        && let Ok(OverlayQuery::Ping) =
-                            OverlayQuery::read_from(&mut query.as_slice())
-                        && self.overlay.is_some()
+                        && self.answer_overlay_query(query_id, query).await
                     {
-                        let _ = self
-                            .session
-                            .send_answer(query_id.clone(), tl_proto::serialize(OverlayQuery::Ping))
-                            .await;
                         continue;
                     }
                     if matches!(
@@ -871,6 +873,98 @@ impl OverlaySession for AdnlUdpOverlaySession {
 }
 
 impl AdnlUdpOverlaySession {
+    /// Logs whether a peer lists this node among the overlay members it
+    /// returns from `overlay.getRandomPeers`.
+    ///
+    /// Upstream only answers with *verified* members
+    /// (`OverlayImpl::send_random_peers`), so this is the observable signal
+    /// that the peer completed `overlay.ping`/`overlay.pong` and now treats
+    /// this node as a peer that may receive broadcasts.
+    fn trace_membership(&self, answer: &[u8]) {
+        let Some(overlay) = self.overlay else {
+            return;
+        };
+        let mut data = answer;
+        let Ok(nodes) = OverlayNodesBoxed::read_from(&mut data) else {
+            log::debug!(
+                "overlay getRandomPeers answer: peer={:?} (not overlay.nodes)",
+                self.peer
+            );
+            return;
+        };
+        let ours = self
+            .session
+            .local_overlay_node(tonutils_tl::Int256(overlay.as_bytes()));
+        let listed = nodes.nodes.iter().any(|node| node.id == ours.id);
+        log::info!(
+            "overlay getRandomPeers answer: peer={:?} nodes={} listed_us={listed}",
+            self.peer,
+            nodes.nodes.len()
+        );
+    }
+
+    /// Answers the overlay queries this node is expected to serve.
+    ///
+    /// A peer that receives our `overlay.getRandomPeers` puts us into its
+    /// pending set and then verifies us with `overlay.ping`
+    /// (`OverlayImpl::process_pending_peer` in `overlay/overlay-peers.cpp`).
+    /// Only a node that answers with `overlay.pong` is promoted to a verified
+    /// member, and only verified members receive overlay broadcasts, so an
+    /// unanswered ping leaves the node silent even though it is connected.
+    ///
+    /// Returns `true` when the query was recognised and answered.
+    async fn answer_overlay_query(&mut self, query_id: &tonutils_tl::Int256, query: &[u8]) -> bool {
+        let Some(overlay) = self.overlay else {
+            log::debug!(
+                "overlay query on a session without overlay: peer={:?} id={:08x}",
+                self.peer,
+                query
+                    .get(..4)
+                    .map_or(0, |id| { u32::from_le_bytes([id[0], id[1], id[2], id[3]]) }),
+            );
+            return false;
+        };
+        let mut data = query;
+        let answer = match OverlayQuery::read_from(&mut data) {
+            Ok(OverlayQuery::Ping) => {
+                log::debug!("answering overlay.ping for peer={:?}", self.peer);
+                Some(tl_proto::serialize(OverlayPong))
+            }
+            Ok(OverlayQuery::GetRandomPeers { .. }) => {
+                let nodes = OverlayNodesBoxed {
+                    nodes: vec![
+                        self.session
+                            .local_overlay_node(tonutils_tl::Int256(overlay.as_bytes())),
+                    ],
+                };
+                log::debug!("answering overlay.getRandomPeers for peer={:?}", self.peer);
+                Some(tl_proto::serialize(nodes))
+            }
+            other => {
+                log::debug!(
+                    "unhandled overlay query: peer={:?} id={:08x} len={} recognised={}",
+                    self.peer,
+                    query
+                        .get(..4)
+                        .map_or(0, |id| { u32::from_le_bytes([id[0], id[1], id[2], id[3]]) }),
+                    query.len(),
+                    other.is_ok(),
+                );
+                None
+            }
+        };
+        let Some(answer) = answer else {
+            return false;
+        };
+        if let Err(error) = self.session.send_answer(query_id.clone(), answer).await {
+            log::trace!(
+                "overlay query answer failed: peer={:?} error={error}",
+                self.peer
+            );
+        }
+        true
+    }
+
     fn unwrap_overlay_payload(&mut self, data: &[u8]) -> Result<Vec<u8>, String> {
         if let Ok(broadcast) = tl_proto::deserialize::<TonNodeExternalMessageBroadcast>(data) {
             return Ok(broadcast.message.data);

@@ -12,10 +12,28 @@ use super::common::Int256;
 #[derivative(Debug, Clone, PartialEq, Eq)]
 pub struct Int128(pub i32, pub i32, pub i32, pub i32);
 
+/// adnl.id.short id:int256 = adnl.id.Short;
+///
+/// Written BARE when it appears as a field type: `ton_api.tl` spells those
+/// fields with the constructor name (`overlay.node.toSign id:adnl.id.short`,
+/// `packetContents from_short:flags.1?adnl.id.short`), which the reference
+/// SDKs encode without the constructor prefix.  Use
+/// [`AdnlIdShort::boxed_bytes`] when a top-level object needs
+/// `adnl.id.short#3e3f654f`.
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
 pub struct AdnlIdShort {
     pub id: Int256,
+}
+
+impl AdnlIdShort {
+    /// Serializes the short id with its constructor prefix `0x3e3f654f`.
+    #[must_use]
+    pub fn boxed_bytes(&self) -> Vec<u8> {
+        let mut out = 0x3e3f654fu32.to_le_bytes().to_vec();
+        out.extend_from_slice(&tl_proto::serialize(self.clone()));
+        out
+    }
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -533,6 +551,15 @@ impl OverlayBroadcast {
     }
 }
 
+/// overlay.pong = overlay.Pong;
+///
+/// The empty answer to [`OverlayQuery::Ping`]; peers that reach this node
+/// through an overlay broadcast channel expect this exact constructor.
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(boxed, id = 0x67700804)]
+pub struct OverlayPong;
+
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
 #[tl(boxed)]
@@ -669,6 +696,23 @@ mod tests {
                 version: 4,
             })[..4],
             &0x03d8a8e1u32.to_le_bytes()
+        );
+        // `adnl.id.short` is BARE in field position (see the type docs).
+        let id_short_wire = serialize(AdnlIdShort {
+            id: Int256([9; 32]),
+        });
+        assert_eq!(
+            &id_short_wire[..4],
+            &[9, 9, 9, 9],
+            "adnl.id.short must serialize bare, without a constructor id"
+        );
+        assert_eq!(
+            &AdnlIdShort {
+                id: Int256([9; 32])
+            }
+            .boxed_bytes()[..4],
+            &0x3e3f654fu32.to_le_bytes(),
+            "boxed_bytes must add the adnl.id.short constructor id"
         );
         assert_eq!(
             &serialize(AddressListBoxed {
