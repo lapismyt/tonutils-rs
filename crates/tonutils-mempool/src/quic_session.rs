@@ -598,7 +598,8 @@ async fn quic_query_overlay_seed(
     None
 }
 
-#[allow(dead_code)]
+/// DHT-backed overlay seed discovery over QUIC, mirroring
+/// [`crate::udp_overlay_lookup`] for the QUIC session factory.
 pub fn quic_overlay_lookup(
     local_addr: SocketAddr,
     local_keypair: KeyPair,

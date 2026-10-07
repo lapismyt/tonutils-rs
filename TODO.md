@@ -373,13 +373,22 @@ postponed work moves to `# BACKLOG`.
   - [x] Add upstream-derived ADNL/DHT/overlay TL packet types and round-trip fixtures #dht #tl #tests
   - [x] Add canonical shard-public overlay ID derivation #dht #overlay #tests
   - [ ] Resolve liteservers and overlay peers through DHT #dht
+  - [x] Resolve overlay seed peers through `dht.getValue(address)` with parallel per-node lookups so slow nodes cannot exhaust discovery time #dht #overlay #tests
 - [-] Implement overlay protocol #overlay #network
   - [x] Add bounded overlay peer/routing/status primitives #overlay #tests
   - [x] Add transport-neutral sessions, parallel receive loops, scoring, and shutdown #overlay #network #tests
   - [ ] Add overlay node and peer exchange types from upstream schemas #overlay #tl
+    - [x] Add `overlay.node`, `overlay.nodes`, `overlay.node.toSign`, `overlay.getRandomPeers`, `overlay.ping`/`pong`, and the `overlay.query` wrappers #tl #overlay
+    - [ ] Add `overlay.nodeV2`, `overlay.nodesV2`, `overlay.getRandomPeersV2`, and member certificate handling #tl #overlay
   - [x] Add overlay query transport and live peer bootstrap #overlay
   - [x] Add bounded broadcast hook for mempool #overlay #mempool
   - [x] Connect scanner bootstrap to canonical ADNL UDP channels #adnl #overlay #mempool
+  - [x] Answer queries wrapped in `overlay.query`/`overlay.queryWithExtra` on the original query id after validating the overlay id #overlay #tests
+  - [x] Keep sessions alive across `OverlayConfig::peer_idle_timeout` while protocol traffic flows inside `receive` #overlay #network #tests
+  - [x] Record process-wide protocol and discovery counters for live-run diagnostics #mempool #tests
+  - [ ] Become a verified overlay member so broadcasts are pushed to this node #overlay #network #mempool
+    - [ ] Expand membership from `overlay.getRandomPeers` answers: resolve returned node addresses over DHT and add sessions for them #overlay #dht #mempool
+    - [ ] Confirm from live evidence which upstream `add_peer` gate drops this node's `overlay.node` record, if any #overlay #tests
 - [ ] Implement native Rust QUIC transport #quic #network
   - [ ] Define optional feature gating without native runtime dependencies #quic #features
   - [ ] Add peer and session lifecycle handling #quic #network
@@ -406,7 +415,10 @@ postponed work moves to `# BACKLOG`.
   - [x] Add merged bootstrap builder and async global-config resolution #mempool #network #tests
   - [x] Run mainnet/testnet DHT live probes with the existing live-test workflow #mempool #network #tests #ci
   - [x] Add canonical `tonNode.externalMessageBroadcast` fixture and seed-only stream delivery #mempool #tests #network
+  - [x] Add overlay DHT discovery and QUIC discovery live tests with workflow steps and `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` soft-skip #mempool #tests #ci
+  - [x] Wire `native_quic` seed discovery through `quic_overlay_lookup` #quic #mempool
   - [-] Add live FEC broadcast coverage for external messages - requires live seed configuration in GitHub Actions secrets #mempool #tests #network
+  - [ ] Add live coverage for receiving `overlay.ping` and a pushed broadcast from a verified member #mempool #overlay #tests
 
 ## CLI And Shell Automation
 

@@ -298,6 +298,11 @@ mod tests {
             after.queries_unhandled > before.queries_unhandled,
             "unknown constructor ids must be counted as unhandled"
         );
-        assert_eq!(after.queries_received, before.queries_received + 1);
+        // Counters are process-wide, so only monotonic growth is asserted: other
+        // tests running in parallel may answer queries at the same time.
+        assert!(
+            after.queries_received > before.queries_received,
+            "both queries must be counted as received"
+        );
     }
 }

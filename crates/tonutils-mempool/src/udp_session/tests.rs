@@ -39,6 +39,7 @@ async fn reassembles_single_source_raptorq_external_message() {
         overlay: None,
         fec: HashMap::new(),
         last_keepalive: Instant::now(),
+        last_activity: Instant::now(),
     };
     let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
     let fec = OverlayBroadcastFec {
@@ -94,6 +95,7 @@ async fn waits_for_all_source_symbols_before_publishing_fec_payload() {
         overlay: None,
         fec: HashMap::new(),
         last_keepalive: Instant::now(),
+        last_activity: Instant::now(),
     };
     let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
     for (index, packet) in packets.into_iter().enumerate() {
@@ -145,6 +147,7 @@ async fn rejects_truncated_serialized_fec_packet() {
         overlay: None,
         fec: HashMap::new(),
         last_keepalive: Instant::now(),
+        last_activity: Instant::now(),
     };
     let payload = tl_proto::serialize(OverlayBroadcastFec {
         src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![3] },
@@ -269,4 +272,22 @@ fn validates_overlay_node_signature_and_timestamp_window() {
     };
     assert!(valid_overlay_node(&prefixed_node, overlay, now));
     assert!(!valid_overlay_node(&node, overlay, now + 1_100));
+
+    let mut corrupted = Vec::from(signature);
+    corrupted[0] ^= 0xff;
+    let corrupted_node = OverlayNode {
+        signature: corrupted,
+        ..node.clone()
+    };
+    assert!(
+        !valid_overlay_node(&corrupted_node, overlay, now),
+        "a corrupted signature must be rejected"
+    );
+
+    let mut wrong_overlay = node.clone();
+    wrong_overlay.overlay = tonutils_tl::Int256(OverlayId::from_name(b"other").as_bytes());
+    assert!(
+        !valid_overlay_node(&wrong_overlay, overlay, now),
+        "a node for a different overlay must be rejected"
+    );
 }

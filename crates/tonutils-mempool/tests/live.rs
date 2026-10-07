@@ -6,7 +6,7 @@ use futures::StreamExt;
 use tonutils_adnl::AdnlUdpSession;
 use tonutils_adnl::{KeyPair, PublicKey};
 use tonutils_mempool::MempoolScannerBuilder;
-use tonutils_mempool::{MempoolConfig, MempoolEvent};
+use tonutils_mempool::{MempoolConfig, MempoolEvent, quic_overlay_lookup, udp_overlay_lookup};
 use tonutils_network_config::extract_dht_addresses;
 use tonutils_overlay::{OverlayId, PeerId, SeedPeer};
 use tonutils_tl::Int256;
@@ -305,24 +305,7 @@ fn configured_bytes(variable: &str) -> Option<[u8; 32]> {
 #[ignore = "requires a configured live overlay seed and external-message traffic"]
 async fn configured_seed_delivers_valid_external_message() {
     let _ = pretty_env_logger::try_init();
-    let seeds = match std::env::var("TON_MEMPOOL_LIVE_SEEDS") {
-        Ok(value) if !value.trim().is_empty() => parse_live_seeds(&value),
-        Ok(_) | Err(std::env::VarError::NotPresent) => {
-            let seed_address: SocketAddr = match std::env::var("TON_MEMPOOL_LIVE_SEED") {
-                Ok(value) => value
-                    .parse()
-                    .expect("TON_MEMPOOL_LIVE_SEED must be IP:port"),
-                Err(error) => panic!("TON_MEMPOOL_LIVE_SEED must be set to IP:port: {error}"),
-            };
-            let peer_key = configured_bytes("TON_MEMPOOL_LIVE_PEER_KEY")
-                .expect("TON_MEMPOOL_LIVE_PEER_KEY must be set to 32-byte hex");
-            vec![SeedPeer {
-                peer: PeerId::from_bytes(peer_key),
-                address: seed_address.to_string(),
-            }]
-        }
-        Err(error) => panic!("failed to read TON_MEMPOOL_LIVE_SEEDS: {error}"),
-    };
+    let seeds = configured_live_seeds();
     assert!(
         !seeds.is_empty(),
         "live seed phase failed: no seeds were configured"
@@ -407,6 +390,119 @@ async fn configured_seed_delivers_valid_external_message() {
         tonutils_tlb::CommonMsgInfo::ExternalIn { .. }
     ));
     manager.shutdown_wait().await;
+}
+
+/// Resolves the seed set shared by the mempool live tests: either the
+/// `;`-separated `TON_MEMPOOL_LIVE_SEEDS` list, or a single
+/// `TON_MEMPOOL_LIVE_SEED` address paired with `TON_MEMPOOL_LIVE_PEER_KEY`.
+fn configured_live_seeds() -> Vec<SeedPeer> {
+    match std::env::var("TON_MEMPOOL_LIVE_SEEDS") {
+        Ok(value) if !value.trim().is_empty() => parse_live_seeds(&value),
+        Ok(_) | Err(std::env::VarError::NotPresent) => {
+            let seed_address: SocketAddr = match std::env::var("TON_MEMPOOL_LIVE_SEED") {
+                Ok(value) => value
+                    .parse()
+                    .expect("TON_MEMPOOL_LIVE_SEED must be IP:port"),
+                Err(error) => panic!("TON_MEMPOOL_LIVE_SEED must be set to IP:port: {error}"),
+            };
+            let peer_key = configured_bytes("TON_MEMPOOL_LIVE_PEER_KEY")
+                .expect("TON_MEMPOOL_LIVE_PEER_KEY must be set to 32-byte hex");
+            vec![SeedPeer {
+                peer: PeerId::from_bytes(peer_key),
+                address: seed_address.to_string(),
+            }]
+        }
+        Err(error) => panic!("failed to read TON_MEMPOOL_LIVE_SEEDS: {error}"),
+    }
+}
+
+/// Overlay id used by the discovery live tests, defaulting to the mainnet
+/// mempool overlay that CI also uses for the delivery test.
+fn discovery_overlay_id() -> [u8; 32] {
+    configured_bytes("TON_MEMPOOL_LIVE_OVERLAY_ID").unwrap_or_else(|| {
+        let hex = "12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649";
+        hex::decode(hex)
+            .expect("static overlay id must be hex")
+            .try_into()
+            .expect("static overlay id must contain 32 bytes")
+    })
+}
+
+/// Shared assertion for the discovery live tests: a discovery run either
+/// yields usable peers or, with `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` set,
+/// logs and passes instead of failing on transport unavailability.
+fn assert_discovery_peers(kind: &str, peers: Vec<SeedPeer>, allow_unavailable: bool) {
+    eprintln!(
+        "live overlay discovery kind={kind} phase=lookup peers={}",
+        peers.len()
+    );
+    if peers.is_empty() {
+        if allow_unavailable {
+            log::debug!("skipping unavailable {kind} overlay discovery: no peers");
+            return;
+        }
+        panic!("{kind} overlay discovery returned no peers");
+    }
+    assert!(
+        peers.iter().all(SeedPeer::is_valid),
+        "{kind} overlay discovery must return usable KEY@IP:PORT peers"
+    );
+}
+
+/// Runs the native ADNL/UDP DHT overlay discovery (`udp_overlay_lookup`)
+/// against live seeds and requires at least one usable overlay peer.
+///
+/// Soft-skips when the network is unavailable and
+/// `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` is set.
+#[tokio::test]
+#[ignore = "requires live mainnet DHT access"]
+async fn mainnet_overlay_dht_discovery_returns_peers() {
+    let _ = pretty_env_logger::try_init();
+    let allow_unavailable = std::env::var("TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE").is_ok();
+    let overlay = OverlayId::from_bytes(discovery_overlay_id());
+    let lookup = udp_overlay_lookup(
+        "0.0.0.0:0".parse().expect("wildcard address must parse"),
+        KeyPair::generate(&mut rand::rngs::OsRng),
+        overlay,
+        overlay.as_bytes(),
+        16,
+        Duration::from_secs(30),
+    );
+    let peers = match tokio::time::timeout(Duration::from_secs(45), lookup(configured_live_seeds()))
+        .await
+    {
+        Ok(peers) => peers,
+        Err(_) => Vec::new(),
+    };
+    assert_discovery_peers("udp", peers, allow_unavailable);
+}
+
+/// Same discovery coverage as [`mainnet_overlay_dht_discovery_returns_peers`]
+/// but over the QUIC transport (`quic_overlay_lookup`).
+///
+/// Soft-skips when QUIC is unreachable and
+/// `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` is set.
+#[tokio::test]
+#[ignore = "requires live mainnet QUIC access"]
+async fn mainnet_overlay_quic_discovery_returns_peers() {
+    let _ = pretty_env_logger::try_init();
+    let allow_unavailable = std::env::var("TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE").is_ok();
+    let overlay = OverlayId::from_bytes(discovery_overlay_id());
+    let lookup = quic_overlay_lookup(
+        "0.0.0.0:0".parse().expect("wildcard address must parse"),
+        KeyPair::generate(&mut rand::rngs::OsRng),
+        overlay,
+        overlay.as_bytes(),
+        16,
+        Duration::from_secs(30),
+    );
+    let peers = match tokio::time::timeout(Duration::from_secs(45), lookup(configured_live_seeds()))
+        .await
+    {
+        Ok(peers) => peers,
+        Err(_) => Vec::new(),
+    };
+    assert_discovery_peers("quic", peers, allow_unavailable);
 }
 
 fn parse_live_seeds(value: &str) -> Vec<SeedPeer> {

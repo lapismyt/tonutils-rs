@@ -32,6 +32,12 @@ failures. A disconnected peer produces `PeerStatus::Disconnected`; the
 updates a coarse score. No status implies proof that a peer is honest or that
 a packet was included in a block.
 
+`OverlayConfig::peer_idle_timeout` bounds one `receive()` call. Because a
+session consumes protocol messages inside `receive()` without completing it,
+the pool consults `OverlaySession::last_activity` when the deadline expires
+and keeps a session whose inbound traffic is newer than the timeout; the
+default implementation returns `None` and preserves the hard deadline.
+
 ## Reference and unfinished work
 
 The pending-message behavior is compared conceptually with
@@ -39,7 +45,17 @@ The pending-message behavior is compared conceptually with
 project's WebSocket interface is not part of this crate. Canonical ADNL/DHT/
 overlay TL constructors, direct UDP live probing, channel create/confirm state
 transitions, signed overlay join queries, and transport-to-stream delivery are
-covered by checked fixtures and localhost tests. Iterative overlay-node
-resolution, official-node packet fixtures, and production mempool broadcast
-selection remain TODO items; the session trait still lets applications supply
-those higher-level policies.
+covered by checked fixtures and localhost tests.
+
+Incoming overlay queries reach this node wrapped in `overlay.query`
+(`0xccfd8443`) or `overlay.queryWithExtra` (`0x94ffc3e9`); the wrapper is
+unwrapped, its overlay id is validated against the session overlay, and the
+inner query is answered on the original `query_id`. Upstream peer exchange is
+the flow `overlay.getRandomPeers` -> bounded pending set -> `overlay.ping` ->
+`overlay.pong`; without a successful pending verification, a member never
+pushes broadcasts to this node.
+
+Iterative overlay-node resolution, official-node packet fixtures, upstream
+pending-set acceptance evidence for this node's `overlay.node` record, and
+production mempool broadcast selection remain TODO items; the session trait
+still lets applications supply those higher-level policies.

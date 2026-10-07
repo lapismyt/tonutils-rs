@@ -28,6 +28,8 @@ pub struct AdnlUdpOverlaySession {
     overlay: Option<OverlayId>,
     fec: HashMap<[u8; 32], FecAssembly>,
     last_keepalive: Instant,
+    /// Last datagram accepted from the peer, used by the pool idle deadline.
+    last_activity: Instant,
 }
 
 struct FecAssembly {
@@ -227,7 +229,7 @@ async fn query_overlay_seed(
                         "query_overlay_seed: found {} overlay nodes from {address}",
                         nodes.nodes.len()
                     );
-                    let mut result = Vec::new();
+                    let mut candidates = Vec::new();
                     for node in nodes.nodes {
                         if !valid_overlay_node(&node, overlay, now) {
                             log::debug!(
@@ -235,31 +237,42 @@ async fn query_overlay_seed(
                             );
                             continue;
                         }
-                        if result.len() >= max_records {
+                        if candidates.len() >= max_records {
                             continue;
                         }
                         let TlPublicKey::Ed25519 { key } = node.id else {
                             continue;
                         };
-                        let overlay_public = AdnlPublicKey::from_bytes(key.0)?;
-                        let address_key =
-                            dht_key_id(AdnlAddress::from(&overlay_public).to_bytes(), b"address");
-                        let Some(DhtValueResult::Found { value }) = query_dht_value_seed(
-                            local_addr,
-                            local_keypair,
-                            AdnlPublicKey::from_bytes(seed.peer.as_bytes())?,
-                            seed.address.parse().ok()?,
-                            address_key,
-                            1,
-                            per_query_timeout,
-                        )
-                        .await
-                        else {
+                        let Some(overlay_public) = AdnlPublicKey::from_bytes(key.0) else {
                             continue;
                         };
-                        let address_list: AddressListBoxed =
-                            tl_proto::deserialize(&value.value).ok()?;
-                        let Some((peer, address)) =
+                        candidates.push(overlay_public);
+                    }
+                    // The DHT `address` record of every candidate costs a full
+                    // per-query timeout when a node lags, so resolving them one by
+                    // one used to blow the whole seed-discovery deadline.
+                    let resolved = join_all(candidates.into_iter().map(|overlay_public| {
+                        let seed = seed.clone();
+                        async move {
+                            let address_key = dht_key_id(
+                                AdnlAddress::from(&overlay_public).to_bytes(),
+                                b"address",
+                            );
+                            let Some(DhtValueResult::Found { value }) = query_dht_value_seed(
+                                local_addr,
+                                local_keypair,
+                                AdnlPublicKey::from_bytes(seed.peer.as_bytes())?,
+                                seed.address.parse().ok()?,
+                                address_key,
+                                1,
+                                per_query_timeout,
+                            )
+                            .await
+                            else {
+                                return None;
+                            };
+                            let address_list: AddressListBoxed =
+                                tl_proto::deserialize(&value.value).ok()?;
                             address_list.addrs.into_iter().find_map(|address| {
                                 let Address::Udp { ip, port } = address else {
                                     return None;
@@ -279,9 +292,11 @@ async fn query_overlay_seed(
                                     ),
                                 ))
                             })
-                        else {
-                            continue;
-                        };
+                        }
+                    }))
+                    .await;
+                    let mut result = Vec::new();
+                    for (peer, address) in resolved.into_iter().flatten() {
                         if result
                             .iter()
                             .all(|candidate: &SeedPeer| candidate.peer != peer)
@@ -636,6 +651,7 @@ impl AdnlUdpOverlaySession {
             overlay: None,
             fec: HashMap::new(),
             last_keepalive: Instant::now(),
+            last_activity: Instant::now(),
         })
     }
 
@@ -662,6 +678,7 @@ impl AdnlUdpOverlaySession {
             overlay: None,
             fec: HashMap::new(),
             last_keepalive: Instant::now(),
+            last_activity: Instant::now(),
         })
     }
 
@@ -713,6 +730,7 @@ impl AdnlUdpOverlaySession {
             overlay: Some(overlay),
             fec: HashMap::new(),
             last_keepalive: Instant::now(),
+            last_activity: Instant::now(),
         };
         if let Err(error) = session
             .session
@@ -731,10 +749,18 @@ impl OverlaySession for AdnlUdpOverlaySession {
         self.peer
     }
 
+    fn last_activity(&self) -> Option<std::time::Instant> {
+        Some(self.last_activity)
+    }
+
     fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
         Box::pin(async move {
             loop {
-                if self.last_keepalive.elapsed() >= Duration::from_secs(5)
+                // One `overlay.getRandomPeers` per second keeps our node in the
+                // peer's capped pending-peer set long enough to be picked by its
+                // once-per-second pending drain, which is what eventually turns
+                // into an incoming `overlay.ping`.
+                if self.last_keepalive.elapsed() >= Duration::from_secs(1)
                     && let Some(overlay) = self.overlay
                 {
                     let _ = self
@@ -745,7 +771,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                     self.last_keepalive = Instant::now();
                 }
                 let packet = match tokio::time::timeout(
-                    Duration::from_secs(5),
+                    Duration::from_secs(1),
                     self.session.recv_contents(),
                 )
                 .await
@@ -756,6 +782,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                         continue;
                     }
                 };
+                self.last_activity = Instant::now();
                 let messages = packet
                     .message
                     .into_iter()

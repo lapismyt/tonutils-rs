@@ -29,7 +29,7 @@ mod quic_session;
 mod udp_session;
 
 pub use protocol_stats::{ProtocolStats, protocol_stats};
-pub use quic_session::{QuicOverlaySession, quic_overlay_factory};
+pub use quic_session::{QuicOverlaySession, quic_overlay_factory, quic_overlay_lookup};
 pub use udp_session::{
     AdnlUdpOverlaySession, channel_factory, direct_factory, overlay_factory, udp_dht_lookup,
     udp_iterative_dht_lookup, udp_overlay_lookup,
@@ -434,10 +434,26 @@ impl MempoolScannerBuilder {
     }
 
     /// Configures QUIC-based overlay sessions for peer connections.
+    ///
+    /// With a configured [`Self::dht_overlay_key`] the builder also installs
+    /// the QUIC-backed seed discovery ([`quic_overlay_lookup`]), mirroring what
+    /// [`Self::native_udp`] does for direct ADNL/UDP sessions.
     pub fn native_quic(self, local_addr: std::net::SocketAddr, local_keypair: KeyPair) -> Self {
+        let discovery_timeout = self.discovery_timeout;
         let overlay = self.overlay_id;
         let session_factory = quic_overlay_factory(local_addr, local_keypair, overlay);
-        self.session_factory(session_factory)
+        let builder = self.session_factory(session_factory);
+        match builder.dht_overlay_key {
+            Some(overlay_key) => builder.seed_discovery_lookup(quic_overlay_lookup(
+                local_addr,
+                local_keypair,
+                overlay,
+                overlay_key,
+                16,
+                discovery_timeout,
+            )),
+            None => builder,
+        }
     }
 
     /// Configures native UDP sessions for explicit seeds only.

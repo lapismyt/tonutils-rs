@@ -62,8 +62,31 @@ when no seed configuration is present.
 When present, startup connects every validated discovery result concurrently
 and fails if all session attempts fail. Without a factory, startup still builds
 the bounded scanner for dependency-injected or offline session management.
-Canonical DHT/overlay queries are implemented for the native UDP path. QUIC
-remains outside this crate by design.
+Canonical DHT/overlay queries are implemented for the native UDP path and for
+QUIC: `native_udp` and `native_quic` both install a seed discovery lookup when
+`dht_overlay_key` is set (`udp_overlay_lookup` and `quic_overlay_lookup`).
+
+## Membership and liveness behavior
+
+Each registered session sends one `overlay.getRandomPeers` per second while it
+is idle. Upstream nodes drain their bounded pending-peer set at one node per
+second, so a frequent re-announcement is what eventually produces an incoming
+`overlay.ping`; answering it is what makes the peer treat this node as a
+verified neighbour that receives pushed broadcasts.
+
+Overlay seed discovery resolves the DHT `address` record of every candidate
+concurrently. Serializing those lookups let a few slow nodes consume the whole
+discovery deadline and produced empty discovery results under load.
+
+`OverlaySession::last_activity` lets the pool keep a session whose
+`receive()` is still consuming protocol messages (ADNL answers, overlay
+queries, channel negotiation) past `OverlayConfig::peer_idle_timeout`;
+sessions without a reportable activity stamp keep the previous hard-deadline
+behavior.
+
+Diagnostics for live runs come from `protocol_stats()` (protocol counters such
+as `queries_received`, `random_peers_queries_sent`, and `membership_answers`)
+and `discovery_stats()` (seed count, discovered peers, session attempts).
 
 ## Reference comparison
 
