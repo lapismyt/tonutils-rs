@@ -570,6 +570,13 @@ pub enum OverlayQuery {
     /// overlay.ping = overlay.Pong;
     #[tl(id = 0x690cb481)]
     Ping,
+    /// tonNode.getCapabilities = tonNode.Capabilities;
+    ///
+    /// Dispatched by `validator/full-node-queries.hpp` on the mainnet
+    /// full-node overlays, so it arrives wrapped in `overlay.query` exactly
+    /// like `overlay.ping` does.
+    #[tl(id = 0xdee618f8)]
+    GetCapabilities,
     /// overlay.query overlay:int256 = True;
     #[tl(id = 0xccfd8443)]
     Query { overlay: Int256 },

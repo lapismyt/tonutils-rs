@@ -17,6 +17,7 @@ pub mod common;
 #[cfg(test)]
 mod cross_sdk;
 pub mod error;
+pub mod fullnode;
 pub mod generated;
 pub mod network;
 pub mod request;
@@ -37,5 +38,9 @@ pub use common::{
     ZeroStateIdExt,
 };
 pub use error::TlError;
+pub use fullnode::{
+    FULL_NODE_PROTO_VERSION_MAJOR, FULL_NODE_PROTO_VERSION_MINOR, TonNodeCapabilities,
+    TonNodeGetCapabilities,
+};
 pub use request::{LiteQuery, LiteQueryRaw, RawWrappedRequest, Request, WrappedRequest};
 pub use response::{Error, Response};

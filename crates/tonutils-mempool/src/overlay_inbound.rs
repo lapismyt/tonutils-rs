@@ -6,6 +6,13 @@
 //! * `overlay.getRandomPeers` answers, whose membership list is traced by
 //!   [`trace_membership`].
 //!
+//! The mainnet shard overlay is a full-node overlay, so a peer that has just
+//! learned about this node also probes it with `tonNode.getCapabilities`
+//! before treating it as a peer worth talking to
+//! (`FullNodeQueries::process_query` in `validator/full-node-queries.hpp`).
+//! Answering it costs one constructor and is the difference between a node
+//! that looks alive on the wire and one that answers `unknown query`.
+//!
 //! A peer that received our `overlay.getRandomPeers` puts this node into a
 //! pending set and then verifies it with `overlay.ping`
 //! (`OverlayImpl::process_pending_peer` in `overlay/overlay-peers.cpp`). Only
@@ -32,6 +39,7 @@ use std::sync::{Arc, Mutex};
 use tl_proto::TlRead;
 use tonutils_adnl::{AdnlUdpSession, now_i32};
 use tonutils_overlay::{OverlayId, PeerId};
+use tonutils_tl::tl::TonNodeCapabilities;
 use tonutils_tl::tl::network::{OverlayNode, OverlayNodesBoxed, OverlayPong, OverlayQuery};
 
 use crate::protocol_stats;
@@ -105,6 +113,11 @@ pub(crate) fn build_overlay_answer(
             log::debug!("answering overlay.ping for peer={peer:?}");
             protocol_stats::record_pong_sent();
             Some(tl_proto::serialize(OverlayPong))
+        }
+        Ok(OverlayQuery::GetCapabilities) => {
+            log::debug!("answering tonNode.getCapabilities for peer={peer:?}");
+            protocol_stats::record_capabilities_answer();
+            Some(tl_proto::serialize(TonNodeCapabilities::current()))
         }
         Ok(OverlayQuery::GetRandomPeers { .. }) => {
             let ours = session.local_overlay_node(tonutils_tl::Int256(overlay.as_bytes()));

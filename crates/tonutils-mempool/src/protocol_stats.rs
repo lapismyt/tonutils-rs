@@ -36,6 +36,8 @@ pub struct ProtocolStats {
     pub pongs_sent: u64,
     /// `overlay.getRandomPeers` answers sent.
     pub random_peers_answers: u64,
+    /// `tonNode.capabilities` answers sent.
+    pub capabilities_answers: u64,
     /// `overlay.getRandomPeers` queries this node sent (session handshake,
     /// keepalives, and channel resubscribes). Comparing it with
     /// [`ProtocolStats::membership_answers`] shows how many peers actually
@@ -59,6 +61,7 @@ struct Counters {
     last_unhandled_query_id: AtomicU32,
     pongs_sent: AtomicU64,
     random_peers_answers: AtomicU64,
+    capabilities_answers: AtomicU64,
     random_peers_queries_sent: AtomicU64,
     query_answers_failed: AtomicU64,
     membership_answers: AtomicU64,
@@ -74,6 +77,7 @@ static COUNTERS: Counters = Counters {
     last_unhandled_query_id: AtomicU32::new(0),
     pongs_sent: AtomicU64::new(0),
     random_peers_answers: AtomicU64::new(0),
+    capabilities_answers: AtomicU64::new(0),
     random_peers_queries_sent: AtomicU64::new(0),
     query_answers_failed: AtomicU64::new(0),
     membership_answers: AtomicU64::new(0),
@@ -112,6 +116,10 @@ pub(crate) fn record_random_peers_answer() {
     inc(&COUNTERS.random_peers_answers);
 }
 
+pub(crate) fn record_capabilities_answer() {
+    inc(&COUNTERS.capabilities_answers);
+}
+
 pub(crate) fn record_random_peers_query_sent() {
     inc(&COUNTERS.random_peers_queries_sent);
 }
@@ -141,6 +149,7 @@ pub fn protocol_stats() -> ProtocolStats {
         last_unhandled_query_id: COUNTERS.last_unhandled_query_id.load(Ordering::Relaxed),
         pongs_sent: COUNTERS.pongs_sent.load(Ordering::Relaxed),
         random_peers_answers: COUNTERS.random_peers_answers.load(Ordering::Relaxed),
+        capabilities_answers: COUNTERS.capabilities_answers.load(Ordering::Relaxed),
         random_peers_queries_sent: COUNTERS.random_peers_queries_sent.load(Ordering::Relaxed),
         query_answers_failed: COUNTERS.query_answers_failed.load(Ordering::Relaxed),
         membership_answers: COUNTERS.membership_answers.load(Ordering::Relaxed),
