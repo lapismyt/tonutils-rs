@@ -32,6 +32,88 @@ UDP ADNL must handle:
 - `adnl.addressList`,
 - `adnl.node`.
 
+## Upstream Rules Verified From Source
+
+These are the rules a peer applies to *our* packets, taken from
+`adnl/adnl-peer.cpp` in `ton-blockchain/ton`. They decide whether a peer can
+originate anything back to this node, so they are the reason an otherwise
+healthy query can still leave `pongs_sent` at zero.
+
+- **One address per peer pair, newest version wins.**
+  `AdnlPeerPairImpl::receive_packet_checked` copies `packet.addr_list()` into
+  `update_addr_list` whenever the field is present, *even when `addrs` is
+  empty*: an empty address list is replaced by the datagram's source address
+  (`addr_list.add_udp_adnl_address(packet.remote_addr())`). A packet without
+  the field at all changes nothing. "Present" here is decided by
+  `AdnlAddressList::empty()`, which is `version_ == -1` and **not** an address
+  count - so an initialized list with zero addresses is a list, gets the
+  implicit source address added, and still passes
+  `AdnlPacket::run_basic_checks`, which only rejects `flags & f_address` when
+  `addr_.empty()`. This is what makes an address-less client reachable: it
+  never advertises a routable `AdnlLocalId::addr_list_`, so
+  `update_packet` leaves `packet.addr_list()` unset, and the source address of
+  the datagram is the only thing a peer can learn.
+- **Replacement is strictly greater.** `update_addr_list` returns early when
+  `(priority ? priority_addr_list_ : addr_list_).version() >= addr_list.version()`,
+  so a second socket advertising the same second never displaces the incumbent
+  and its own query is answered to the *other* socket. The address is written
+  together with its `conns_`, so an accepted list both refreshes the echo
+  above and keeps the peer able to originate traffic.
+- **`reinit_date` is checked in two places, and an old value is fatal.**
+  `receive_packet_checked` drops a packet outright when
+  `reinit_date > now + 60`, when it is positive and *older* than the pair's
+  `reinit_date_`, and when `dst_reinit_date > 0` is older than the receiver's
+  own `Adnl::adnl_start_time()` (that last branch still applies the address
+  list, then replies with a `nop`). `update_addr_list` repeats the first two
+  checks: a newer date calls `reinit()`, an older one rejects the list.
+  `reinit()` resets both sequence numbers and the channel but deliberately
+  keeps `addr_list_`. The value this crate sends is `local_reinit_date()`, the
+  process start time, so it is constant and only the very first packet
+  performs a reinit.
+- **An idle pair forgets us.** `send_packet_continue` schedules
+  `drop_addr_list_at_` once nothing has been received for 9 minutes, and
+  `get_conn()` then clears `addr_list_` and `conns_` on the next send. Until
+  that point a peer that has our address keeps it, so a 5-minute run can
+  never trip this rule - but it is the one mechanism that *does* erase an
+  address without the peer doing anything wrong.
+- **The peer echoes its view back, and the flag says whether it has one.**
+  Every outgoing packet carries
+  `recv_addr_list_version = addr_list_.version()` when `addr_list_` is
+  initialized (`set_received_addr_list_version` sets `f_recv_addr_version`,
+  `0x100`), i.e. the version of the address the peer currently holds for
+  *us*. The field being **absent** means `version_ == -1`, i.e. the peer holds
+  no address for this node and `get_conn()` would fail with
+  `no active connections` - it can answer what we send it, but it can never
+  originate an `overlay.ping` or a broadcast. A value that does not match
+  what this process last stamped means the peer is addressing a different
+  socket. Both readings are logged by `udp/session/diag.rs` together with the
+  sibling flag fields (`recv_prio`, `seqno`, `reinit_date`) so a decoder fault
+  can be told apart from a genuine absence.
+- **`reinit_date` marks direct packets.** `send_messages_from_queue` calls
+  `packet.set_reinit_date(...)` only under `if (!via_channel)`, so an inbound
+  packet that carries `reinit_date`/`dst_reinit_date` (flag `0x400`) travelled
+  unprotected while one without it came over an established ADNL channel.
+  Flag bits, for reference: `f_address 0x10`, `f_seqno 0x40`,
+  `f_confirm_seqno 0x80`, `f_recv_addr_version 0x100`,
+  `f_recv_priority_addr_version 0x200`, `f_reinit_date 0x400`,
+  `f_signature 0x800` - identical to this crate's `#[tl(flags_bit = ...)]`
+  mapping.
+- **A ready channel carries everything.**
+  `AdnlPeerPairImpl::send_messages_from_queue` computes
+  `bool via_channel = channel_ready_ && !try_reinit;` and that covers query
+  answers too. Once the pair negotiated a channel, a *different* socket of the
+  same ADNL node id receives channel packets it cannot decrypt: it holds no
+  channel, so `decode_packet` rejects the prefix and the query runs to its
+  timeout. This is why a fresh lookup socket to an already-connected member
+  fails while the same lookup against a never-contacted seed succeeds.
+
+`AdnlUdpSession::fill_address` restamps `version` on every packet for exactly
+the first rule, and `set_transient_address` advertises `now + 1` so a one-shot
+lookup socket can win its single exchange against a live session that stamped
+the same second. The receive-side signals for all of this are logged by
+`udp/session/diag.rs`: the echoed `recv_addr_list_version` next to the version
+this process last stamped, and the local port of the socket that stamped it.
+
 ## Implementation Risks
 
 - UDP packet loss and reordering.
