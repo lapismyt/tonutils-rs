@@ -7,7 +7,7 @@ use tonutils_tl::{Int256, Message as AdnlMessage};
 
 use crate::{
     AdnlAesParams, AdnlChannelCipher, AdnlChannelPacket, AdnlError, AdnlUdpPeer, AdnlUdpSession,
-    KeyPair, decrypt_direct, encrypt_direct, ordered_channel_ciphers,
+    KeyPair, decrypt_direct, encrypt_direct, now_i32, ordered_channel_ciphers,
 };
 
 #[test]
@@ -316,7 +316,10 @@ async fn dht_find_node_query_routes_matching_answer() {
         sender.dht_find_node(Int256([8; 32]), 8, Duration::from_secs(1)),
         response
     );
-    assert!(result.unwrap().nodes.is_empty());
+    assert_eq!(
+        result.unwrap().nodes,
+        [] as [tonutils_tl::network::DhtNode; 0]
+    );
 }
 
 #[tokio::test]
@@ -411,7 +414,18 @@ async fn overlay_random_peers_query_routes_boxed_response() {
             .unwrap();
     let response = async {
         let packet = server.recv_timeout(Duration::from_secs(1)).await.unwrap();
-        let AdnlMessage::Query { query_id, query } = packet.message.unwrap() else {
+        // The session bundles `adnl.message.createChannel` with its first
+        // query, so the query can arrive as the packet's single `message` or
+        // as the second entry of `messages`.
+        let mut incoming = packet
+            .message
+            .into_iter()
+            .chain(packet.messages.into_iter().flatten());
+        let query = incoming.find_map(|message| match message {
+            AdnlMessage::Query { query_id, query } => Some((query_id, query)),
+            _ => None,
+        });
+        let Some((query_id, query)) = query else {
             panic!("expected overlay query");
         };
         assert_eq!(&query[..4], &0xccfd8443u32.to_le_bytes());
@@ -425,7 +439,7 @@ async fn overlay_random_peers_query_routes_boxed_response() {
         };
         assert_eq!(peers.nodes.len(), 1);
         assert_eq!(peers.nodes[0].signature.len(), 64);
-        assert!(query.is_empty());
+        assert_eq!(query, &[] as &[u8]);
         server
             .send_contents(PacketContents {
                 rand1: vec![0; 7],
@@ -455,5 +469,134 @@ async fn overlay_random_peers_query_routes_boxed_response() {
         client.overlay_get_random_peers(Int256([12; 32]), Duration::from_secs(1)),
         response
     );
-    assert!(result.unwrap().nodes.is_empty());
+    assert_eq!(
+        result.unwrap().nodes,
+        [] as [tonutils_tl::network::OverlayNode; 0]
+    );
+}
+
+/// Two directly connected sessions over loopback, sender first.
+async fn direct_pair() -> (AdnlUdpSession, AdnlUdpSession) {
+    let sender_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let receiver_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let sender_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let receiver_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let sender = AdnlUdpSession::connect(
+        sender_addr,
+        receiver_addr,
+        sender_key,
+        receiver_key.public_key,
+    )
+    .await
+    .unwrap();
+    let receiver = AdnlUdpSession::connect(
+        receiver_addr,
+        sender_addr,
+        receiver_key,
+        sender_key.public_key,
+    )
+    .await
+    .unwrap();
+    (sender, receiver)
+}
+
+fn custom_packet(data: Vec<u8>) -> PacketContents {
+    PacketContents {
+        rand1: vec![0; 7],
+        flags: (),
+        from: None,
+        from_short: None,
+        message: Some(AdnlMessage::Custom { data }),
+        messages: None,
+        address: None,
+        priority_address: None,
+        seqno: None,
+        confirm_seqno: None,
+        recv_addr_list_version: None,
+        recv_priority_addr_list_version: None,
+        reinit_date: None,
+        dst_reinit_date: None,
+        signature: None,
+        rand2: vec![0; 7],
+    }
+}
+
+/// Version of `adnl.addressList` the sender stamped on its next packet.
+async fn receive_address_version(receiver: &mut AdnlUdpSession) -> i32 {
+    let received = receiver
+        .recv_timeout(Duration::from_secs(1))
+        .await
+        .expect("packet did not arrive");
+    received
+        .address
+        .expect("every outgoing packet carries an address list")
+        .version
+}
+
+/// Upstream learns a peer's source address only from `packet.addr_list()`
+/// (`AdnlPeerPairImpl::receive_packet_checked`) and keeps one per peer pair,
+/// replaced only on a strictly greater `version`.  A version frozen at connect
+/// time would therefore let the first session to reach a peer own that address
+/// for good, so every packet stamps the time it is sent and a live session
+/// takes the address back on its next keepalive.
+#[tokio::test]
+async fn address_version_is_restamped_on_every_packet() {
+    let (mut sender, mut receiver) = direct_pair().await;
+
+    sender.send_contents(custom_packet(vec![1])).await.unwrap();
+    let first = receive_address_version(&mut receiver).await;
+
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+
+    sender.send_contents(custom_packet(vec![2])).await.unwrap();
+    let second = receive_address_version(&mut receiver).await;
+
+    assert!(
+        second > first,
+        "second packet must advertise a later address version, got {first} then {second}"
+    );
+}
+
+/// Two sessions of the same ADNL node id that send inside the same second tie
+/// on `version` and the incumbent keeps the address, so a one-shot lookup
+/// socket would never receive the answer to its own query.  A session marked
+/// with [`AdnlUdpSession::set_transient_address`] advertises one second ahead
+/// of the wall clock and wins that single exchange; the live session's next
+/// keepalive then carries a later timestamp and reclaims the address.
+#[tokio::test]
+async fn transient_session_stamps_one_second_ahead_of_a_plain_session() {
+    let (mut plain_sender, mut plain_receiver) = direct_pair().await;
+    let (mut marked_sender, mut marked_receiver) = direct_pair().await;
+    marked_sender.set_transient_address(true);
+
+    let before = now_i32();
+    plain_sender
+        .send_contents(custom_packet(vec![1]))
+        .await
+        .unwrap();
+    marked_sender
+        .send_contents(custom_packet(vec![2]))
+        .await
+        .unwrap();
+    let after = now_i32();
+
+    let plain = receive_address_version(&mut plain_receiver).await;
+    let marked = receive_address_version(&mut marked_receiver).await;
+
+    assert!(
+        (before..=after).contains(&plain),
+        "plain session must stamp the wall clock, got {plain} outside [{before}, {after}]"
+    );
+    assert!(
+        (before + 1..=after + 1).contains(&marked),
+        "transient session must stamp one second ahead, got {marked} outside [{before}, {after}] + 1"
+    );
 }
