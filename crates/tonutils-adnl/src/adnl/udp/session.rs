@@ -18,10 +18,11 @@ use super::{
     AdnlChannelPacket, MAX_SESSION_CHANNELS, MAX_TRACKED_QUERIES, MAX_UDP_PACKET_SIZE,
     REQUEST_CHANNEL_INTERVAL, channel_id_for_secret, decrypt_direct, encrypt_direct,
     highest_received_seqno, local_reinit_date, message_kind, message_vector, next_outgoing_seqno,
-    note_peer_reinit_date, now_i32, ordered_channel_ciphers, outgoing_seqno, peer_reinit_date,
-    record_received_seqno,
+    note_our_addr_version, note_peer_reinit_date, now_i32, ordered_channel_ciphers, our_addr_view,
+    outgoing_seqno, peer_reinit_date, record_received_seqno,
 };
 
+mod diag;
 mod query;
 
 /// Authenticated UDP ADNL endpoint for direct packets and established channels.
@@ -246,17 +247,19 @@ impl AdnlUdpSession {
     /// later answers would be lost.
     fn fill_address(&self, contents: &mut PacketContents) {
         if contents.address.is_none() {
+            let version = if self.transient_address {
+                now_i32().saturating_add(1)
+            } else {
+                now_i32()
+            };
             contents.address = Some(AddressList {
                 addrs: Vec::new(),
-                version: if self.transient_address {
-                    now_i32().saturating_add(1)
-                } else {
-                    now_i32()
-                },
+                version,
                 reinit_date: local_reinit_date(),
                 priority: 0,
                 expire_at: 0,
             });
+            self.note_stamped_address_version(version);
         }
         if contents.recv_addr_list_version.is_none() {
             contents.recv_addr_list_version = self.peer_addr_list_version;
@@ -482,6 +485,7 @@ impl AdnlUdpSession {
                 continue;
             }
             self.log_stray_answers(&contents);
+            self.log_recv_diagnostics(&contents);
             log::trace!(
                 "recv: from={} seqno={:?} confirm={:?} reinit={:?} kind={} messages={}",
                 self.socket
@@ -600,6 +604,13 @@ impl AdnlUdpSession {
             Self::count_failure(consecutive_failures, MAX_CONSECUTIVE_FAILURES)?;
             return Ok(None);
         };
+        if let Some(flags) = super::raw_packet_flags(&payload) {
+            log::debug!(
+                "flags probe: kind=direct raw=0x{flags:08x} recv_v={:?} recv_prio={:?}",
+                contents.recv_addr_list_version,
+                contents.recv_priority_addr_list_version,
+            );
+        }
         let sender_from_from = contents.from.as_ref().and_then(|pk| match pk {
             TlPublicKey::Ed25519 { key } => PublicKey::from_bytes(key.0),
             _ => None,

@@ -119,7 +119,9 @@ async fn resolve_address_on_session(
         Some(DhtValueResult::Found { value }) => return parse_address_record(value, seed_address),
         Some(DhtValueResult::NotFound { nodes }) => nodes.nodes,
         None => {
-            log::debug!("resolve_address: {address_key_hex} via {seed_address} timed out");
+            log::debug!(
+                "resolve_address: {address_key_hex} via {seed_address} got no answer (valueNotFound would have returned closer nodes)"
+            );
             return None;
         }
     };
@@ -174,6 +176,7 @@ async fn resolve_address_on_session(
 
         let mut next = Vec::new();
         let mut answered = 0usize;
+        let mut silent = 0usize;
         for (remote_addr, response) in results.into_iter().flatten() {
             match response {
                 Some(DhtValueResult::Found { value }) => {
@@ -186,12 +189,12 @@ async fn resolve_address_on_session(
                     answered += 1;
                     next.extend(nodes.nodes);
                 }
-                None => {}
+                None => silent += 1,
             }
         }
         if next.is_empty() {
             log::debug!(
-                "resolve_address: {address_key_hex} got no closer nodes on round {round} ({answered} answers)"
+                "resolve_address: {address_key_hex} got no closer nodes on round {round} ({answered} valueNotFound, {silent} without answer)"
             );
             return None;
         }
@@ -634,6 +637,10 @@ async fn query_overlay_random_peers(
         }
     };
     let now = now_i32();
+    let total = nodes.nodes.len();
+    let mut records = 0usize;
+    let mut not_found = 0usize;
+    let mut no_answer = 0usize;
     let mut result = Vec::new();
     for node in nodes.nodes {
         if !valid_overlay_node(&node, overlay, now) {
@@ -645,7 +652,7 @@ async fn query_overlay_random_peers(
         let overlay_public = AdnlPublicKey::from_bytes(key.0)?;
         let adnl_id = AdnlAddress::from(&overlay_public).to_bytes();
         let address_key = dht_key_id(adnl_id, b"address");
-        let Some(DhtValueResult::Found { value }) = query_dht_value_seed(
+        let response = query_dht_value_seed(
             local_addr,
             local_keypair,
             remote,
@@ -654,9 +661,20 @@ async fn query_overlay_random_peers(
             1,
             timeout,
         )
-        .await
-        else {
-            continue;
+        .await;
+        let value = match response {
+            Some(DhtValueResult::Found { value }) => {
+                records += 1;
+                value
+            }
+            Some(DhtValueResult::NotFound { .. }) => {
+                not_found += 1;
+                continue;
+            }
+            None => {
+                no_answer += 1;
+                continue;
+            }
         };
         let Ok(address_list) = tl_proto::deserialize::<AddressListBoxed>(&value.value) else {
             continue;
@@ -690,7 +708,7 @@ async fn query_overlay_random_peers(
         }
     }
     log::debug!(
-        "query_overlay_random_peers: found {} peers from {address}",
+        "query_overlay_random_peers: found {} peers from {address} ({total} member(s): {records} address record(s), {not_found} valueNotFound, {no_answer} without answer)",
         result.len()
     );
     if result.is_empty() {

@@ -321,6 +321,13 @@ async fn configured_seed_delivers_valid_external_message() {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(120);
+    // Peer growth is the only source of short-lived lookup sockets after
+    // bootstrap, so setting this to 0 turns it off and makes a run isolatable
+    // when a live failure has to be attributed to growth or to reachability.
+    let overlay_max_peers = std::env::var("TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(64);
     let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let overlay = OverlayId::from_bytes(overlay_bytes);
     let dht_overlay_key: [u8; 32] = overlay_bytes;
@@ -337,7 +344,7 @@ async fn configured_seed_delivers_valid_external_message() {
         // leaves the growth loop nothing to do.  A larger budget lets growth add
         // members reached transitively, which is what raises the number of peers
         // that can verify this node and push broadcasts to it.
-        .overlay_max_peers(64)
+        .overlay_max_peers(overlay_max_peers)
         .native_udp("0.0.0.0:0".parse().unwrap(), local_key, None)
         .start()
         .await

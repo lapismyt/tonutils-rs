@@ -267,6 +267,14 @@ impl AdnlChannelPacket {
             let prefix = hex::encode(payload.iter().take(96).copied().collect::<Vec<_>>());
             AdnlError::MalformedPacket(format!("{error} (channel payload={prefix})"))
         })?;
+        if let Some(flags) = super::raw_packet_flags(&payload) {
+            log::debug!(
+                "flags probe: kind=channel chan={} raw=0x{flags:08x} recv_v={:?} recv_prio={:?}",
+                hex::encode(&self.inbound_id[..8]),
+                contents.recv_addr_list_version,
+                contents.recv_priority_addr_list_version,
+            );
+        }
         if let Some(confirm_seqno) = contents.confirm_seqno
             && confirm_seqno > self.next_seqno
         {

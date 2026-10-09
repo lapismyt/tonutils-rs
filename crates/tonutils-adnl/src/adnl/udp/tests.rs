@@ -600,3 +600,58 @@ async fn transient_session_stamps_one_second_ahead_of_a_plain_session() {
         "transient session must stamp one second ahead, got {marked} outside [{before}, {after}] + 1"
     );
 }
+
+/// The raw-flags probe must agree with the decoder, or a live run cannot tell
+/// a missing wire bit from a dropped field mapping.
+#[test]
+fn raw_flags_probe_reads_the_wire_word() {
+    let mut contents = PacketContents {
+        rand1: vec![0; 7],
+        flags: (),
+        from: None,
+        from_short: None,
+        message: None,
+        messages: None,
+        address: None,
+        priority_address: None,
+        seqno: Some(1),
+        confirm_seqno: Some(1),
+        recv_addr_list_version: Some(42),
+        recv_priority_addr_list_version: None,
+        reinit_date: None,
+        dst_reinit_date: None,
+        signature: None,
+        rand2: vec![0; 7],
+    };
+
+    let encoded = tl_proto::serialize(contents.clone());
+    let flags = super::raw_packet_flags(&encoded).expect("header must parse");
+    assert_eq!(
+        flags & 0x40,
+        0x40,
+        "f_seqno is set on every packet upstream builds, so it anchors the offset"
+    );
+    assert_eq!(
+        flags & 0x100,
+        0x100,
+        "recv_addr_list_version must reach the wire when set"
+    );
+    assert_eq!(
+        tl_proto::deserialize::<PacketContents>(&encoded)
+            .expect("roundtrip")
+            .recv_addr_list_version,
+        Some(42),
+        "decoder and probe must agree on the same bytes"
+    );
+
+    contents.recv_addr_list_version = None;
+    contents.recv_priority_addr_list_version = Some(7);
+    let encoded = tl_proto::serialize(contents);
+    let flags = super::raw_packet_flags(&encoded).expect("header must parse");
+    assert_eq!(flags & 0x100, 0, "unset field clears bit 8 on the wire");
+    assert_eq!(
+        flags & 0x200,
+        0x200,
+        "recv_priority_addr_list_version must reach the wire when set"
+    );
+}

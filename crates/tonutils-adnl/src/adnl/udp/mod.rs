@@ -105,6 +105,25 @@ struct PeerPairState {
     highest_seqno: u64,
     /// Latest `reinit_date` announced by the peer, `0` when none was seen yet.
     reinit_date: i32,
+    /// Highest `adnl.addressList.version` this process stamped for `remote_id`.
+    ///
+    /// The peer keeps exactly one source address per node id and replaces it
+    /// only on a strictly greater version, so comparing this value against the
+    /// `recv_addr_list_version` the peer echoes back tells whether the address
+    /// the peer will use is ours or a lookup socket's.
+    our_addr_version: i32,
+    /// Local port of the socket that stamped `our_addr_version`.
+    ///
+    /// Two sockets of the same ADNL node id advertise versions one second
+    /// apart, so the version alone says which stamp won but not which socket
+    /// the peer will now talk to.
+    our_addr_socket: u16,
+    /// Whether `our_addr_socket` is a one-shot lookup socket.
+    ///
+    /// A lookup socket is dropped as soon as its query returns, so a peer whose
+    /// recorded address is owned by one is unreachable even though the live
+    /// session is still listening on its own port.
+    our_addr_lookup: bool,
 }
 
 /// Returns a short name for an `adnl.Message` used in receive traces.
@@ -193,6 +212,41 @@ fn note_peer_reinit_date(remote_id: &[u8; 32], date: i32) -> bool {
         } else {
             false
         }
+    })
+}
+
+/// Records the `adnl.addressList.version` this process just stamped for
+/// `remote_id` from `socket`.
+///
+/// Upstream echoes the version it currently holds for us back in every packet
+/// (`AdnlPeerPairImpl::send_packet` writes `addr_list_.version()` into
+/// `recv_addr_list_version`), so keeping our own last stamp here is what lets
+/// a receive-side diagnostic tell "the peer moved on to a newer address than
+/// the one we sent" from "the peer still uses the address we sent last".
+///
+/// Only a *strictly* greater version replaces the owner, mirroring upstream's
+/// `AdnlPeerPairImpl::update_addr_list`: within the same second the incumbent
+/// socket keeps the address, so the recorded port stays the one the peer is
+/// actually using.
+fn note_our_addr_version(remote_id: &[u8; 32], version: i32, socket: u16, lookup: bool) {
+    with_peer_pair_state(remote_id, |state| {
+        if version > state.our_addr_version {
+            state.our_addr_version = version;
+            state.our_addr_socket = socket;
+            state.our_addr_lookup = lookup;
+        }
+    })
+}
+
+/// Version this process last stamped for `remote_id`, the local port of the
+/// socket that stamped it, and whether that socket is a transient lookup one.
+fn our_addr_view(remote_id: &[u8; 32]) -> (i32, u16, bool) {
+    with_peer_pair_state(remote_id, |state| {
+        (
+            state.our_addr_version,
+            state.our_addr_socket,
+            state.our_addr_lookup,
+        )
     })
 }
 
@@ -320,6 +374,50 @@ impl AdnlUdpSocket {
                 timeout,
             })?
     }
+}
+
+/// Reads the `flags:#` word straight out of a serialized `adnl.packetContents`.
+///
+/// [`PacketContents`] keeps its own `flags` field as `()`, so a decoded value
+/// cannot tell a bit that was genuinely absent from the wire apart from one the
+/// field mapping failed to surface.  For `recv_addr_list_version` those two
+/// readings are opposites: absent means the peer holds no address for this node
+/// and therefore cannot originate an `overlay.ping`, while present-but-ignored
+/// would point at this crate's TL mapping instead.  Upstream always answers from
+/// a connection it holds an address on
+/// (`AdnlPeerPairImpl::get_conn` returns `no active connections` otherwise), so
+/// which of the two it is decides whether the missing address is real.
+///
+/// Layout is `ctor:u32 = 0xd142cd89`, then `rand1:bytes` as a length prefix
+/// plus data, then `flags:u32`.  Upstream fills `rand1` with exactly 7 or 15
+/// random bytes (`AdnlPacket::init_random`), which is what makes the offset
+/// findable, and the length prefix is read from the first byte only - that
+/// value is identical whether the prefix is one byte or a little-endian
+/// `u32`, so both layouts can be tried without knowing which one the sender
+/// used.  Candidates are accepted only when the word carries `f_seqno` and no
+/// undefined bits, because upstream sets `seqno` on every packet it builds
+/// (`AdnlPeerPairImpl::send_messages_from_queue`).  Returns `None` when no
+/// candidate looks like a `flags:#` word.
+pub(crate) fn raw_packet_flags(payload: &[u8]) -> Option<u32> {
+    const PACKET_CONTENTS_ID: u32 = 0xd142cd89;
+    const F_SEQNO: u32 = 0x40;
+    const DEFINED_BITS: u32 = 0x1fff;
+
+    let word = |offset: usize| -> Option<u32> {
+        let head: [u8; 4] = payload.get(offset..offset + 4)?.try_into().ok()?;
+        Some(u32::from_le_bytes(head))
+    };
+    if word(0)? != PACKET_CONTENTS_ID {
+        return None;
+    }
+    let rand1_len = payload.get(4).copied()? as usize;
+    let padded = rand1_len.div_ceil(4) * 4;
+    [5 + rand1_len, 8 + rand1_len, 8 + padded]
+        .into_iter()
+        .find(|offset| {
+            word(*offset).is_some_and(|flags| flags & DEFINED_BITS == flags && flags & F_SEQNO != 0)
+        })
+        .and_then(word)
 }
 
 #[cfg(test)]
