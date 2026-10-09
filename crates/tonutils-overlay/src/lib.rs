@@ -435,7 +435,12 @@ pub struct OverlayPeerPool {
 
 /// Persistent peer lifecycle manager with parallel receive loops and bounded
 /// fan-out.  Session implementations own transport-specific handshakes.
+///
+/// Cloning yields another handle onto the same sessions, scores and shutdown
+/// channel, so background tasks such as periodic peer growth can register
+/// sessions while the caller keeps the original handle.
 #[cfg(feature = "runtime")]
+#[derive(Clone)]
 pub struct PeerManager {
     pool: Arc<OverlayPeerPool>,
     sessions: Arc<RwLock<HashMap<PeerId, SharedSession>>>,

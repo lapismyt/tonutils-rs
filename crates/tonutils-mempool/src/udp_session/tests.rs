@@ -40,6 +40,7 @@ async fn reassembles_single_source_raptorq_external_message() {
         fec: HashMap::new(),
         last_keepalive: Instant::now(),
         last_activity: Instant::now(),
+        members: OverlayMemberCache::default(),
     };
     let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
     let fec = OverlayBroadcastFec {
@@ -96,6 +97,7 @@ async fn waits_for_all_source_symbols_before_publishing_fec_payload() {
         fec: HashMap::new(),
         last_keepalive: Instant::now(),
         last_activity: Instant::now(),
+        members: OverlayMemberCache::default(),
     };
     let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
     for (index, packet) in packets.into_iter().enumerate() {
@@ -148,6 +150,7 @@ async fn rejects_truncated_serialized_fec_packet() {
         fec: HashMap::new(),
         last_keepalive: Instant::now(),
         last_activity: Instant::now(),
+        members: OverlayMemberCache::default(),
     };
     let payload = tl_proto::serialize(OverlayBroadcastFec {
         src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![3] },

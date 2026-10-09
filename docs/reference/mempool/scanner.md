@@ -68,11 +68,33 @@ QUIC: `native_udp` and `native_quic` both install a seed discovery lookup when
 
 ## Membership and liveness behavior
 
-Each registered session sends one `overlay.getRandomPeers` per second while it
-is idle. Upstream nodes drain their bounded pending-peer set at one node per
-second, so a frequent re-announcement is what eventually produces an incoming
-`overlay.ping`; answering it is what makes the peer treat this node as a
-verified neighbour that receives pushed broadcasts.
+Each registered session sends `overlay.getRandomPeers` once every
+`KEEPALIVE_INTERVAL` of 10 seconds while it is idle. Upstream nodes drain their
+bounded pending-peer set at one node per second, so a periodic re-announcement
+is what eventually produces an incoming `overlay.ping`; answering it is what
+makes the peer treat this node as a verified neighbour that receives pushed
+broadcasts. A one second cadence produced tens of thousands of queries per run
+without improving admission, because the peer's drain rate - not our query
+rate - decides when this node is pinged.
+
+After bootstrap, `native_udp` also installs a peer-growth lookup
+(`udp_peer_growth`, `PEER_GROWTH_INTERVAL` of 10 seconds, pytoniq's
+`OverlayManager.get_more_peers` cadence). Each round picks the next known
+member, asks it for `overlay.getRandomPeers`, validates the returned
+`overlay.node` records, resolves their DHT `address` values, and opens sessions
+for the candidates until `overlay_max_peers` (default 30, pytoniq's
+`max_peers`) is reached. Growth also re-announces this node, refreshing the
+`version` of its signed record in that peer's queue.
+
+Answers to `overlay.getRandomPeers` are not limited to this node. Every
+verified member harvested from an answer is kept in the shared
+`OverlayMemberCache` of `overlay_factory` and up to five of them are gossiped
+back with this node's own record, mirroring upstream
+`OverlayImpl::send_random_peers`. Records are validated with
+`valid_overlay_node` (overlay id, 600 second `overlay_peer_ttl`, signature)
+on insertion and re-validated before being advertised, so the cache never hands
+out expired or foreign members. The cache is gossip citizenship only: it does
+not change whether this node itself is admitted to a peer's pending set.
 
 Overlay seed discovery resolves the DHT `address` record of every candidate
 concurrently. Serializing those lookups let a few slow nodes consume the whole

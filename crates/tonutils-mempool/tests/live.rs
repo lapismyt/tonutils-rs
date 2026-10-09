@@ -332,6 +332,12 @@ async fn configured_seed_delivers_valid_external_message() {
         .reconnect_attempts(2)
         .discovery_timeout(Duration::from_secs(30))
         .dht_overlay_key(dht_overlay_key)
+        // Bootstrap alone registers one session per config seed plus one per
+        // discovered member, which already exceeds the default budget of 30 and
+        // leaves the growth loop nothing to do.  A larger budget lets growth add
+        // members reached transitively, which is what raises the number of peers
+        // that can verify this node and push broadcasts to it.
+        .overlay_max_peers(64)
         .native_udp("0.0.0.0:0".parse().unwrap(), local_key, None)
         .start()
         .await
@@ -468,12 +474,10 @@ async fn mainnet_overlay_dht_discovery_returns_peers() {
         16,
         Duration::from_secs(30),
     );
-    let peers = match tokio::time::timeout(Duration::from_secs(45), lookup(configured_live_seeds()))
-        .await
-    {
-        Ok(peers) => peers,
-        Err(_) => Vec::new(),
-    };
+    let peers: Vec<SeedPeer> =
+        tokio::time::timeout(Duration::from_secs(45), lookup(configured_live_seeds()))
+            .await
+            .unwrap_or_default();
     assert_discovery_peers("udp", peers, allow_unavailable);
 }
 
@@ -496,12 +500,10 @@ async fn mainnet_overlay_quic_discovery_returns_peers() {
         16,
         Duration::from_secs(30),
     );
-    let peers = match tokio::time::timeout(Duration::from_secs(45), lookup(configured_live_seeds()))
-        .await
-    {
-        Ok(peers) => peers,
-        Err(_) => Vec::new(),
-    };
+    let peers: Vec<SeedPeer> =
+        tokio::time::timeout(Duration::from_secs(45), lookup(configured_live_seeds()))
+            .await
+            .unwrap_or_default();
     assert_discovery_peers("quic", peers, allow_unavailable);
 }
 

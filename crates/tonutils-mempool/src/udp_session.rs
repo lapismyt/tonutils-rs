@@ -19,7 +19,18 @@ use tonutils_tl::tl::network::{
     PublicKey as TlPublicKey, TonNodeExternalMessageBroadcast,
 };
 
+use crate::overlay_inbound::OverlayMemberCache;
 use crate::{overlay_inbound, protocol_stats};
+
+/// Interval between `overlay.getRandomPeers` keepalives on a live session.
+///
+/// Every keepalive refreshes the `version` field of this node's signed
+/// record, so it has to stay well inside the upstream `overlay_peer_ttl` of
+/// 600 seconds.  Ten seconds is what pytoniq uses for the same purpose; a one
+/// second cadence produced tens of thousands of queries per run for no extra
+/// admission chance, because the peer's pending-peer drain - not our query
+/// rate - decides when a node is pinged.
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Adapter exposing an authenticated direct ADNL UDP session to the overlay.
 pub struct AdnlUdpOverlaySession {
@@ -30,7 +41,16 @@ pub struct AdnlUdpOverlaySession {
     last_keepalive: Instant,
     /// Last datagram accepted from the peer, used by the pool idle deadline.
     last_activity: Instant,
+    /// Members this session may gossip in `overlay.getRandomPeers` answers.
+    ///
+    /// Sessions created by one factory share a single cache, see
+    /// [`overlay_factory`](crate::overlay_factory).
+    members: OverlayMemberCache,
 }
+
+mod lookup;
+
+pub use lookup::*;
 
 struct FecAssembly {
     decoder: Decoder,
@@ -40,447 +60,11 @@ struct FecAssembly {
     last_seen: Instant,
 }
 
-pub fn udp_dht_lookup(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    node_count: i32,
-    timeout: Duration,
-) -> TypedDiscoveryLookup {
-    Arc::new(move |seeds: Vec<SeedPeer>| {
-        Box::pin(async move {
-            let responses = join_all(seeds.into_iter().filter_map(|seed| {
-                let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
-                let address = seed.address.parse().ok()?;
-                Some(async move {
-                    let mut session =
-                        AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
-                            .await
-                            .ok()?;
-                    session.set_confirm_channels(false);
-                    session
-                        .dht_find_node(tonutils_tl::Int256::random(), node_count, timeout)
-                        .await
-                        .ok()
-                        .map(|nodes| nodes.nodes)
-                })
-            }))
-            .await;
-            responses.into_iter().flatten().flatten().collect()
-        })
-    })
-}
-
-pub fn udp_iterative_dht_lookup(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    node_count: i32,
-    rounds: usize,
-    timeout: Duration,
-) -> TypedDiscoveryLookup {
-    Arc::new(move |seeds: Vec<SeedPeer>| {
-        Box::pin(async move {
-            let mut frontier = seeds;
-            let mut discovered = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-            let now = now_i32();
-            for _ in 0..rounds.max(1) {
-                let responses = join_all(frontier.into_iter().filter_map(|seed| {
-                    let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
-                    let address = seed.address.parse().ok()?;
-                    Some(query_dht_seed(
-                        local_addr,
-                        local_keypair,
-                        remote,
-                        address,
-                        node_count,
-                        timeout,
-                    ))
-                }))
-                .await;
-                frontier = Vec::new();
-                for nodes in responses.into_iter().flatten() {
-                    for node in nodes {
-                        let key = match &node.id {
-                            tonutils_tl::tl::network::PublicKey::Ed25519 { key } => key.0,
-                            _ => continue,
-                        };
-                        if seen.insert(key) {
-                            frontier.extend(tonutils_overlay::select_typed_dht_peers(
-                                [node.clone()],
-                                8,
-                                now,
-                            ));
-                            discovered.push(node);
-                        }
-                    }
-                }
-                if frontier.is_empty() {
-                    break;
-                }
-            }
-            discovered
-        })
-    })
-}
-
-pub fn udp_overlay_lookup(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    overlay: OverlayId,
-    overlay_key: [u8; 32],
-    max_records: usize,
-    timeout: Duration,
-) -> SeedDiscoveryLookup {
-    Arc::new(move |seeds: Vec<SeedPeer>| {
-        Box::pin(async move {
-            let responses = join_all(seeds.into_iter().filter_map(|seed| {
-                let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
-                let address = seed.address.parse().ok()?;
-                Some(query_overlay_seed(
-                    local_addr,
-                    local_keypair,
-                    remote,
-                    address,
-                    overlay,
-                    overlay_key,
-                    max_records,
-                    timeout,
-                ))
-            }))
-            .await;
-            let mut result = Vec::new();
-            let mut seen = std::collections::HashSet::new();
-            for peers in responses.into_iter().flatten() {
-                for peer in peers {
-                    if seen.insert((peer.peer, peer.address.clone())) {
-                        log::debug!(
-                            "udp_overlay_lookup: discovered peer {} at {}",
-                            hex::encode(peer.peer.as_bytes()),
-                            peer.address
-                        );
-                        result.push(peer);
-                        if result.len() >= max_records {
-                            return result;
-                        }
-                    }
-                }
-            }
-            log::debug!(
-                "udp_overlay_lookup: returning {} peers from discovery",
-                result.len()
-            );
-            result
-        })
-    })
-}
-
-#[allow(clippy::large_types_passed_by_value, clippy::too_many_arguments)]
-async fn query_overlay_seed(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    remote: AdnlPublicKey,
-    address: std::net::SocketAddr,
-    overlay: OverlayId,
-    overlay_key: [u8; 32],
-    max_records: usize,
-    timeout: Duration,
-) -> Option<Vec<SeedPeer>> {
-    let initial = SeedPeer {
-        peer: PeerId::from_bytes(remote.to_bytes()),
-        address: address.to_string(),
-    };
-    let overlay_dht_key = dht_key_id(overlay_key, b"nodes");
-    let per_query_timeout = timeout.min(Duration::from_secs(5));
-    log::debug!(
-        "query_overlay_seed: seed={address} overlay_dht_key={}",
-        overlay_dht_key.to_hex()
-    );
-    let mut frontier = vec![initial.clone()];
-    let mut seen = std::collections::HashSet::new();
-    let now = now_i32();
-
-    for _ in 0..6 {
-        let responses = join_all(frontier.drain(..).filter_map(|seed| {
-            let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
-            let address = seed.address.parse().ok()?;
-            let overlay_dht_key = overlay_dht_key.clone();
-            Some(async move {
-                let response = query_dht_value_seed(
-                    local_addr,
-                    local_keypair,
-                    remote,
-                    address,
-                    overlay_dht_key,
-                    max_records,
-                    per_query_timeout,
-                )
-                .await?;
-                Some((seed, response))
-            })
-        }))
-        .await;
-        let mut next = Vec::new();
-        for response in responses.into_iter().flatten() {
-            let (seed, response) = response;
-            match response {
-                DhtValueResult::Found { value } => {
-                    let nodes: OverlayNodesBoxed = tl_proto::deserialize(&value.value).ok()?;
-                    log::debug!(
-                        "query_overlay_seed: found {} overlay nodes from {address}",
-                        nodes.nodes.len()
-                    );
-                    let mut candidates = Vec::new();
-                    for node in nodes.nodes {
-                        if !valid_overlay_node(&node, overlay, now) {
-                            log::debug!(
-                                "query_overlay_seed: skipping node (overlay mismatch or expired)"
-                            );
-                            continue;
-                        }
-                        if candidates.len() >= max_records {
-                            continue;
-                        }
-                        let TlPublicKey::Ed25519 { key } = node.id else {
-                            continue;
-                        };
-                        let Some(overlay_public) = AdnlPublicKey::from_bytes(key.0) else {
-                            continue;
-                        };
-                        candidates.push(overlay_public);
-                    }
-                    // The DHT `address` record of every candidate costs a full
-                    // per-query timeout when a node lags, so resolving them one by
-                    // one used to blow the whole seed-discovery deadline.
-                    let resolved = join_all(candidates.into_iter().map(|overlay_public| {
-                        let seed = seed.clone();
-                        async move {
-                            let address_key = dht_key_id(
-                                AdnlAddress::from(&overlay_public).to_bytes(),
-                                b"address",
-                            );
-                            let Some(DhtValueResult::Found { value }) = query_dht_value_seed(
-                                local_addr,
-                                local_keypair,
-                                AdnlPublicKey::from_bytes(seed.peer.as_bytes())?,
-                                seed.address.parse().ok()?,
-                                address_key,
-                                1,
-                                per_query_timeout,
-                            )
-                            .await
-                            else {
-                                return None;
-                            };
-                            let address_list: AddressListBoxed =
-                                tl_proto::deserialize(&value.value).ok()?;
-                            address_list.addrs.into_iter().find_map(|address| {
-                                let Address::Udp { ip, port } = address else {
-                                    return None;
-                                };
-                                let port = u16::try_from(port).ok()?;
-                                if port == 0 || ip == 0 {
-                                    return None;
-                                }
-                                let TlPublicKey::Ed25519 { key } = &value.key.id else {
-                                    return None;
-                                };
-                                Some((
-                                    PeerId::from_bytes(key.0),
-                                    format!(
-                                        "{}:{port}",
-                                        std::net::Ipv4Addr::from(ip.cast_unsigned())
-                                    ),
-                                ))
-                            })
-                        }
-                    }))
-                    .await;
-                    let mut result = Vec::new();
-                    for (peer, address) in resolved.into_iter().flatten() {
-                        if result
-                            .iter()
-                            .all(|candidate: &SeedPeer| candidate.peer != peer)
-                        {
-                            result.push(SeedPeer { peer, address });
-                        }
-                    }
-                    if !result.is_empty() {
-                        return Some(result);
-                    }
-                }
-                DhtValueResult::NotFound { nodes } => {
-                    log::debug!(
-                        "query_overlay_seed: not found, got {} closer nodes from {address}",
-                        nodes.nodes.len()
-                    );
-                    for seed in
-                        tonutils_overlay::select_typed_dht_peers(nodes.nodes, max_records, now)
-                    {
-                        if seen.insert((seed.peer, seed.address.clone())) {
-                            next.push(seed);
-                        }
-                    }
-                }
-            }
-        }
-        frontier = next;
-        if frontier.is_empty() {
-            log::debug!("query_overlay_seed: frontier exhausted at {address}");
-            break;
-        }
-    }
-
-    log::debug!(
-        "query_overlay_seed: DHT lookup missed, falling back to overlay getRandomPeers at {address}"
-    );
-    if let Some(fallback) = query_overlay_random_peers(
-        local_addr,
-        local_keypair,
-        remote,
-        address,
-        overlay,
-        per_query_timeout,
-    )
-    .await
-    {
-        log::debug!(
-            "query_overlay_seed: overlay getRandomPeers fallback found {} peers at {address}",
-            fallback.len()
-        );
-        return Some(fallback);
-    }
-
-    log::debug!("query_overlay_seed: returning None for {address}");
-    None
-}
-
-#[allow(clippy::large_types_passed_by_value)]
-async fn query_overlay_random_peers(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    remote: AdnlPublicKey,
-    address: std::net::SocketAddr,
-    overlay: OverlayId,
-    timeout: Duration,
-) -> Option<Vec<SeedPeer>> {
-    let mut session =
-        match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
-            Ok(session) => session,
-            Err(error) => {
-                log::debug!("query_overlay_random_peers: connect to {address} failed: {error}");
-                return None;
-            }
-        };
-    session.set_confirm_channels(false);
-    log::debug!("query_overlay_random_peers: direct UDP ADNL session established to {address}");
-    let overlay_int = tonutils_tl::Int256(overlay.as_bytes());
-    log::debug!("query_overlay_random_peers: sending overlay.getRandomPeers to {address}");
-    let nodes = match session.overlay_get_random_peers(overlay_int, timeout).await {
-        Ok(nodes) => nodes,
-        Err(error) => {
-            log::debug!(
-                "query_overlay_random_peers: overlay_get_random_peers to {address} failed: {error}"
-            );
-            return None;
-        }
-    };
-    let now = now_i32();
-    let mut result = Vec::new();
-    for node in nodes.nodes {
-        if !valid_overlay_node(&node, overlay, now) {
-            continue;
-        }
-        let TlPublicKey::Ed25519 { key } = node.id else {
-            continue;
-        };
-        let overlay_public = AdnlPublicKey::from_bytes(key.0)?;
-        let adnl_id = AdnlAddress::from(&overlay_public).to_bytes();
-        let address_key = dht_key_id(adnl_id, b"address");
-        let Some(DhtValueResult::Found { value }) = query_dht_value_seed(
-            local_addr,
-            local_keypair,
-            remote,
-            address,
-            address_key,
-            1,
-            timeout,
-        )
-        .await
-        else {
-            continue;
-        };
-        let address_list: AddressListBoxed = tl_proto::deserialize(&value.value).ok()?;
-        let Some((peer, resolved_address)) = address_list.addrs.into_iter().find_map(|address| {
-            let Address::Udp { ip, port } = address else {
-                return None;
-            };
-            let port = u16::try_from(port).ok()?;
-            if port == 0 || ip == 0 {
-                return None;
-            }
-            let TlPublicKey::Ed25519 { key } = &value.key.id else {
-                return None;
-            };
-            Some((
-                PeerId::from_bytes(key.0),
-                format!("{}:{port}", std::net::Ipv4Addr::from(ip.cast_unsigned())),
-            ))
-        }) else {
-            continue;
-        };
-        if result
-            .iter()
-            .all(|candidate: &SeedPeer| candidate.peer != peer)
-        {
-            result.push(SeedPeer {
-                peer,
-                address: resolved_address,
-            });
-        }
-    }
-    log::debug!(
-        "query_overlay_random_peers: found {} peers from {address}",
-        result.len()
-    );
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
-}
-
-#[allow(clippy::large_types_passed_by_value)]
-async fn query_dht_value_seed(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    remote: AdnlPublicKey,
-    address: std::net::SocketAddr,
-    key: tonutils_tl::Int256,
-    count: usize,
-    timeout: Duration,
-) -> Option<DhtValueResult> {
-    let mut session =
-        match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
-            Ok(session) => session,
-            Err(error) => {
-                log::debug!("query_dht_value_seed: connect to {address} failed: {error}");
-                return None;
-            }
-        };
-    session.set_confirm_channels(false);
-    match session
-        .dht_find_value(key, count.min(i32::MAX as usize) as i32, timeout)
-        .await
-    {
-        Ok(result) => Some(result),
-        Err(error) => {
-            log::debug!("query_dht_value_seed: dht_find_value to {address} failed: {error}");
-            None
-        }
-    }
-}
-
-fn valid_overlay_node(node: &OverlayNode, overlay: OverlayId, now: i32) -> bool {
+/// Checks an `overlay.node` record against `overlay` and the current clock.
+///
+/// `pub(crate)` so [`crate::overlay_inbound`] can re-validate members before
+/// gossiping them back.
+pub(crate) fn valid_overlay_node(node: &OverlayNode, overlay: OverlayId, now: i32) -> bool {
     if node.overlay.0 != overlay.as_bytes() || node.version < now.saturating_sub(600) {
         return false;
     }
@@ -509,130 +93,6 @@ fn valid_overlay_node(node: &OverlayNode, overlay: OverlayId, now: i32) -> bool 
     public_key.verify_raw(&tl_proto::serialize(unsigned), &signature)
 }
 
-fn dht_key_id(id: [u8; 32], name: &[u8]) -> tonutils_tl::Int256 {
-    let dht_key = DhtKey {
-        id: tonutils_tl::Int256(id),
-        name: name.to_vec(),
-        idx: 0,
-    };
-    // Hash the BOXED form (with constructor prefix) per upstream TON.
-    tonutils_tl::Int256(Sha256::digest(dht_key.boxed_bytes()).into())
-}
-
-#[allow(clippy::large_types_passed_by_value)]
-async fn query_dht_seed(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    remote: AdnlPublicKey,
-    address: std::net::SocketAddr,
-    node_count: i32,
-    timeout: Duration,
-) -> Option<Vec<tonutils_tl::tl::network::DhtNode>> {
-    let mut session = AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
-        .await
-        .ok()?;
-    session.set_confirm_channels(false);
-    session
-        .dht_find_node(tonutils_tl::Int256::random(), node_count, timeout)
-        .await
-        .ok()
-        .map(|nodes| nodes.nodes)
-}
-
-pub fn direct_factory(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-) -> crate::OverlaySessionFactory {
-    Arc::new(move |seed: SeedPeer| {
-        let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes());
-        Box::pin(async move {
-            let remote = remote.ok_or_else(|| "seed peer is not a valid Ed25519 key".to_owned())?;
-            Ok(Box::new(
-                AdnlUdpOverlaySession::connect(
-                    seed.peer,
-                    local_addr,
-                    seed.address
-                        .parse()
-                        .map_err(|error| format!("invalid seed address: {error}"))?,
-                    local_keypair,
-                    remote,
-                )
-                .await?,
-            ) as Box<dyn OverlaySession>)
-        })
-    })
-}
-
-pub fn channel_factory(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    timeout: Duration,
-) -> crate::OverlaySessionFactory {
-    Arc::new(move |seed: SeedPeer| {
-        let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes());
-        Box::pin(async move {
-            let remote = remote.ok_or_else(|| "seed peer is not a valid Ed25519 key".to_owned())?;
-            Ok(Box::new(
-                AdnlUdpOverlaySession::connect_with_channel(
-                    seed.peer,
-                    local_addr,
-                    seed.address
-                        .parse()
-                        .map_err(|error| format!("invalid seed address: {error}"))?,
-                    local_keypair,
-                    remote,
-                    timeout,
-                )
-                .await?,
-            ) as Box<dyn OverlaySession>)
-        })
-    })
-}
-
-pub fn overlay_factory(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    overlay: OverlayId,
-    channel_timeout: Option<Duration>,
-) -> crate::OverlaySessionFactory {
-    Arc::new(move |seed: SeedPeer| {
-        let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes());
-        Box::pin(async move {
-            let remote = remote.ok_or_else(|| "seed peer is not a valid Ed25519 key".to_owned())?;
-            let session = match channel_timeout {
-                Some(timeout) => {
-                    AdnlUdpOverlaySession::connect_for_overlay_with_channel(
-                        seed.peer,
-                        overlay,
-                        local_addr,
-                        seed.address
-                            .parse()
-                            .map_err(|error| format!("invalid seed address: {error}"))?,
-                        local_keypair,
-                        remote,
-                        timeout,
-                    )
-                    .await?
-                }
-                None => {
-                    AdnlUdpOverlaySession::connect_for_overlay(
-                        seed.peer,
-                        overlay,
-                        local_addr,
-                        seed.address
-                            .parse()
-                            .map_err(|error| format!("invalid seed address: {error}"))?,
-                        local_keypair,
-                        remote,
-                    )
-                    .await?
-                }
-            };
-            Ok(Box::new(session) as Box<dyn OverlaySession>)
-        })
-    })
-}
-
 impl AdnlUdpOverlaySession {
     pub async fn connect(
         peer: PeerId,
@@ -652,6 +112,7 @@ impl AdnlUdpOverlaySession {
             fec: HashMap::new(),
             last_keepalive: Instant::now(),
             last_activity: Instant::now(),
+            members: OverlayMemberCache::default(),
         })
     }
 
@@ -679,6 +140,7 @@ impl AdnlUdpOverlaySession {
             fec: HashMap::new(),
             last_keepalive: Instant::now(),
             last_activity: Instant::now(),
+            members: OverlayMemberCache::default(),
         })
     }
 
@@ -731,6 +193,7 @@ impl AdnlUdpOverlaySession {
             fec: HashMap::new(),
             last_keepalive: Instant::now(),
             last_activity: Instant::now(),
+            members: OverlayMemberCache::default(),
         };
         if let Err(error) = session
             .session
@@ -756,11 +219,11 @@ impl OverlaySession for AdnlUdpOverlaySession {
     fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
         Box::pin(async move {
             loop {
-                // One `overlay.getRandomPeers` per second keeps our node in the
-                // peer's capped pending-peer set long enough to be picked by its
-                // once-per-second pending drain, which is what eventually turns
-                // into an incoming `overlay.ping`.
-                if self.last_keepalive.elapsed() >= Duration::from_secs(1)
+                // Refreshing this node's signed record keeps its `version`
+                // inside the peer's `overlay_peer_ttl` window, which is what
+                // lets `add_peer` keep the node eligible for the peer's
+                // pending-peer drain and eventually an `overlay.ping`.
+                if self.last_keepalive.elapsed() >= KEEPALIVE_INTERVAL
                     && let Some(overlay) = self.overlay
                 {
                     let _ = self
@@ -806,6 +269,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                             &self.peer,
                             &self.session,
                             self.overlay,
+                            &self.members,
                             answer,
                         );
                         continue;
@@ -822,14 +286,36 @@ impl OverlaySession for AdnlUdpOverlaySession {
                         channel_changed = true;
                     }
                     if let AdnlMessage::Custom { data } = message {
+                        // Custom messages are the only overlay traffic that
+                        // can become a `MempoolEvent`, so a run that never
+                        // logs this line proves no broadcast reached the node
+                        // rather than that one arrived and was mis-parsed.
+                        log::debug!(
+                            "overlay UDP custom message: peer={:?} len={} prefix={:02x?}",
+                            self.peer,
+                            data.len(),
+                            &data[..data.len().min(8)]
+                        );
                         let data = if let Some(overlay) = self.overlay {
                             let mut data = data.as_slice();
                             let message_overlay = match OverlayMessage::read_from(&mut data) {
                                 Ok(OverlayMessage::Message { overlay })
                                 | Ok(OverlayMessage::MessageWithExtra { overlay, .. }) => overlay,
-                                _ => continue,
+                                _ => {
+                                    log::trace!(
+                                        "overlay UDP custom payload has no overlay header: peer={:?}",
+                                        self.peer
+                                    );
+                                    continue;
+                                }
                             };
                             if message_overlay.0 != overlay.as_bytes() {
+                                log::trace!(
+                                    "overlay UDP custom payload for another overlay: peer={:?} got={:02x?} joined={:02x?}",
+                                    self.peer,
+                                    message_overlay.0,
+                                    overlay.as_bytes(),
+                                );
                                 continue;
                             }
                             match self.unwrap_overlay_payload(data) {
@@ -919,9 +405,13 @@ impl AdnlUdpOverlaySession {
     ///
     /// Returns `true` when the query was recognised and answered.
     async fn answer_overlay_query(&mut self, query_id: &tonutils_tl::Int256, query: &[u8]) -> bool {
-        let Some(answer) =
-            overlay_inbound::build_overlay_answer(&self.peer, &self.session, self.overlay, query)
-        else {
+        let Some(answer) = overlay_inbound::build_overlay_answer(
+            &self.peer,
+            &self.session,
+            self.overlay,
+            &self.members,
+            query,
+        ) else {
             return false;
         };
         if let Err(error) = self.session.send_answer(query_id.clone(), answer).await {

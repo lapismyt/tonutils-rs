@@ -366,7 +366,10 @@ postponed work moves to `# BACKLOG`.
   - [x] Add upstream-derived direct packet and AES-channel packet primitives with sequence checks #network #tests
   - [x] Document packet format and channel negotiation #network #docs
   - [x] Add UDP codec tests #network #tests
+  - [x] Bundle `adnl.message.createChannel` with the first `overlay.getRandomPeers` query so a dropped handshake cannot stall the session #adnl #overlay #tests
+  - [x] Hold up to `MAX_SESSION_CHANNELS` (3) channels per session and decode packets from any of them while the newest sends #adnl #network #tests
   - [ ] Add NAT and address list considerations #network
+  - [x] Split `crates/tonutils-adnl/src/adnl/udp.rs` into `udp/{mod,cipher,session,session/query,tests}.rs` to stay under the 1000 line repo limit #adnl #refactor
 - [-] Implement DHT discovery #dht #network
   - [x] Add signed discovery records, verification, and explicit seed fallback #dht #crypto #tests
   - [x] Extract and validate bootstrap endpoints from caller/global config JSON #dht #network #tests
@@ -387,8 +390,17 @@ postponed work moves to `# BACKLOG`.
   - [x] Keep sessions alive across `OverlayConfig::peer_idle_timeout` while protocol traffic flows inside `receive` #overlay #network #tests
   - [x] Record process-wide protocol and discovery counters for live-run diagnostics #mempool #tests
   - [ ] Become a verified overlay member so broadcasts are pushed to this node #overlay #network #mempool
-    - [ ] Expand membership from `overlay.getRandomPeers` answers: resolve returned node addresses over DHT and add sessions for them #overlay #dht #mempool
-    - [ ] Confirm from live evidence which upstream `add_peer` gate drops this node's `overlay.node` record, if any #overlay #tests
+    - [x] Expand membership from `overlay.getRandomPeers` answers: resolve returned node addresses over DHT and add sessions for them #overlay #dht #mempool
+    - [x] Grow membership after bootstrap on a 10 s cadence up to `overlay_max_peers` (default 30, pytoniq's `max_peers`) #overlay #mempool
+    - [x] Keep a session alive with a 10 s `overlay.getRandomPeers` keepalive instead of a one second cadence #overlay #network
+    - [x] Gossip up to five harvested members back in `overlay.getRandomPeers` answers through the shared `OverlayMemberCache` #overlay #tests
+    - [ ] Make post-bootstrap growth useful on a live network: raising the live test's `overlay_max_peers` to 64 lets the loop run (14 attempts in 600 s) but every `query_overlay_random_peers` to an already-connected member still times out, while `query_overlay_seed` to a config seed succeeds, so a fresh lookup socket to a member we already talk to never gets an answer #overlay #mempool #network
+      - [ ] Check how member addresses are taken from `overlay.getRandomPeers` answers before touching the address logic again: 8 of the 14 growth targets in one 600 s run were `173.234.75.234` on 8 distinct ports, and `set_transient_address` produced only 4 stray-answer lines, so stored-address rerouting alone does not explain the timeouts #overlay #dht #tests
+    - [ ] Treat `dht.static_nodes` entries as DHT contacts only: a 600 s run answered `overlay.getRandomPeers` from every DHT-discovered member and from none of the sixteen config seeds, so membership must come from discovery #overlay #dht
+    - [x] Re-stamp `adnl.addressList.version` with the send time on every packet so a one-shot discovery/growth socket cannot permanently own the source address a peer uses for `overlay.ping` and broadcasts #adnl #overlay #network
+    - [ ] Explain from live evidence why only a minority of peers run the pending drain for this node's `overlay.node` record: the record is accepted (peers do `overlay.ping` it and return it from `overlay.getRandomPeers`), so no admission gate drops it universally, and the first push is then a neighbour-selection lottery #overlay #tests
+    - [ ] Answer `tonNode.getCapabilities` (`0xdee618f8`), which upstream `OverlayImpl::process_query` forwards to the node ADNL callback; deferred because this SDK cannot honestly report validator-node capabilities #tl #overlay
+    - [ ] Reach `overlay_packets > 0` from a local run; direct UDP is partly ICMP-blocked, so the fallbacks are a SOCKS5 UDP relay, GitHub Actions, or a standalone binary on a server #mempool #tests #network
 - [ ] Implement native Rust QUIC transport #quic #network
   - [ ] Define optional feature gating without native runtime dependencies #quic #features
   - [ ] Add peer and session lifecycle handling #quic #network
