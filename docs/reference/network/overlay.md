@@ -183,9 +183,16 @@ explicit id `0xdee618f8` because the definition line has no `#` and the
 checked-in schema snapshot records the tag as empty; the value is the one
 observed on the wire, not a recomputed one.
 
-`overlay.getRandomPeersV2` is still unanswered - it needs
-`overlay.nodeV2` records (extra `flags` and `certificate` fields) and is
-tracked in `TODO.md`.
+`overlay.getRandomPeersV2` is answered as well: the V2 records
+carry `flags` (zero) and an empty member certificate, and because
+`flags == 0` upstream signs them with the same
+`overlay.node.toSign` definition as V1
+(`OverlayNode::to_sign` in `overlay/overlay-id.hpp`), so the
+signature is the V1 signature byte for byte.  The types live in
+`tonutils_tl::tl::overlay`, split out of `network` to keep both
+files under the repository line limit, and are re-exported from
+`tonutils_tl::tl::network` so every existing import path keeps
+working.
 
 Iterative overlay-node resolution, official-node packet fixtures, upstream
 pending-set acceptance evidence for this node's `overlay.node` record, and

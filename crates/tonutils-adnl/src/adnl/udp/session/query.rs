@@ -304,4 +304,26 @@ impl AdnlUdpSession {
             signature: self.local.sign_raw(&tl_proto::serialize(to_sign)).to_vec(),
         }
     }
+
+    /// The `overlay.nodeV2` form of [`Self::local_overlay_node`].
+    ///
+    /// `flags` is zero, so upstream signs the record with the same
+    /// `overlay.node.toSign` definition (`OverlayNode::to_sign` in
+    /// `overlay/overlay-id.hpp` picks `overlay_node_toSign` for
+    /// `flags_ == 0`), and a peer validating the answer accepts it
+    /// exactly like the V1 record.
+    pub fn local_overlay_node_v2(
+        &self,
+        overlay: Int256,
+    ) -> tonutils_tl::tl::network::OverlayNodeV2 {
+        let ours = self.local_overlay_node(overlay);
+        tonutils_tl::tl::network::OverlayNodeV2 {
+            id: ours.id,
+            overlay: ours.overlay,
+            flags: 0,
+            version: ours.version,
+            signature: ours.signature,
+            certificate: tonutils_tl::tl::network::OverlayMemberCertificate::Empty,
+        }
+    }
 }

@@ -26,9 +26,11 @@
 use std::collections::{HashMap, HashSet};
 
 const SCHEMA: &str = include_str!("schemas/ton_api.tl");
-const SOURCES: [(&str, &str); 2] = [
+const SOURCES: [(&str, &str); 4] = [
     ("network.rs", include_str!("network.rs")),
     ("adnl.rs", include_str!("adnl.rs")),
+    ("overlay.rs", include_str!("overlay.rs")),
+    ("fullnode.rs", include_str!("fullnode.rs")),
 ];
 
 /// Constructor ids observed on the live TON network (mainnet DHT/ADNL UDP
@@ -40,6 +42,7 @@ const WIRE_CALIBRATION: &[(&str, u32)] = &[
     ("adnl.packetContents", 0xd142cd89),
     ("adnl.addressList", 0x2227e658),
     ("overlay.nodes", 0xe487290e),
+    ("overlay.getRandomPeersV2", 0xa58e7ecc),
     ("adnl.message.nop", 0x17f8dfda),
     ("overlay.emptyCertificate", 0x32dabccf),
 ];
@@ -102,13 +105,22 @@ fn parse_schema() -> HashMap<String, SchemaCtor> {
         }
         let definition = normalize(&buffer);
         buffer.clear();
-        let Some(name) = definition.split_whitespace().next().filter(|token| {
+        let Some(name_token) = definition.split_whitespace().next().filter(|token| {
             token.contains('.')
                 && token
                     .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_'))
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '#'))
         }) else {
             continue;
+        };
+        // A definition may pin its id explicitly as `name#hex`;
+        // that id is authoritative and must not be recomputed,
+        // otherwise the constructor silently drops out of the
+        // parsed schema and its audited ids are reported as
+        // invented.
+        let (name, explicit_id) = match name_token.split_once('#') {
+            Some((bare, hex)) => (bare, u32::from_str_radix(hex, 16).ok()),
+            None => (name_token, None),
         };
         let result = definition
             .split_once('=')
@@ -117,7 +129,7 @@ fn parse_schema() -> HashMap<String, SchemaCtor> {
         constructors.insert(
             name.to_string(),
             SchemaCtor {
-                id: tl_constructor_id(&definition),
+                id: explicit_id.unwrap_or_else(|| tl_constructor_id(&definition)),
                 definition,
                 result,
             },

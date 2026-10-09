@@ -20,6 +20,7 @@ pub mod error;
 pub mod fullnode;
 pub mod generated;
 pub mod network;
+pub mod overlay;
 pub mod request;
 pub mod response;
 #[cfg(test)]

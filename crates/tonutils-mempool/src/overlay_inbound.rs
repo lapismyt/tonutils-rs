@@ -40,7 +40,10 @@ use tl_proto::TlRead;
 use tonutils_adnl::{AdnlUdpSession, now_i32};
 use tonutils_overlay::{OverlayId, PeerId};
 use tonutils_tl::tl::TonNodeCapabilities;
-use tonutils_tl::tl::network::{OverlayNode, OverlayNodesBoxed, OverlayPong, OverlayQuery};
+use tonutils_tl::tl::network::{
+    OverlayMemberCertificate, OverlayNode, OverlayNodeV2, OverlayNodesBoxed, OverlayNodesV2Boxed,
+    OverlayPong, OverlayQuery,
+};
 
 use crate::protocol_stats;
 use crate::udp_session::valid_overlay_node;
@@ -126,6 +129,18 @@ pub(crate) fn build_overlay_answer(
             let nodes = OverlayNodesBoxed { nodes };
             log::debug!(
                 "answering overlay.getRandomPeers for peer={peer:?} with {} member(s)",
+                nodes.nodes.len()
+            );
+            protocol_stats::record_random_peers_answer();
+            Some(tl_proto::serialize(nodes))
+        }
+        Ok(OverlayQuery::GetRandomPeersV2 { .. }) => {
+            let ours = session.local_overlay_node_v2(tonutils_tl::Int256(overlay.as_bytes()));
+            let mut nodes = vec![ours.clone()];
+            nodes.extend(gossip_members_v2(members, overlay, &ours));
+            let nodes = OverlayNodesV2Boxed { nodes };
+            log::debug!(
+                "answering overlay.getRandomPeersV2 for peer={peer:?} with {} member(s)",
                 nodes.nodes.len()
             );
             protocol_stats::record_random_peers_answer();
@@ -229,6 +244,38 @@ fn gossip_members(
         .filter(|node| node.id != ours.id)
         .take(GOSSIP_MEMBER_COUNT)
         .cloned()
+        .collect()
+}
+
+/// Picks up to [`GOSSIP_MEMBER_COUNT`] cached members as `overlay.nodeV2`
+/// records for a `getRandomPeersV2` answer.
+///
+/// The cache holds V1 records; upstream converts its peer records with
+/// `OverlayNode::tl_v2` when answering V2, and every record converts
+/// because the V2 form only adds the `flags` and `certificate` fields,
+/// both of which stay at their empty defaults here.
+fn gossip_members_v2(
+    members: &OverlayMemberCache,
+    overlay: OverlayId,
+    ours: &OverlayNodeV2,
+) -> Vec<OverlayNodeV2> {
+    let now = now_i32();
+    let Ok(mut cache) = members.lock() else {
+        return Vec::new();
+    };
+    cache.retain(|node| valid_overlay_node(node, overlay, now));
+    cache
+        .iter()
+        .filter(|node| node.id != ours.id)
+        .take(GOSSIP_MEMBER_COUNT)
+        .map(|node| OverlayNodeV2 {
+            id: node.id.clone(),
+            overlay: node.overlay.clone(),
+            flags: 0,
+            version: node.version,
+            signature: node.signature.clone(),
+            certificate: OverlayMemberCertificate::Empty,
+        })
         .collect()
 }
 
@@ -393,6 +440,38 @@ mod tests {
             session
                 .local_overlay_node(tonutils_tl::Int256(overlay.as_bytes()))
                 .id
+        );
+    }
+
+    #[tokio::test]
+    async fn answers_wrapped_get_random_peers_v2_with_own_node() {
+        let overlay = OverlayId::from_name(b"tonutils query test");
+        let session = test_session().await;
+        let members = cache();
+        let peer = PeerId::from_bytes([6; 32]);
+        let query = tl_proto::serialize(OverlayQuery::GetRandomPeersV2 {
+            peers: tonutils_tl::tl::network::OverlayNodesV2 { nodes: Vec::new() },
+        });
+        let wrapped = wrap(overlay, &query);
+        assert_eq!(&wrapped[..4], &[0x43, 0x84, 0xfd, 0xcc]);
+        assert_eq!(&wrapped[36..40], &[0xcc, 0x7e, 0x8e, 0xa5]);
+
+        let answer = build_overlay_answer(&peer, &session, Some(overlay), &members, &wrapped)
+            .expect("getRandomPeersV2 must be answered");
+        assert_eq!(&answer[..4], &[0x42, 0x18, 0x07, 0xe4]);
+        let nodes: OverlayNodesV2Boxed = tl_proto::deserialize(&answer).expect("overlay.nodesV2");
+        assert_eq!(nodes.nodes.len(), 1);
+        let ours = session.local_overlay_node_v2(tonutils_tl::Int256(overlay.as_bytes()));
+        assert_eq!(nodes.nodes[0].id, ours.id);
+        assert_eq!(nodes.nodes[0].flags, 0);
+        assert_eq!(nodes.nodes[0].certificate, OverlayMemberCertificate::Empty);
+        // A zero-flags record is signed over overlay.node.toSign, so
+        // the signature must match the V1 record byte for byte.
+        assert_eq!(
+            nodes.nodes[0].signature,
+            session
+                .local_overlay_node(tonutils_tl::Int256(overlay.as_bytes()))
+                .signature
         );
     }
 
