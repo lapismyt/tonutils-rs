@@ -101,7 +101,7 @@ async fn live_run_get_method_smoke() {
         )
         .await
         .expect("run_get_method(seqno) must return a successful stack");
-    assert!(!stack.is_empty());
+    assert_ne!(stack, []);
 }
 
 #[tokio::test]
