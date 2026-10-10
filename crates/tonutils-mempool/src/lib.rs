@@ -35,7 +35,7 @@ pub use quic_session::{QuicOverlaySession, quic_overlay_factory, quic_overlay_lo
 pub use udp_session::{
     AdnlUdpOverlaySession, DhtAddressPublisher, PUBLISH_INTERVAL, address_publisher,
     channel_factory, direct_factory, overlay_factory, udp_dht_lookup, udp_iterative_dht_lookup,
-    udp_overlay_lookup, udp_peer_growth,
+    udp_overlay_lookup, udp_peer_growth, udp_peer_growth_with_resolvers,
 };
 
 /// Delay between two peer-growth rounds after bootstrap.

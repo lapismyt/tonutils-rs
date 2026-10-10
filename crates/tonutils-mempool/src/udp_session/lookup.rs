@@ -5,6 +5,7 @@
 
 use super::*;
 
+use super::growth::query_overlay_random_peers;
 use tonutils_tl::tl::network::DhtValue;
 
 /// Returns the shared-transport session for one lookup hop.
@@ -69,8 +70,8 @@ struct SeedAnswer {
 /// from the same ADNL node id makes the peer flip that address between them
 /// and answer only the port it saw last, leaving every other session with a
 /// full timeout.
-async fn query_dht_value_on_session(
-    session: &mut AdnlUdpSession,
+pub(super) async fn query_dht_value_on_session(
+    session: &AdnlUdpSession,
     address: std::net::SocketAddr,
     key: tonutils_tl::Int256,
     count: usize,
@@ -121,16 +122,17 @@ fn parse_address_record(value: DhtValue, source: std::net::SocketAddr) -> Option
 /// Resolves one overlay candidate's DHT `address` record and returns its
 /// `ip:port`.
 ///
-/// The first hop reuses the session that just answered the overlay `nodes`
-/// lookup, so no second socket to the same peer is opened.  Every follow-up
-/// hop asks the nodes the DHT pointed at, because the seed that returned the
-/// overlay `nodes` record is usually not responsible for the candidate's
-/// `address` key and answers `dht.valueNotFound`.
-async fn resolve_address_on_session(
+/// The first hop reuses an existing session - the one that just answered the
+/// overlay `nodes` lookup during seed discovery, or a config DHT resolver
+/// seed during peer growth - so no second socket to the same peer is opened.
+/// Every follow-up hop asks the nodes the DHT pointed at, because the first
+/// hop is usually not responsible for the candidate's `address` key and
+/// answers `dht.valueNotFound`.
+pub(super) async fn resolve_address_on_session(
     local_addr: std::net::SocketAddr,
     local_keypair: &KeyPair,
     seed_address: std::net::SocketAddr,
-    session: &mut AdnlUdpSession,
+    session: &AdnlUdpSession,
     address_key: tonutils_tl::Int256,
     timeout: Duration,
     deadline: tokio::time::Instant,
@@ -175,7 +177,7 @@ async fn resolve_address_on_session(
                     return None;
                 };
                 let remote = AdnlPublicKey::from_bytes(peer.peer.as_bytes())?;
-                let mut hop = match shared_session(local_addr, *local_keypair, remote, remote_addr)
+                let hop = match shared_session(local_addr, *local_keypair, remote, remote_addr)
                     .await
                 {
                     Ok(hop) => hop,
@@ -185,8 +187,7 @@ async fn resolve_address_on_session(
                     }
                 };
                 let response =
-                    query_dht_value_on_session(&mut hop, remote_addr, address_key, 1, timeout)
-                        .await;
+                    query_dht_value_on_session(&hop, remote_addr, address_key, 1, timeout).await;
                 Some((remote_addr, response))
             }
         }))
@@ -313,6 +314,10 @@ pub fn udp_overlay_lookup(
 ) -> SeedDiscoveryLookup {
     Arc::new(move |seeds: Vec<SeedPeer>| {
         Box::pin(async move {
+            // The bootstrap seeds are DHT nodes, so they double as the
+            // resolver set for candidate address lookups - the same role
+            // pytoniq's DhtClient node set plays.
+            let resolvers = seeds.clone();
             let responses = join_all(seeds.into_iter().filter_map(|seed| {
                 let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
                 let address = seed.address.parse().ok()?;
@@ -325,6 +330,7 @@ pub fn udp_overlay_lookup(
                     overlay_key,
                     max_records,
                     timeout,
+                    &resolvers,
                 ))
             }))
             .await;
@@ -364,6 +370,7 @@ async fn query_overlay_seed(
     overlay_key: [u8; 32],
     max_records: usize,
     timeout: Duration,
+    resolvers: &[SeedPeer],
 ) -> Option<Vec<SeedPeer>> {
     let initial = SeedPeer {
         peer: PeerId::from_bytes(remote.to_bytes()),
@@ -394,16 +401,16 @@ async fn query_overlay_seed(
             let address = seed.address.parse().ok()?;
             let overlay_dht_key = overlay_dht_key.clone();
             Some(async move {
-                let mut session =
-                    match shared_session(local_addr, local_keypair, remote, address).await {
-                        Ok(session) => session,
-                        Err(error) => {
-                            log::debug!("query_overlay_seed: connect to {address} failed: {error}");
-                            return None;
-                        }
-                    };
+                let session = match shared_session(local_addr, local_keypair, remote, address).await
+                {
+                    Ok(session) => session,
+                    Err(error) => {
+                        log::debug!("query_overlay_seed: connect to {address} failed: {error}");
+                        return None;
+                    }
+                };
                 let response = query_dht_value_on_session(
-                    &mut session,
+                    &session,
                     address,
                     overlay_dht_key,
                     max_records,
@@ -422,7 +429,7 @@ async fn query_overlay_seed(
         for answer in responses.into_iter().flatten() {
             let SeedAnswer {
                 seed,
-                mut session,
+                session,
                 response,
             } = answer;
             let peer_address = seed.address.parse::<std::net::SocketAddr>().ok();
@@ -473,7 +480,7 @@ async fn query_overlay_seed(
                             local_addr,
                             &local_keypair,
                             peer_address,
-                            &mut session,
+                            &session,
                             address_key,
                             per_query_timeout,
                             deadline,
@@ -542,6 +549,7 @@ async fn query_overlay_seed(
         address,
         overlay,
         per_query_timeout,
+        resolvers,
     )
     .await
     {
@@ -554,206 +562,6 @@ async fn query_overlay_seed(
 
     log::debug!("query_overlay_seed: returning None for {address}");
     None
-}
-
-/// Builds the periodic peer-growth lookup used after bootstrap.
-///
-/// Bootstrap settles for whatever the DHT `nodes` value and the first
-/// `overlay.getRandomPeers` round can reach, which is a handful of members.
-/// Upstream drains `pending_peers_` at 60 nodes a minute, so the chance of
-/// being pinged scales with the number of members this node is queued at -
-/// pytoniq grows the same way, from the DHT seed set to `max_peers = 30`.
-///
-/// Each round asks the next known member for `overlay.getRandomPeers`,
-/// validates the returned `overlay.node` records against `overlay` and
-/// resolves their DHT `address` values, which is what makes members reached
-/// only transitively connectable.  Re-issuing the query also re-announces this
-/// node, refreshing the `version` of its signed record in that peer's queue.
-pub fn udp_peer_growth(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    overlay: OverlayId,
-    timeout: Duration,
-) -> SeedDiscoveryLookup {
-    let cursor = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    Arc::new(move |seeds: Vec<SeedPeer>| {
-        let cursor = Arc::clone(&cursor);
-        Box::pin(async move {
-            if seeds.is_empty() {
-                return Vec::new();
-            }
-            let index = cursor.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % seeds.len();
-            let seed = seeds[index].clone();
-            let Some(remote) = AdnlPublicKey::from_bytes(seed.peer.as_bytes()) else {
-                return Vec::new();
-            };
-            let Ok(address) = seed.address.parse() else {
-                return Vec::new();
-            };
-            match query_overlay_random_peers(
-                local_addr,
-                local_keypair,
-                remote,
-                address,
-                overlay,
-                timeout,
-            )
-            .await
-            {
-                Some(found) => {
-                    log::debug!(
-                        "udp_peer_growth: {} candidate member(s) from {}",
-                        found.len(),
-                        seed.address
-                    );
-                    found
-                }
-                None => {
-                    log::debug!("udp_peer_growth: no candidates from {}", seed.address);
-                    Vec::new()
-                }
-            }
-        })
-    })
-}
-
-#[allow(clippy::large_types_passed_by_value)]
-async fn query_overlay_random_peers(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    remote: AdnlPublicKey,
-    address: std::net::SocketAddr,
-    overlay: OverlayId,
-    timeout: Duration,
-) -> Option<Vec<SeedPeer>> {
-    let session = match shared_session(local_addr, local_keypair, remote, address).await {
-        Ok(session) => session,
-        Err(error) => {
-            log::debug!("query_overlay_random_peers: connect to {address} failed: {error}");
-            return None;
-        }
-    };
-    log::debug!("query_overlay_random_peers: direct UDP ADNL session established to {address}");
-    let overlay_int = tonutils_tl::Int256(overlay.as_bytes());
-    log::debug!("query_overlay_random_peers: sending overlay.getRandomPeers to {address}");
-    let nodes = match session.overlay_get_random_peers(overlay_int, timeout).await {
-        Ok(nodes) => nodes,
-        Err(error) => {
-            log::debug!(
-                "query_overlay_random_peers: overlay_get_random_peers to {address} failed: {error}"
-            );
-            return None;
-        }
-    };
-    let now = now_i32();
-    let total = nodes.nodes.len();
-    let mut records = 0usize;
-    let mut not_found = 0usize;
-    let mut no_answer = 0usize;
-    let mut result = Vec::new();
-    for node in nodes.nodes {
-        if !valid_overlay_node(&node, overlay, now) {
-            continue;
-        }
-        let TlPublicKey::Ed25519 { key } = node.id else {
-            continue;
-        };
-        let overlay_public = AdnlPublicKey::from_bytes(key.0)?;
-        let adnl_id = AdnlAddress::from(&overlay_public).to_bytes();
-        let address_key = dht_key_id(adnl_id, b"address");
-        let response = query_dht_value_seed(
-            local_addr,
-            local_keypair,
-            remote,
-            address,
-            address_key,
-            1,
-            timeout,
-        )
-        .await;
-        let value = match response {
-            Some(DhtValueResult::Found { value }) => {
-                records += 1;
-                value
-            }
-            Some(DhtValueResult::NotFound { .. }) => {
-                not_found += 1;
-                continue;
-            }
-            None => {
-                no_answer += 1;
-                continue;
-            }
-        };
-        let Ok(address_list) = tl_proto::deserialize::<AddressListBoxed>(&value.value) else {
-            continue;
-        };
-        let Some((peer, resolved_address)) = address_list.addrs.into_iter().find_map(|address| {
-            let Address::Udp { ip, port } = address else {
-                return None;
-            };
-            let port = u16::try_from(port).ok()?;
-            if port == 0 || ip == 0 {
-                return None;
-            }
-            let TlPublicKey::Ed25519 { key } = &value.key.id else {
-                return None;
-            };
-            Some((
-                PeerId::from_bytes(key.0),
-                format!("{}:{port}", std::net::Ipv4Addr::from(ip.cast_unsigned())),
-            ))
-        }) else {
-            continue;
-        };
-        if result
-            .iter()
-            .all(|candidate: &SeedPeer| candidate.peer != peer)
-        {
-            result.push(SeedPeer {
-                peer,
-                address: resolved_address,
-            });
-        }
-    }
-    log::debug!(
-        "query_overlay_random_peers: found {} peers from {address} ({total} member(s): {records} address record(s), {not_found} valueNotFound, {no_answer} without answer)",
-        result.len()
-    );
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
-}
-
-#[allow(clippy::large_types_passed_by_value)]
-async fn query_dht_value_seed(
-    local_addr: std::net::SocketAddr,
-    local_keypair: KeyPair,
-    remote: AdnlPublicKey,
-    address: std::net::SocketAddr,
-    key: tonutils_tl::Int256,
-    count: usize,
-    timeout: Duration,
-) -> Option<DhtValueResult> {
-    let session = match shared_session(local_addr, local_keypair, remote, address).await {
-        Ok(session) => session,
-        Err(error) => {
-            log::debug!("query_dht_value_seed: connect to {address} failed: {error}");
-            return None;
-        }
-    };
-    match session
-        .dht_find_value(key, count.min(i32::MAX as usize) as i32, timeout)
-        .await
-    {
-        Ok(result) => Some(result),
-        Err(error) => {
-            log::debug!("query_dht_value_seed: dht_find_value to {address} failed: {error}");
-            None
-        }
-    }
 }
 
 pub(crate) fn dht_key_id(id: [u8; 32], name: &[u8]) -> tonutils_tl::Int256 {

@@ -93,6 +93,27 @@ for the candidates until `overlay_max_peers` (default 30, pytoniq's
 `max_peers`) is reached. Growth also re-announces this node, refreshing the
 `version` of its signed record in that peer's queue.
 
+An `overlay.node` record carries no address, so a member reached only
+transitively becomes connectable only through its DHT `address` value. Growth
+resolves those values with `dht.findValue` the way pytoniq's
+`DhtClient.get_overlay_node` does: through the **bootstrap DHT resolver
+seeds** (`udp_peer_growth_with_resolvers`, a shared list
+`MempoolScannerBuilder::start` fills from the resolved bootstrap seeds), and
+only then through the answering member's own session as a fallback.
+
+Resolving against the resolver seeds rather than the member alone is what
+makes growth work on a live overlay: an overlay member may be a client that
+never answers `dht.findValue`, while the config's bootstrap nodes are DHT
+nodes that do. A member that answers only `overlay.getRandomPeers` therefore
+costs one bounded hop instead of the whole lookup. Each candidate's `findValue`
+follows `valueNotFound` closer nodes (see `resolve_address_on_session`), so a
+first hop that is not responsible for the key still converges on the nodes
+that are, rather than discarding the closer nodes and reporting no candidate.
+
+Candidates are resolved concurrently, each with its own deadline, because a
+few slow nodes otherwise consume the whole round and return no candidates at
+all.
+
 Answers to `overlay.getRandomPeers` are not limited to this node. Every
 verified member harvested from an answer is kept in the shared
 `OverlayMemberCache` of `overlay_factory` and up to five of them are gossiped

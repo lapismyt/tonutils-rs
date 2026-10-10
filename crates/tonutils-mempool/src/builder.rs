@@ -32,6 +32,13 @@ pub struct MempoolScannerBuilder {
     reconnect_attempts: u32,
     reconnect_backoff: Duration,
     peer_growth_lookup: Option<SeedDiscoveryLookup>,
+    /// DHT resolver seeds shared with the peer-growth lookup.
+    ///
+    /// `start` fills this with the bootstrap seed set - explicit seeds and the
+    /// global config's DHT static nodes - so growth can resolve member
+    /// `address` values through nodes guaranteed to answer `dht.findValue`.
+    /// See [`udp_peer_growth_with_resolvers`].
+    growth_resolvers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>>,
     overlay_max_peers: u32,
     external_address: Option<std::net::SocketAddr>,
     address_publisher: Option<DhtAddressPublisher>,
@@ -67,6 +74,7 @@ impl fmt::Debug for MempoolScannerBuilder {
             .field("reconnect_attempts", &self.reconnect_attempts)
             .field("reconnect_backoff", &self.reconnect_backoff)
             .field("peer_growth_lookup", &self.peer_growth_lookup.is_some())
+            .field("growth_resolvers", &self.growth_resolvers)
             .field("overlay_max_peers", &self.overlay_max_peers)
             .field("external_address", &self.external_address)
             .field("address_publisher", &self.address_publisher.is_some())
@@ -97,6 +105,7 @@ impl Default for MempoolScannerBuilder {
             reconnect_attempts: 5,
             reconnect_backoff: Duration::from_secs(1),
             peer_growth_lookup: None,
+            growth_resolvers: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             overlay_max_peers: 30,
             external_address: None,
             address_publisher: None,
@@ -215,11 +224,12 @@ impl MempoolScannerBuilder {
             )),
             None => builder,
         };
-        builder.peer_growth_lookup = Some(udp_peer_growth(
+        builder.peer_growth_lookup = Some(udp_peer_growth_with_resolvers(
             local_addr,
             local_keypair,
             overlay,
             discovery_timeout,
+            Arc::clone(&builder.growth_resolvers),
         ));
         builder.address_publisher = Some(address_publisher(
             local_addr,
@@ -383,6 +393,11 @@ impl MempoolScannerBuilder {
         let _ = self.queue_policy;
         let seeds = self.resolve_bootstrap().await?;
         let seed_count = seeds.len();
+        // Hand the bootstrap seed set to the peer-growth lookup: explicit
+        // seeds and the config's DHT static nodes are DHT nodes, so growth
+        // resolves member `address` values through nodes that answer
+        // `dht.findValue`, the same role pytoniq's DhtClient node set plays.
+        *self.growth_resolvers.write().await = seeds.clone();
         let discovery = DiscoveryConfig {
             overlay: self.overlay_id,
             seeds: seeds.clone(),
