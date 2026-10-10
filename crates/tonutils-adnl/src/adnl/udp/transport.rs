@@ -23,6 +23,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, watch};
@@ -54,9 +55,23 @@ pub(super) struct TransportInner {
     pub(super) routes: Mutex<Routes>,
     /// Demultiplexer lifecycle, serialized against `session_for`.
     demux: Mutex<DemuxState>,
+    /// One in-flight raw (non-ADNL) exchange, if any.
+    raw: Mutex<Option<RawExchange>>,
     /// Set when the last session of this transport is dropped, so
     /// the demultiplexing task wakes up and releases the socket.
     idle: watch::Sender<bool>,
+}
+
+/// A raw request in flight on the shared socket.
+///
+/// The demultiplexer drops every datagram it cannot route, so an
+/// exchange installs this hook: the next datagram from `from_ip` is
+/// handed to `tx` instead of being discarded.
+struct RawExchange {
+    /// Source address the awaited reply comes from.
+    from_ip: std::net::IpAddr,
+    /// Bearer for the one reply the exchange is waiting for.
+    tx: mpsc::Sender<Vec<u8>>,
 }
 
 #[derive(Default)]
@@ -98,6 +113,7 @@ impl AdnlUdpTransport {
             sessions: Mutex::new(HashMap::new()),
             routes: Mutex::new(Routes::default()),
             demux: Mutex::new(DemuxState::default()),
+            raw: Mutex::new(None),
             idle,
         });
         Ok(Self { inner })
@@ -138,6 +154,58 @@ impl AdnlUdpTransport {
     /// Local address the shared socket is bound to.
     pub fn local_addr(&self) -> Result<SocketAddr, AdnlError> {
         self.inner.socket.local_addr().map_err(AdnlError::from)
+    }
+
+    /// Sends one raw, non-ADNL datagram and returns the reply from `peer`.
+    ///
+    /// [`Self::session_for`] starts the demultiplexer, which routes every
+    /// datagram it can match to a session and drops the rest.  A raw
+    /// exchange instead waits on the shared socket itself, so it reports
+    /// the address that socket is seen from rather than the address a
+    /// separate probe socket would get: NAT maps each socket separately.
+    /// That distinction is what makes the result safe to publish as this
+    /// node's `dht.address` value.
+    ///
+    /// Only one exchange is in flight at a time, and the hook is removed
+    /// on completion, so an ADNL packet that happens to arrive while an
+    /// exchange waits is still routed normally.
+    pub async fn raw_exchange(
+        &self,
+        peer: SocketAddr,
+        request: &[u8],
+        timeout: Duration,
+    ) -> Result<Vec<u8>, AdnlError> {
+        // Only the demultiplexer reads the shared socket, so a transport
+        // that has not served a session yet must start it to see a reply.
+        self.inner.start_demux();
+        let (tx, mut rx) = mpsc::channel(1);
+        {
+            let mut raw = self.inner.raw.lock().unwrap();
+            if raw.is_some() {
+                return Err(AdnlError::MalformedPacket(
+                    "another raw exchange is already in flight".to_string(),
+                ));
+            }
+            *raw = Some(RawExchange {
+                from_ip: peer.ip(),
+                tx,
+            });
+        }
+        let result = match self.inner.socket.send_to(request, peer).await {
+            Err(error) => Err(AdnlError::from(error)),
+            Ok(_) => match tokio::time::timeout(timeout, rx.recv()).await {
+                Ok(Some(reply)) => Ok(reply),
+                Ok(None) => Err(AdnlError::MalformedPacket(
+                    "raw exchange waiter was dropped".to_string(),
+                )),
+                Err(_) => Err(AdnlError::Timeout {
+                    operation: "raw exchange",
+                    timeout,
+                }),
+            },
+        };
+        *self.inner.raw.lock().unwrap() = None;
+        result
     }
 
     /// Local ADNL node id every session of this transport shares.
@@ -303,6 +371,20 @@ impl TransportInner {
                         }
                         route
                     };
+                    // A raw exchange installs its hook before sending, and a
+                    // server address never routes to a session, so a packet
+                    // the demultiplexer would otherwise drop is handed to the
+                    // waiter that sent for it.
+                    if route.is_none()
+                        && let Some(exchange) = self.raw.lock().unwrap().as_ref()
+                        && peer.ip() == exchange.from_ip
+                        && exchange.tx.try_send(packet[..size].to_vec()).is_ok()
+                    {
+                        // The waiter returns after `try_send` succeeds, so an
+                        // empty slot cannot fail.  The hook stays in place and
+                        // `raw_exchange` clears it once it has been observed.
+                        log::trace!("ADNL transport captured raw reply from {peer}");
+                    }
                     if let Some(route) = route
                         && route.queue.send(packet[..size].to_vec()).await.is_err()
                     {

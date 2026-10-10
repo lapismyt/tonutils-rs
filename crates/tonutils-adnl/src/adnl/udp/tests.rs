@@ -619,3 +619,60 @@ fn raw_flags_probe_reads_the_wire_word() {
         "recv_priority_addr_list_version must reach the wire when set"
     );
 }
+
+#[tokio::test]
+async fn raw_exchange_returns_reply_and_recovers_from_timeout() {
+    use crate::AdnlUdpTransport;
+
+    let transport = AdnlUdpTransport::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        KeyPair::generate(&mut rand::rngs::OsRng),
+    )
+    .await
+    .expect("transport must bind");
+    let peer = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("peer must bind");
+
+    // A first request with no reply in flight must time out, and the
+    // timeout must clear the hook so the next exchange can install one.
+    let quiet = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("quiet peer");
+    let timeout = transport
+        .raw_exchange(
+            quiet.local_addr().unwrap(),
+            b"ping",
+            Duration::from_millis(100),
+        )
+        .await;
+    assert!(matches!(timeout, Err(AdnlError::Timeout { .. })));
+
+    let peer_addr = peer.local_addr().unwrap();
+
+    // The demultiplexer drops datagrams it cannot route, so a reply only
+    // reaches the caller while the exchange hook is installed.
+    let serve = tokio::spawn(async move {
+        let mut buf = [0u8; 64];
+        let (len, sender) = peer.recv_from(&mut buf).await.expect("peer must receive");
+        let mut reply = Vec::with_capacity(len + 1);
+        reply.extend_from_slice(&buf[..len]);
+        reply.push(0xFF);
+        peer.send_to(&reply, sender).await.expect("peer must reply");
+    });
+
+    let reply = transport
+        .raw_exchange(peer_addr, b"ping", Duration::from_secs(2))
+        .await
+        .expect("raw exchange must return the reply");
+    assert_eq!(reply, b"ping\xFF");
+
+    serve.await.expect("peer task must finish");
+
+    // The hook is cleared once the exchange resolves, so a later request
+    // goes unanswered and times out instead of reusing a stale waiter.
+    let again = transport
+        .raw_exchange(peer_addr, b"ping", Duration::from_millis(100))
+        .await;
+    assert!(matches!(again, Err(AdnlError::Timeout { .. })));
+}
