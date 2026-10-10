@@ -210,8 +210,10 @@ jobs:
               grep 'holds no address list for us' "$log" | grep -oE 'peer=\[[0-9, ]+\]' | sort -u | wc -l
               echo "-- distinct peers holding an address list for us --"
               grep 'ADNL address view' "$log" | grep -oE 'peer=\[[0-9, ]+\]' | sort -u | wc -l
-              echo "-- growth --"
-              grep -E 'peer growth' "$log" | tail -n 5
+              echo "-- growth rounds --"
+              grep 'peer growth' "$log" | tail -n 6
+              echo "-- growth address resolution --"
+              grep -E 'udp_peer_growth:|udp_overlay_lookup:' "$log" | tail -n 12
               echo "-- log tail --"
               tail -n 40 "$log"
             } > "$diag"
