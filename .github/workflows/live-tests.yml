@@ -176,4 +176,30 @@ jobs:
       - name: Run configured seed-only mempool live test
         env:
           TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS || '300' }}
-        run: cargo test -p tonutils-mempool --test live configured_seed_delivers_valid_external_message -- --ignored --nocapture
+        # Job logs require admin access, so a failed acceptance run must
+        # publish its own diagnosis: the delivery metrics and DHT address
+        # publishing lines go to a check annotation and a step summary, both
+        # readable on a public repo without admin rights.
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/delivery.log"
+          rc=0
+          cargo test -p tonutils-mempool --test live configured_seed_delivers_valid_external_message -- --ignored --nocapture 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            key=$(grep -E 'phase=delivery|dht address publish' "$log" | tail -n 20)
+            waiting=$(grep -E 'phase=waiting' "$log" | tail -n 5)
+            msg=$(printf '%s\n%s\n' "$key" "$waiting" | sed '/^$/d' | awk 'BEGIN{ORS="%0A"}1')
+            if [ -z "$msg" ]; then
+              msg=$(tail -n 10 "$log" | awk 'BEGIN{ORS="%0A"}1')
+            fi
+            echo "::error title=Mempool delivery test failed::$msg"
+            {
+              echo '### Mempool delivery test failed'
+              echo
+              echo '```'
+              printf '%s\n' "$key"
+              printf '%s\n' "$waiting"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$rc"
