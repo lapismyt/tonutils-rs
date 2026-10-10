@@ -24,7 +24,7 @@ async fn udp_adnl_session_delivers_custom_payload_to_mempool_stream() {
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut sender = AdnlUdpSession::connect(
+    let sender = AdnlUdpSession::connect(
         sender_addr,
         receiver_addr,
         sender_key,
@@ -118,11 +118,11 @@ async fn adnl_session_sends_answer_to_query() {
     let server_addr = server_socket.local_addr().unwrap();
     drop(server_socket);
 
-    let mut server =
+    let server =
         AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
             .await
             .unwrap();
-    let mut client =
+    let client =
         AdnlUdpSession::connect(client_addr, server_addr, client_key, server_key.public_key)
             .await
             .unwrap();

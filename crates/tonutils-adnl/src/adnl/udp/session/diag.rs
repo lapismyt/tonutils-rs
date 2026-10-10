@@ -22,21 +22,30 @@ use super::*;
 use tl_proto::TlRead;
 use tonutils_tl::tl::network::OverlayQuery;
 
-impl AdnlUdpSession {
+impl SessionInner {
     /// Logs every receive-side signal that explains a silent peer.
     pub(super) fn log_recv_diagnostics(&self, contents: &PacketContents) {
         self.log_peer_address_view(contents);
         self.log_inbound_queries(contents);
     }
 
-    /// Records the `adnl.addressList.version` stamped on an outgoing packet.
+    /// Records the `adnl.addressList.version` stamped on an outgoing
+    /// packet.
     ///
-    /// Called from [`AdnlUdpSession::fill_address`] so the receive-side
-    /// comparison below knows what this process last announced and from which
-    /// local port.
+    /// Called from [`SessionInner::fill_address`] so the receive-side
+    /// comparison below knows what this process last announced and from
+    /// which local port.  Every session of one node id shares the
+    /// transport's socket, so the recorded port is the single port the
+    /// peer can address this node on.
     pub(super) fn note_stamped_address_version(&self, version: i32) {
-        let socket = self.socket.local_addr().map_or(0, |addr| addr.port());
-        note_our_addr_version(&self.remote_id, version, socket, self.transient_address);
+        let socket = self.source.local_addr().map_or(0, |addr| addr.port());
+        note_our_addr_version(
+            &self.remote_id,
+            version,
+            socket,
+            self.transient_address
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
     }
 
     /// Compares the address version the peer reports with the one we sent.
@@ -62,10 +71,13 @@ impl AdnlUdpSession {
     /// than as proof that the peer cannot reach us.
     fn log_peer_address_view(&self, contents: &PacketContents) {
         let socket = self
-            .socket
+            .source
             .local_addr()
             .map_or_else(|_| "?".into(), |address| address.to_string());
-        let kind = if self.transient_address {
+        let kind = if self
+            .transient_address
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             "lookup"
         } else {
             "live"
@@ -79,7 +91,7 @@ impl AdnlUdpSession {
             return;
         };
         let (ours, owner, owner_lookup) = our_addr_view(&self.remote_id);
-        let mine = self.socket.local_addr().map_or(0, |address| address.port());
+        let mine = self.source.local_addr().map_or(0, |address| address.port());
         let owner_kind = if owner_lookup { "lookup" } else { "live" };
         if theirs == ours && owner == mine {
             log::debug!(
@@ -108,7 +120,10 @@ impl AdnlUdpSession {
     /// answers us with who holds an address list for us separates "the peer
     /// never saw us" from "the peer saw us but does not originate anything".
     fn log_inbound_queries(&self, contents: &PacketContents) {
-        let socket_kind = if self.transient_address {
+        let socket_kind = if self
+            .transient_address
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             "lookup"
         } else {
             "live"

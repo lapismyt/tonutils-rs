@@ -19,12 +19,14 @@ use crate::{AdnlAesParams, AdnlCodec, AdnlError};
 
 mod cipher;
 mod session;
+mod transport;
 
 pub use cipher::{
     AdnlChannelCipher, AdnlChannelPacket, channel_id_for_secret, decrypt_direct, encrypt_direct,
     ordered_channel_ciphers, reverse_channel_secret,
 };
 pub use session::AdnlUdpSession;
+pub use transport::AdnlUdpTransport;
 
 /// Maximum encoded ADNL datagram accepted by the native UDP helper.
 pub const MAX_UDP_PACKET_SIZE: usize = 64 * 1024;

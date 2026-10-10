@@ -1,0 +1,261 @@
+//! One ADNL UDP socket shared by every session of one node id.
+//!
+//! Upstream keeps a single socket per ADNL node and demultiplexes
+//! incoming datagrams by ADNL channel id and by peer address
+//! (`AdnlNetworkManager` in `adnl/adnl-network-manager.cpp`).  This
+//! crate previously gave every [`AdnlUdpSession`](super::AdnlUdpSession)
+//! its own connected socket, so a one-shot lookup socket advertised
+//! the same node id on a second local port and outbid the live
+//! session's address list version, leaving peers with a dead port in
+//! their connection table.  [`AdnlUdpTransport`] restores the upstream
+//! model: all sessions of one node id share one unconnected socket,
+//! and the transport's receive task routes each datagram to the
+//! session that owns the channel id it carries or the peer address it
+//! arrived from.
+//!
+//! The transport is deliberately additive: [`AdnlUdpSession::connect`]
+//! keeps its signature and still gives every call its own connected
+//! socket, so existing callers keep working unchanged, while callers
+//! that need one session per peer adopt [`AdnlUdpTransport`].
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex, Weak};
+
+use tokio::net::UdpSocket;
+use tokio::sync::{mpsc, watch};
+
+use crate::crypto::{KeyPair, PublicKey};
+use crate::{AdnlAddress, AdnlError};
+
+use super::MAX_UDP_PACKET_SIZE;
+use super::session::SessionInner;
+
+/// Shared ADNL UDP endpoint for one local node id.
+///
+/// Cloning shares the socket and the session table, so a process
+/// keeps exactly one transport per ADNL node id.
+#[derive(Clone)]
+pub struct AdnlUdpTransport {
+    inner: Arc<TransportInner>,
+}
+
+pub(super) struct TransportInner {
+    pub(super) socket: UdpSocket,
+    pub(super) local: KeyPair,
+    pub(super) local_id: [u8; 32],
+    /// Live sessions by remote ADNL id.  Weak handles keep the table
+    /// from owning sessions: the last caller that drops a session
+    /// lets its routes be cleaned up by the session's `Drop` impl.
+    sessions: Mutex<HashMap<[u8; 32], Weak<SessionInner>>>,
+    /// Datagram routes: channel id and peer address to a session.
+    pub(super) routes: Mutex<Routes>,
+    /// Demultiplexer lifecycle, serialized against `session_for`.
+    demux: Mutex<DemuxState>,
+    /// Set when the last session of this transport is dropped, so
+    /// the demultiplexing task wakes up and releases the socket.
+    idle: watch::Sender<bool>,
+}
+
+#[derive(Default)]
+struct DemuxState {
+    /// Whether the demultiplexing task is running.
+    running: bool,
+    /// Sessions currently alive on this transport.
+    live: usize,
+}
+
+#[derive(Default)]
+pub(super) struct Routes {
+    pub(super) by_channel_id: HashMap<[u8; 32], Route>,
+    pub(super) by_peer_addr: HashMap<SocketAddr, Route>,
+}
+
+#[derive(Clone)]
+pub(super) struct Route {
+    pub(super) session: u64,
+    pub(super) queue: mpsc::Sender<Vec<u8>>,
+}
+
+impl AdnlUdpTransport {
+    /// Binds the shared socket and starts its receive task.
+    ///
+    /// The socket stays unconnected: the transport's task decides per
+    /// datagram which session it belongs to.
+    pub async fn bind(local_addr: SocketAddr, local: KeyPair) -> Result<Self, AdnlError> {
+        let socket = UdpSocket::bind(local_addr).await?;
+        let local_id = AdnlAddress::from(&local.public_key).to_bytes();
+        let (idle, _) = watch::channel(false);
+        let inner = Arc::new(TransportInner {
+            socket,
+            local,
+            local_id,
+            sessions: Mutex::new(HashMap::new()),
+            routes: Mutex::new(Routes::default()),
+            demux: Mutex::new(DemuxState::default()),
+            idle,
+        });
+        let transport = Self {
+            inner: inner.clone(),
+        };
+        inner.start_demux();
+        Ok(transport)
+    }
+
+    /// Local address the shared socket is bound to.
+    pub fn local_addr(&self) -> Result<SocketAddr, AdnlError> {
+        self.inner.socket.local_addr().map_err(AdnlError::from)
+    }
+
+    /// Local ADNL node id every session of this transport shares.
+    pub fn local_id(&self) -> [u8; 32] {
+        self.inner.local_id
+    }
+
+    /// Local keypair every session of this transport shares.
+    pub fn local_key(&self) -> &KeyPair {
+        &self.inner.local
+    }
+
+    /// Returns the session for `remote_id`, creating it on first use.
+    ///
+    /// All callers that talk to one peer id get the same session, so
+    /// the peer sees exactly one source address and one address list
+    /// version for this node id.  A session whose peer moved to a new
+    /// address adopts the address on the next `session_for` call.
+    pub fn session_for(
+        &self,
+        remote_id: [u8; 32],
+        remote_addr: SocketAddr,
+        remote: PublicKey,
+    ) -> super::AdnlUdpSession {
+        self.inner.start_demux();
+        let mut sessions = self.inner.sessions.lock().unwrap();
+        if let Some(session) = sessions.get(&remote_id).and_then(Weak::upgrade) {
+            session.adopt_address(remote_addr);
+            return session.into();
+        }
+        let session = Arc::new(SessionInner::shared(
+            self.inner.clone(),
+            remote_id,
+            remote_addr,
+            remote,
+        ));
+        session.register_route(remote_addr);
+        session.clone().spawn();
+        sessions.insert(remote_id, Arc::downgrade(&session));
+        session.into()
+    }
+}
+
+impl TransportInner {
+    /// Registers a new live session on this transport.
+    pub(super) fn add_session(&self) {
+        self.demux.lock().unwrap().live += 1;
+    }
+
+    /// Unregisters a session, waking the demultiplexer when the last
+    /// one is gone so it can release the shared socket.
+    pub(super) fn drop_session(&self) {
+        let wake = {
+            let mut demux = self.demux.lock().unwrap();
+            demux.live = demux.live.saturating_sub(1);
+            demux.live == 0
+        };
+        if wake {
+            let _ = self.idle.send_replace(true);
+        }
+    }
+
+    /// Starts the demultiplexing task if it is not running.
+    ///
+    /// Called by `bind` and by every `session_for`: the task drains
+    /// once the last session of this transport is dropped - releasing
+    /// the socket so a private transport's address can be rebound -
+    /// and a session created afterwards restarts it here.
+    fn start_demux(self: &Arc<Self>) {
+        let mut demux = self.demux.lock().unwrap();
+        if demux.running {
+            // A draining task re-checks the idle flag under the same
+            // lock, so clearing it here keeps the task alive for the
+            // session that is about to be created.
+            let _ = self.idle.send_replace(false);
+            return;
+        }
+        demux.running = true;
+        let _ = self.idle.send_replace(false);
+        let inner = self.clone();
+        tokio::spawn(async move {
+            inner.run().await;
+        });
+    }
+
+    /// Decides whether the demultiplexing task should drain.
+    ///
+    /// The decision is made under the lifecycle lock so it cannot race
+    /// a concurrent `session_for`: either the task stops and clears
+    /// `running` - letting the next `session_for` restart it - or the
+    /// session start already cleared the idle flag and the task keeps
+    /// serving the new session.
+    fn drain_if_idle(self: &Arc<Self>) -> bool {
+        let mut demux = self.demux.lock().unwrap();
+        if *self.idle.borrow() {
+            demux.running = false;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Demultiplexes every incoming datagram to its session.
+    ///
+    /// Channel packets carry their 32-byte channel id in the clear,
+    /// so they route by the registry sessions publish on channel
+    /// install.  Direct packets carry the destination ADNL id in the
+    /// clear; anything addressed to this node routes by the source
+    /// address to the session for that peer.  Everything else is
+    /// dropped: it is either addressed to another node or from a peer
+    /// this node has no session for.
+    async fn run(self: Arc<Self>) {
+        let mut idle = self.idle.subscribe();
+        let mut packet = vec![0u8; MAX_UDP_PACKET_SIZE + 1];
+        loop {
+            if self.drain_if_idle() {
+                return;
+            }
+            tokio::select! {
+                result = self.socket.recv_from(&mut packet) => {
+                    let Ok((size, peer)) = result else {
+                        self.demux.lock().unwrap().running = false;
+                        return;
+                    };
+                    if size > MAX_UDP_PACKET_SIZE {
+                        continue;
+                    }
+                    let route = {
+                        let routes = self.routes.lock().unwrap();
+                        let mut route = None;
+                        if let Ok(prefix) = <[u8; 32]>::try_from(&packet[..size.min(32)]) {
+                            route = routes.by_channel_id.get(&prefix).cloned();
+                            if route.is_none() && prefix == self.local_id {
+                                route = routes.by_peer_addr.get(&peer).cloned();
+                            }
+                        }
+                        route
+                    };
+                    if let Some(route) = route
+                        && route.queue.send(packet[..size].to_vec()).await.is_err()
+                    {
+                        // The session is gone; its Drop impl already
+                        // removed its routes, so this entry is stale.
+                        log::trace!(
+                            "ADNL transport route to session {} closed",
+                            route.session
+                        );
+                    }
+                }
+                _ = idle.changed() => {}
+            }
+        }
+    }
+}

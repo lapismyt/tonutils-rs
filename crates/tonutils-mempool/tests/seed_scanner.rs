@@ -50,7 +50,7 @@ async fn explicit_seed_udp_overlay_fec_reaches_scanner_stream() {
         .unwrap();
     drop(server_socket);
     let mut events = Box::pin(stream);
-    let mut sender =
+    let sender =
         AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
             .await
             .unwrap();

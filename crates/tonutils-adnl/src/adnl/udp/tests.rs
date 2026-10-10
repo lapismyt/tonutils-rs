@@ -116,7 +116,7 @@ async fn direct_session_roundtrips_signed_packet_and_rejects_replay() {
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut sender = AdnlUdpSession::connect(
+    let sender = AdnlUdpSession::connect(
         sender_addr,
         receiver_addr,
         sender_key,
@@ -124,7 +124,7 @@ async fn direct_session_roundtrips_signed_packet_and_rejects_replay() {
     )
     .await
     .unwrap();
-    let mut receiver = AdnlUdpSession::connect(
+    let receiver = AdnlUdpSession::connect(
         receiver_addr,
         sender_addr,
         receiver_key,
@@ -204,7 +204,7 @@ async fn second_session_to_same_peer_continues_sequence_numbers() {
         rand2: vec![2],
     };
 
-    let mut receiver = AdnlUdpSession::connect(
+    let receiver = AdnlUdpSession::connect(
         receiver_addr,
         sender_addr,
         receiver_key,
@@ -213,7 +213,7 @@ async fn second_session_to_same_peer_continues_sequence_numbers() {
     .await
     .unwrap();
     {
-        let mut sender = AdnlUdpSession::connect(
+        let sender = AdnlUdpSession::connect(
             sender_addr,
             receiver_addr,
             sender_key,
@@ -233,7 +233,7 @@ async fn second_session_to_same_peer_continues_sequence_numbers() {
 
     // The peer keeps its sequence number state after our session is gone, so
     // the replacement session must pick up where the old one stopped.
-    let mut sender = AdnlUdpSession::connect(
+    let sender = AdnlUdpSession::connect(
         sender_addr,
         receiver_addr,
         sender_key,
@@ -266,7 +266,7 @@ async fn dht_find_node_query_routes_matching_answer() {
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut sender = AdnlUdpSession::connect(
+    let sender = AdnlUdpSession::connect(
         sender_addr,
         receiver_addr,
         sender_key,
@@ -274,7 +274,7 @@ async fn dht_find_node_query_routes_matching_answer() {
     )
     .await
     .unwrap();
-    let mut receiver = AdnlUdpSession::connect(
+    let receiver = AdnlUdpSession::connect(
         receiver_addr,
         sender_addr,
         receiver_key,
@@ -336,11 +336,11 @@ async fn channel_create_confirm_switches_to_directional_channel_packets() {
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut client =
+    let client =
         AdnlUdpSession::connect(client_addr, server_addr, client_key, server_key.public_key)
             .await
             .unwrap();
-    let mut server =
+    let server =
         AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
             .await
             .unwrap();
@@ -404,11 +404,11 @@ async fn overlay_random_peers_query_routes_boxed_response() {
         .unwrap()
         .local_addr()
         .unwrap();
-    let mut client =
+    let client =
         AdnlUdpSession::connect(client_addr, server_addr, client_key, server_key.public_key)
             .await
             .unwrap();
-    let mut server =
+    let server =
         AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
             .await
             .unwrap();
@@ -530,7 +530,7 @@ fn custom_packet(data: Vec<u8>) -> PacketContents {
 }
 
 /// Version of `adnl.addressList` the sender stamped on its next packet.
-async fn receive_address_version(receiver: &mut AdnlUdpSession) -> i32 {
+async fn receive_address_version(receiver: &AdnlUdpSession) -> i32 {
     let received = receiver
         .recv_timeout(Duration::from_secs(1))
         .await
@@ -549,15 +549,15 @@ async fn receive_address_version(receiver: &mut AdnlUdpSession) -> i32 {
 /// takes the address back on its next keepalive.
 #[tokio::test]
 async fn address_version_is_restamped_on_every_packet() {
-    let (mut sender, mut receiver) = direct_pair().await;
+    let (sender, receiver) = direct_pair().await;
 
     sender.send_contents(custom_packet(vec![1])).await.unwrap();
-    let first = receive_address_version(&mut receiver).await;
+    let first = receive_address_version(&receiver).await;
 
     tokio::time::sleep(Duration::from_millis(1100)).await;
 
     sender.send_contents(custom_packet(vec![2])).await.unwrap();
-    let second = receive_address_version(&mut receiver).await;
+    let second = receive_address_version(&receiver).await;
 
     assert!(
         second > first,
@@ -573,8 +573,8 @@ async fn address_version_is_restamped_on_every_packet() {
 /// keepalive then carries a later timestamp and reclaims the address.
 #[tokio::test]
 async fn transient_session_stamps_one_second_ahead_of_a_plain_session() {
-    let (mut plain_sender, mut plain_receiver) = direct_pair().await;
-    let (mut marked_sender, mut marked_receiver) = direct_pair().await;
+    let (plain_sender, plain_receiver) = direct_pair().await;
+    let (marked_sender, marked_receiver) = direct_pair().await;
     marked_sender.set_transient_address(true);
 
     let before = now_i32();
@@ -588,8 +588,8 @@ async fn transient_session_stamps_one_second_ahead_of_a_plain_session() {
         .unwrap();
     let after = now_i32();
 
-    let plain = receive_address_version(&mut plain_receiver).await;
-    let marked = receive_address_version(&mut marked_receiver).await;
+    let plain = receive_address_version(&plain_receiver).await;
+    let marked = receive_address_version(&marked_receiver).await;
 
     assert!(
         (before..=after).contains(&plain),

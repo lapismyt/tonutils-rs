@@ -93,8 +93,7 @@ async fn test_dht_value(
     remote_addr: SocketAddr,
     key_hash: tonutils_tl::Int256,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let mut session =
-        AdnlUdpSession::connect(local_addr, remote_addr, local_key, remote_pub).await?;
+    let session = AdnlUdpSession::connect(local_addr, remote_addr, local_key, remote_pub).await?;
 
     match session
         .dht_find_value(key_hash, 4, Duration::from_secs(8))

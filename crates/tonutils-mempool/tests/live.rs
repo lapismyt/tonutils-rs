@@ -63,7 +63,7 @@ async fn probe_dht_from_config(variable: &str, allow_unavailable: bool) {
         let Some(remote_public) = PublicKey::from_bytes(public_key) else {
             continue;
         };
-        let mut session = match tokio::time::timeout(
+        let session = match tokio::time::timeout(
             Duration::from_secs(5),
             AdnlUdpSession::connect(
                 "0.0.0.0:0".parse().unwrap(),

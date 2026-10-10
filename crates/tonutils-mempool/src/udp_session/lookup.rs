@@ -216,7 +216,7 @@ pub fn udp_dht_lookup(
                 let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
                 let address = seed.address.parse().ok()?;
                 Some(async move {
-                    let mut session =
+                    let session =
                         AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
                             .await
                             .ok()?;
@@ -614,14 +614,13 @@ async fn query_overlay_random_peers(
     overlay: OverlayId,
     timeout: Duration,
 ) -> Option<Vec<SeedPeer>> {
-    let mut session =
-        match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
-            Ok(session) => session,
-            Err(error) => {
-                log::debug!("query_overlay_random_peers: connect to {address} failed: {error}");
-                return None;
-            }
-        };
+    let session = match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
+        Ok(session) => session,
+        Err(error) => {
+            log::debug!("query_overlay_random_peers: connect to {address} failed: {error}");
+            return None;
+        }
+    };
     session.set_confirm_channels(false);
     session.set_transient_address(true);
     log::debug!("query_overlay_random_peers: direct UDP ADNL session established to {address}");
@@ -728,14 +727,13 @@ async fn query_dht_value_seed(
     count: usize,
     timeout: Duration,
 ) -> Option<DhtValueResult> {
-    let mut session =
-        match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
-            Ok(session) => session,
-            Err(error) => {
-                log::debug!("query_dht_value_seed: connect to {address} failed: {error}");
-                return None;
-            }
-        };
+    let session = match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
+        Ok(session) => session,
+        Err(error) => {
+            log::debug!("query_dht_value_seed: connect to {address} failed: {error}");
+            return None;
+        }
+    };
     session.set_confirm_channels(false);
     session.set_transient_address(true);
     match session
@@ -769,7 +767,7 @@ async fn query_dht_seed(
     node_count: i32,
     timeout: Duration,
 ) -> Option<Vec<tonutils_tl::tl::network::DhtNode>> {
-    let mut session = AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
+    let session = AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
         .await
         .ok()?;
     session.set_confirm_channels(false);

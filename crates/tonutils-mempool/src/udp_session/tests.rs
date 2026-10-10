@@ -197,7 +197,7 @@ async fn ignores_wrong_overlay_packets_without_killing_session() {
     .await
     .unwrap();
     drop(server_socket);
-    let mut sender =
+    let sender =
         AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
             .await
             .unwrap();

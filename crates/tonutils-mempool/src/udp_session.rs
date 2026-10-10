@@ -186,7 +186,7 @@ impl AdnlUdpOverlaySession {
         )
         .await
         .map_err(|error| error.to_string())?;
-        let mut session = Self {
+        let session = Self {
             peer,
             session,
             overlay: Some(overlay),
