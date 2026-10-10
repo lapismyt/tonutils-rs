@@ -18,7 +18,7 @@ use tonutils_tl::tl::network::DhtValue;
 /// holds a live session is queried on it, and a peer that does
 /// not get a fresh one that ends with the query.
 #[allow(clippy::large_types_passed_by_value)]
-async fn shared_session(
+pub(crate) async fn shared_session(
     local_addr: std::net::SocketAddr,
     local_keypair: KeyPair,
     remote: AdnlPublicKey,
@@ -756,7 +756,7 @@ async fn query_dht_value_seed(
     }
 }
 
-fn dht_key_id(id: [u8; 32], name: &[u8]) -> tonutils_tl::Int256 {
+pub(crate) fn dht_key_id(id: [u8; 32], name: &[u8]) -> tonutils_tl::Int256 {
     let dht_key = DhtKey {
         id: tonutils_tl::Int256(id),
         name: name.to_vec(),

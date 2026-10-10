@@ -51,8 +51,10 @@ pub struct AdnlUdpOverlaySession {
 }
 
 mod lookup;
+mod publish;
 
 pub use lookup::*;
+pub use publish::{DhtAddressPublisher, PUBLISH_INTERVAL, address_publisher};
 
 struct FecAssembly {
     decoder: Decoder,

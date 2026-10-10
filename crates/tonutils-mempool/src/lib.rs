@@ -33,8 +33,9 @@ pub use builder::{MempoolScannerBuilder, OverlaySessionFactory};
 pub use protocol_stats::{ProtocolStats, protocol_stats};
 pub use quic_session::{QuicOverlaySession, quic_overlay_factory, quic_overlay_lookup};
 pub use udp_session::{
-    AdnlUdpOverlaySession, channel_factory, direct_factory, overlay_factory, udp_dht_lookup,
-    udp_iterative_dht_lookup, udp_overlay_lookup, udp_peer_growth,
+    AdnlUdpOverlaySession, DhtAddressPublisher, PUBLISH_INTERVAL, address_publisher,
+    channel_factory, direct_factory, overlay_factory, udp_dht_lookup, udp_iterative_dht_lookup,
+    udp_overlay_lookup, udp_peer_growth,
 };
 
 /// Delay between two peer-growth rounds after bootstrap.

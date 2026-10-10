@@ -33,6 +33,8 @@ pub struct MempoolScannerBuilder {
     reconnect_backoff: Duration,
     peer_growth_lookup: Option<SeedDiscoveryLookup>,
     overlay_max_peers: u32,
+    external_address: Option<std::net::SocketAddr>,
+    address_publisher: Option<DhtAddressPublisher>,
 }
 
 impl fmt::Debug for MempoolScannerBuilder {
@@ -66,6 +68,8 @@ impl fmt::Debug for MempoolScannerBuilder {
             .field("reconnect_backoff", &self.reconnect_backoff)
             .field("peer_growth_lookup", &self.peer_growth_lookup.is_some())
             .field("overlay_max_peers", &self.overlay_max_peers)
+            .field("external_address", &self.external_address)
+            .field("address_publisher", &self.address_publisher.is_some())
             .finish()
     }
 }
@@ -94,6 +98,8 @@ impl Default for MempoolScannerBuilder {
             reconnect_backoff: Duration::from_secs(1),
             peer_growth_lookup: None,
             overlay_max_peers: 30,
+            external_address: None,
+            address_publisher: None,
         }
     }
 }
@@ -195,6 +201,7 @@ impl MempoolScannerBuilder {
     ) -> Self {
         let discovery_timeout = self.discovery_timeout;
         let overlay = self.overlay_id;
+        let external_address = self.external_address;
         let session_factory = overlay_factory(local_addr, local_keypair, overlay, channel_timeout);
         let mut builder = self.session_factory(session_factory);
         builder = match builder.dht_overlay_key {
@@ -212,6 +219,12 @@ impl MempoolScannerBuilder {
             local_addr,
             local_keypair,
             overlay,
+            discovery_timeout,
+        ));
+        builder.address_publisher = Some(address_publisher(
+            local_addr,
+            local_keypair,
+            external_address,
             discovery_timeout,
         ));
         builder
@@ -270,9 +283,21 @@ impl MempoolScannerBuilder {
         self.discovery_lookup = None;
         self.typed_discovery_lookup = None;
         self.seed_discovery_lookup = None;
+        let discovery_timeout = self.discovery_timeout;
+        let external_address = self.external_address;
         let session_factory =
             overlay_factory(local_addr, local_keypair, self.overlay_id, channel_timeout);
-        self.session_factory(session_factory)
+        let mut builder = self.session_factory(session_factory);
+        // Explicit seeds are still DHT nodes, so publishing here lets the
+        // seeds resolve this node's address back, same as on the full
+        // native UDP path.
+        builder.address_publisher = Some(address_publisher(
+            local_addr,
+            local_keypair,
+            external_address,
+            discovery_timeout,
+        ));
+        builder
     }
 
     pub fn typed_discovery_lookup(mut self, lookup: TypedDiscoveryLookup) -> Self {
@@ -313,6 +338,23 @@ impl MempoolScannerBuilder {
     /// A value of `0` disables periodic peer growth entirely.
     pub fn overlay_max_peers(mut self, max_peers: u32) -> Self {
         self.overlay_max_peers = max_peers;
+        self
+    }
+
+    /// Sets the externally reachable UDP address published in the
+    /// DHT `address` value for this node's ADNL id.
+    ///
+    /// Overlay peers that learn this node's signed record from an
+    /// `overlay.getRandomPeers` answer resolve its address through
+    /// that value, so only nodes that publish it can be reached by
+    /// members they never contacted - which is what makes transitive
+    /// peer discovery compound.  When unset the scanner falls back to
+    /// the `TON_MEMPOOL_EXTERNAL_ADDRESS` environment variable and
+    /// then to a route probe against the configured seeds; the probe
+    /// only yields an address on a globally routable host, so behind
+    /// NAT an explicit address is required.
+    pub fn external_address(mut self, address: std::net::SocketAddr) -> Self {
+        self.external_address = Some(address);
         self
     }
 
@@ -541,7 +583,17 @@ impl MempoolScannerBuilder {
                         if seeds.is_empty() {
                             continue;
                         }
-                        let candidates = growth(seeds).await;
+                        // pytoniq parity: every round announces to as
+                        // many members as are needed to fill the pool
+                        // (`dif = max_peers - registered`), not to one.
+                        // Each lookup asks the next member in round-robin
+                        // order, so `dif` concurrent lookups announce to
+                        // `dif` distinct members - the fan-out that makes
+                        // transitive discovery compound.
+                        let dif = max_peers.saturating_sub(manager.peer_count().await).max(1);
+                        let rounds = dif.min(seeds.len());
+                        let results = join_all((0..rounds).map(|_| growth(seeds.clone()))).await;
+                        let candidates = results.into_iter().flatten().collect::<Vec<_>>();
                         let mut added = 0usize;
                         let mut discovered = Vec::new();
                         for candidate in candidates {
@@ -583,6 +635,27 @@ impl MempoolScannerBuilder {
                                 "peer growth: added {added} session(s), registered_peers={}",
                                 manager.peer_count().await
                             );
+                        }
+                    }
+                });
+            }
+            if let Some(publish) = self.address_publisher.clone() {
+                let manager = manager.clone();
+                let known = known_peers.clone();
+                let mut shutdown = manager.subscribe_shutdown();
+                tokio::spawn(async move {
+                    // Publish before the first growth round so
+                    // transitive discovery can resolve this node's
+                    // address right away, then re-publish inside
+                    // the value's one hour lifetime.
+                    loop {
+                        let nodes = known.read().await.clone();
+                        if !nodes.is_empty() {
+                            publish(nodes).await;
+                        }
+                        tokio::select! {
+                            _ = shutdown.changed() => return,
+                            () = tokio::time::sleep(PUBLISH_INTERVAL) => {}
                         }
                     }
                 });
