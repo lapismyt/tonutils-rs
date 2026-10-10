@@ -188,6 +188,11 @@ fn is_globally_routable(ip: IpAddr) -> bool {
     }
 }
 
+/// Whether [`is_globally_routable`] accepts the IP of `address`.
+pub(super) fn is_publishable_ip(address: SocketAddr) -> bool {
+    is_globally_routable(address.ip())
+}
+
 /// Detects the externally reachable UDP address of this host.
 ///
 /// A UDP socket connected to a remote address makes the operating
@@ -529,7 +534,12 @@ pub fn address_publisher(
 /// Resolves the externally reachable UDP address for a publish
 /// round: the configured address, then the
 /// `TON_MEMPOOL_EXTERNAL_ADDRESS` environment variable, then a
-/// route probe against the known DHT nodes.
+/// route probe against the known DHT nodes, then STUN.
+///
+/// The route probe cannot see a NAT boundary, so on a NAT'd host it
+/// reports a private address and the round falls through to
+/// [`super::stun::discover_mapped_address`], which asks the transport
+/// socket itself where it is reachable.
 async fn resolve_external_udp_address(
     local_addr: SocketAddr,
     local_keypair: &KeyPair,
@@ -548,7 +558,10 @@ async fn resolve_external_udp_address(
         .await
         .ok()?;
     let bound_port = transport.local_addr().ok()?.port();
-    detect_external_udp_address(probes, bound_port).await
+    if let Some(external) = detect_external_udp_address(probes, bound_port).await {
+        return Some(external);
+    }
+    super::stun::discover_mapped_address(&transport).await
 }
 
 #[cfg(test)]

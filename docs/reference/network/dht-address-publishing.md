@@ -105,19 +105,47 @@ The external address is resolved lazily on every round, first match wins:
    (`is_globally_routable` rejects private, loopback, link-local, multicast,
    broadcast, documentation, unspecified, and IPv6 unique-local/unicast
    link-local addresses).
+4. A STUN binding exchange (`udp_session/stun.rs`), reached only when the
+   route probe reports a private address. An RFC 5389 `BindingRequest` is
+   sent to three public servers and the `XOR-MAPPED-ADDRESS` of the
+   `BindingSuccessResponse` is read back.
+
+The probe cannot see a NAT boundary, and the binding exchange is what lets a
+NAT'd node publish at all. Two details make the reported address the one
+overlay peers can deliver to:
+
+- The request is sent from the scanner's **shared ADNL transport socket**
+  through `AdnlUdpTransport::raw_exchange`, not from a fresh probe socket.
+  NAT maps each socket separately, so only the mapping of the socket the
+  sessions actually talk on describes a port that answers.
+- A mapping is published only when two servers report the same `ip:port` and
+  the address is globally routable. Endpoint-independent mapping reports the
+  same answer for every server; a NAT that maps per destination reports a
+  different port per server and is rejected, since that port is reachable
+  only from the server that observed it.
 
 Limits and edge cases:
 
-- On a NAT'd host the probe observes a private source address, so publishing
-  self-skips with a debug log instead of poisoning the value for its whole
-  hour-long TTL. CI runners and servers with public egress addresses publish;
-  local development behind NAT deliberately does not. This is the same reason
-  upstream skips an address-less list.
-- The published port is the shared transport's bound port. If a NAT remaps
-  UDP ports, the reachable address must be configured explicitly through
-  `external_address` or `TON_MEMPOOL_EXTERNAL_ADDRESS`.
-- If no probe address is globally routable and nothing is configured, the
-  round does no stores at all and logs
+- An observed mapping is evidence about where the socket is reachable from
+  the servers that answered, not proof that every overlay peer can deliver to
+  it. The round logs its reasoning
+  (`stun reports <ip:port> reachable for this socket`,
+  `stun servers disagree`, `stun reached no agreement`) rather than asserting
+  reachability, so a run on a NAT that filters unsolicited inbound traffic
+  still reports what it observed.
+- The exchange handles IPv4 only. A server that resolves to IPv6 alone is
+  treated as unreachable, and the IPv6 form of `XOR-MAPPED-ADDRESS` is not
+  decoded.
+- The route probe observes a private source address and publishing
+  self-skips instead of poisoning the value for its whole hour-long TTL when
+  no address is configured and STUN reaches no agreement. This is the same
+  reason upstream skips an address-less list.
+- The published port is the one STUN reports for the shared transport socket
+  when STUN engages, and the transport's bound port when the route probe
+  succeeds. If neither can observe a reachable address, it must be configured
+  explicitly through `external_address` or `TON_MEMPOOL_EXTERNAL_ADDRESS`.
+- If nothing resolves to a globally routable address, the round does no
+  stores at all and logs
   `no externally reachable address for this node`.
 
 ## Crate Mapping
@@ -137,8 +165,12 @@ Limits and edge cases:
 - `crates/tonutils-tl/src/tl/network.rs` - `DhtKey::boxed_bytes`,
   `DhtKeyDescription::unsigned_bytes`, `DhtValue::unsigned_bytes`,
   `DhtStored`, `AddressListBoxed`.
+- `crates/tonutils-mempool/src/udp_session/stun.rs` - RFC 5389 binding client:
+  `binding_request`, `parse_binding_response`, and `discover_mapped_address`.
 - `crates/tonutils-adnl` - `AdnlUdpTransport::for_node` (the shared socket the
-  probe reports the bound port from and the stores send through),
+  probe reports the bound port from and the stores send through) and
+  `AdnlUdpTransport::raw_exchange` (sends the binding request from that socket
+  and captures its reply, which the demultiplexer would otherwise drop),
   `KeyPair::sign_raw`, `now_i32`, `local_reinit_date`.
 
 ## Tests
@@ -148,6 +180,18 @@ Limits and edge cases:
   `address_value_supports_ipv6`, `xor_distance_orders_closest_first`,
   `route_probe_rejects_non_routable_addresses`, and
   `candidates_parse_from_seed_peers`.
+- Unit tests in `stun.rs`: `request_carries_header_and_transaction_id`,
+  `xor_mapped_address_is_decoded`, `legacy_mapped_address_is_decoded_without_xor`,
+  `xor_form_wins_over_the_legacy_attribute`,
+  `padded_attributes_are_walked_without_bleeding_into_the_next`,
+  `response_for_another_transaction_is_rejected`, `truncated_response_is_rejected`,
+  `attribute_past_the_declared_length_is_rejected`, and
+  `non_ipv4_address_attributes_are_ignored`. Responses are encoded field by
+  field from RFC 5389 rather than captured from a live server, so the parser is
+  checked against the specification.
+- Unit test in `tonutils-adnl`: `raw_exchange_returns_reply_and_recovers_from_timeout`
+  (`adnl/udp/tests.rs`) covers reply capture on the shared socket and hook
+  cleanup after a timeout.
 - Live gate: `configured_seed_delivers_valid_external_message` in
   `crates/tonutils-mempool/tests/live.rs`, run by
   `.github/workflows/live-tests.yml` on a public-IP runner where probing and
