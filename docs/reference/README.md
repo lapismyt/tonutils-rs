@@ -47,6 +47,7 @@ tracked in `fixtures/compatibility/block_tlb_extended.json`.
 23. [Overlay protocol design](network/overlay.md)
 24. [Mempool scanner design](mempool/scanner.md)
 25. [Cross-SDK byte comparison](testing/cross-sdk-comparison.md)
+26. [DHT address publishing](network/dht-address-publishing.md)
 
 ## Directory Map
 

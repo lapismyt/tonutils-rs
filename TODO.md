@@ -368,7 +368,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Add UDP codec tests #network #tests
   - [x] Bundle `adnl.message.createChannel` with the first `overlay.getRandomPeers` query so a dropped handshake cannot stall the session #adnl #overlay #tests
   - [x] Hold up to `MAX_SESSION_CHANNELS` (3) channels per session and decode packets from any of them while the newest sends #adnl #network #tests
-  - [ ] Add NAT and address list considerations #network
+  - [x] Add NAT and address list considerations: the route probe rejects non-globally-routable source addresses so a NAT'd host never poisons the DHT, `external_address` and `TON_MEMPOOL_EXTERNAL_ADDRESS` override the probe, and the limits are recorded in `docs/reference/network/dht-address-publishing.md` #network #docs
   - [x] Split `crates/tonutils-adnl/src/adnl/udp.rs` into `udp/{mod,cipher,session,session/query,tests}.rs` to stay under the 1000 line repo limit #adnl #refactor
 - [-] Implement DHT discovery #dht #network
   - [x] Add signed discovery records, verification, and explicit seed fallback #dht #crypto #tests
@@ -377,6 +377,8 @@ postponed work moves to `# BACKLOG`.
   - [x] Add canonical shard-public overlay ID derivation #dht #overlay #tests
   - [ ] Resolve liteservers and overlay peers through DHT #dht
   - [x] Resolve overlay seed peers through `dht.getValue(address)` with parallel per-node lookups so slow nodes cannot exhaust discovery time #dht #overlay #tests
+  - [x] Publish this node's own DHT `address` value (`DhtKey{pubkey_hash, "address", 0}`) so third parties can resolve and ping it: sign `dht.keyDescription` and `dht.value` over their boxed serialization with empty signatures exactly as upstream `publish_address_list` does, locate the closest nodes with one `dht.findNode` round, store on the four closest concurrently with `ttl = now + 3600`, verify retrieval with `dht.findValue`, re-publish every 10 minutes, and install the publisher on both `native_udp` and `native_udp_seeds_only` #dht #network #mempool #tests
+  - [ ] Confirm in a live run that the published `address` value is served by the DHT (`served_by_dht=true`) and that DHT-discovered peers resolve and ping this node through it: a NAT'd local host skips publishing by design, so the evidence must come from a public-IP CI runner #dht #tests #mempool
 - [-] Implement overlay protocol #overlay #network
   - [x] Add bounded overlay peer/routing/status primitives #overlay #tests
   - [x] Add transport-neutral sessions, parallel receive loops, scoring, and shutdown #overlay #network #tests

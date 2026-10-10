@@ -45,6 +45,10 @@ queries.
 have signed records. Full iterative Kademlia-style lookup, DHT value lookup,
 and overlay-specific value validation remain above this boundary.
 
+Publishing this node's own `address` value - the record third parties resolve
+before pinging it - is covered by
+[DHT address publishing](dht-address-publishing.md).
+
 ## Required Tests
 
 - DHT node signature verification.

@@ -49,7 +49,14 @@ enables DHT overlay-node resolution. The lower-level `direct_factory`,
 `channel_factory`, `udp_dht_lookup`, and `udp_overlay_lookup` helpers remain
 available when applications need custom lifecycle policy.
 `native_udp_seeds_only` is the minimal mode: it connects only explicit
-`SeedPeer` values and does not perform DHT expansion.
+`SeedPeer` values and does not perform DHT expansion. Both native UDP modes
+install a DHT `address` publisher (`address_publisher`): one round before the
+first peer-growth round and then every `PUBLISH_INTERVAL` (10 minutes)
+resolves this node's externally reachable UDP address (`external_address`,
+`TON_MEMPOOL_EXTERNAL_ADDRESS`, or a route probe that self-skips behind NAT)
+and stores the signed `dht.value` on the closest DHT nodes, so third parties
+can resolve and ping this node; see
+[DHT address publishing](../network/dht-address-publishing.md).
 For this native connector, `SeedPeer.peer` must be the raw 32-byte Ed25519
 public key; `SeedPeer::from_public_key` avoids confusing it with an ADNL hash.
 Its overlay adapter accepts TON's `overlay.message` prefix followed by
@@ -119,8 +126,11 @@ uses `Stream` and does not expose a WebSocket compatibility layer.
 
 ## Current gaps
 
-The remaining acceptance gap is a configured real overlay seed: the ignored
-strict test validates external-message delivery only when
-`TON_MEMPOOL_LIVE_SEED`, `TON_MEMPOOL_LIVE_PEER_KEY`, and
-`TON_MEMPOOL_LIVE_OVERLAY_ID` are provided. LiteServer inclusion tracking is
-intentionally out of scope.
+The remaining acceptance gap is `overlay_packets > 0` on a real overlay
+(`TODO.md`): the ignored strict test `configured_seed_delivers_valid_external_message`
+runs only when `TON_MEMPOOL_LIVE_SEEDS` (or the legacy single-peer
+`TON_MEMPOOL_LIVE_SEED` and `TON_MEMPOOL_LIVE_PEER_KEY`) and
+`TON_MEMPOOL_LIVE_OVERLAY_ID` are provided. A NAT'd local host cannot publish
+its DHT `address` value by design, so delivery is validated on a public-IP
+GitHub Actions runner (`.github/workflows/live-tests.yml`) rather than from a
+private network. LiteServer inclusion tracking is intentionally out of scope.
