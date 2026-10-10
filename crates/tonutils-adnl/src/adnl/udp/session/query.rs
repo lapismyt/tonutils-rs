@@ -13,8 +13,8 @@
 use super::*;
 
 use tonutils_tl::tl::network::{
-    DhtMessage, DhtNodes, DhtNodesBoxed, DhtValueResult, OverlayNodes, OverlayNodesBoxed,
-    OverlayQuery,
+    DhtMessage, DhtNodes, DhtNodesBoxed, DhtStored, DhtValue, DhtValueResult, OverlayNodes,
+    OverlayNodesBoxed, OverlayQuery,
 };
 
 impl AdnlUdpSession {
@@ -108,6 +108,27 @@ impl AdnlUdpSession {
                     "DhtValueResult={value_err}, hex_full={hex_full}"
                 )))
             }
+        }
+    }
+
+    /// Sends `dht.store` over this session.
+    ///
+    /// The value must be signed by the key owner (see
+    /// `DhtValue::unsigned_bytes`); the receiving node verifies
+    /// the signature and stores the value when it is responsible
+    /// for the key, answering `dht.stored`.  Nodes that are not
+    /// responsible drop the value silently, so a store round
+    /// targets the nodes closest to the key.
+    pub async fn dht_store(&self, value: DhtValue, timeout: Duration) -> Result<(), AdnlError> {
+        let query_id = Int256::random();
+        let query = tl_proto::serialize(DhtMessage::Store { value });
+        let answer = self
+            .inner
+            .exchange(query_id, query, timeout, "DHT store")
+            .await?;
+        match tl_proto::deserialize::<DhtStored>(&answer) {
+            Ok(DhtStored) => Ok(()),
+            Err(error) => Err(AdnlError::MalformedPacket(error.to_string())),
         }
     }
 
