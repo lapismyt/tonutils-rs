@@ -75,19 +75,9 @@ pub(crate) struct SessionInner {
     /// Whether this session may establish ADNL channels.  One-shot
     /// sessions (DHT/overlay lookups) disable it: they are dropped
     /// right after the query, and a peer that keeps the negotiated
-    /// channel would send packets this session can no longer decrypt.
+    /// channel for as long as it holds our ADNL node id.  Every later
+    /// session would then receive channel packets it cannot decrypt.
     confirm_channels: AtomicBool,
-    /// Whether this session belongs to a one-shot lookup rather than
-    /// to a long-lived peer session.
-    ///
-    /// A marked session advertises an address list version one second
-    /// ahead of the wall clock, which wins the single exchange against
-    /// a live session that stamps the same second; the live session's
-    /// next keepalive carries a later version again and reclaims the
-    /// address.  With a shared transport there is only one source
-    /// address per node id, so the mark only affects the version
-    /// comparison, never which socket the peer addresses.
-    transient_address: AtomicBool,
     /// Mutable per-peer state: channels, sequence bookkeeping, and the
     /// replay window.  Held only for synchronous critical sections and
     /// the datagram send, never across a consumer's receive wait.
@@ -242,24 +232,6 @@ impl AdnlUdpSession {
     pub fn set_confirm_channels(&self, enabled: bool) {
         self.inner
             .confirm_channels
-            .store(enabled, Ordering::Relaxed);
-    }
-
-    /// Marks this session as a one-shot lookup session.
-    ///
-    /// A lookup session answers one query and is then dropped.  With a
-    /// shared transport every session of this process's ADNL node id
-    /// sends from the same socket, so the peer always has a reachable
-    /// address for this node; the mark only makes the session advertise
-    /// an address list version one second ahead of the wall clock, which
-    /// wins the single exchange against a live session that stamps the
-    /// same second.  The live session's next keepalive carries a later
-    /// version again and takes the version lead back.
-    ///
-    /// Defaults to `false`.
-    pub fn set_transient_address(&self, enabled: bool) {
-        self.inner
-            .transient_address
             .store(enabled, Ordering::Relaxed);
     }
 
@@ -527,7 +499,6 @@ impl SessionInner {
                     .expect("loopback fallback address parses"),
             ),
             confirm_channels: AtomicBool::new(true),
-            transient_address: AtomicBool::new(false),
             state: tokio::sync::Mutex::new(SessionState::new()),
             queue: tokio::sync::Mutex::new(queue),
             queue_tx,
@@ -559,7 +530,6 @@ impl SessionInner {
             remote,
             remote_addr: Mutex::new(remote_addr),
             confirm_channels: AtomicBool::new(true),
-            transient_address: AtomicBool::new(false),
             state: tokio::sync::Mutex::new(SessionState::new()),
             queue: tokio::sync::Mutex::new(queue),
             queue_tx,

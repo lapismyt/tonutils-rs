@@ -39,28 +39,24 @@ impl SessionInner {
     /// peer can address this node on.
     pub(super) fn note_stamped_address_version(&self, version: i32) {
         let socket = self.source.local_addr().map_or(0, |addr| addr.port());
-        note_our_addr_version(
-            &self.remote_id,
-            version,
-            socket,
-            self.transient_address
-                .load(std::sync::atomic::Ordering::Relaxed),
-        );
+        note_our_addr_version(&self.remote_id, version, socket);
     }
 
     /// Compares the address version the peer reports with the one we sent.
     ///
-    /// `ours` is the highest version ever stamped for this peer, which
-    /// includes stamps made by sibling lookup sockets of the same ADNL node
-    /// id, and `owner` is the local port of the socket that stamp came from.
+    /// `ours` is the highest version ever stamped for this peer and
+    /// `owner` is the local port that stamped it.  Every session of
+    /// this process's ADNL node id shares one socket, so the owner is
+    /// always this transport's port and a peer that echoes it holds
+    /// the address this node actually listens on.
     ///
     /// Read together with the socket this packet arrived on, three outcomes
     /// are possible and each points at a different failure:
     ///
     /// * equal and same port - the peer is talking to this socket;
-    /// * equal but different port - the peer moved to a sibling socket, which
-    ///   for a long-lived session means a dropped lookup socket owns the
-    ///   address the peer will now use; the logged owner kind says which;
+    /// * equal but different port - impossible for one node id, so the
+    ///   recorded stamp came from an earlier run or a second process
+    ///   reusing the same keypair;
     /// * smaller - the peer never saw our newest stamp, so that packet was
     ///   rejected or lost and the peer still uses an older address.
     ///
@@ -74,34 +70,25 @@ impl SessionInner {
             .source
             .local_addr()
             .map_or_else(|_| "?".into(), |address| address.to_string());
-        let kind = if self
-            .transient_address
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            "lookup"
-        } else {
-            "live"
-        };
         let Some(theirs) = contents.recv_addr_list_version else {
             log::debug!(
-                "ADNL peer holds no address list for us: socket={kind} self={socket} peer={:?} {}",
+                "ADNL peer holds no address list for us: socket={socket} peer={:?} {}",
                 self.remote_id,
                 packet_shape(contents),
             );
             return;
         };
-        let (ours, owner, owner_lookup) = our_addr_view(&self.remote_id);
+        let (ours, owner) = our_addr_view(&self.remote_id);
         let mine = self.source.local_addr().map_or(0, |address| address.port());
-        let owner_kind = if owner_lookup { "lookup" } else { "live" };
         if theirs == ours && owner == mine {
             log::debug!(
-                "ADNL address view: peer={:?} socket={kind} holds={theirs} owner=this socket={socket} {}",
+                "ADNL address view: peer={:?} holds={theirs} owner=this socket={socket} {}",
                 self.remote_id,
                 packet_shape(contents),
             );
         } else {
             log::debug!(
-                "ADNL address view mismatch: peer={:?} holds={theirs} ours={ours} owner={owner_kind}:{owner} this_socket={kind}:{socket} {}",
+                "ADNL address view mismatch: peer={:?} holds={theirs} ours={ours} owner={owner} this_socket={socket} {}",
                 self.remote_id,
                 packet_shape(contents),
             );
@@ -112,22 +99,13 @@ impl SessionInner {
     ///
     /// The overlay wraps its queries in `overlay.query overlay:int256`, so the
     /// inner id - `overlay.ping`, `overlay.getRandomPeers`,
-    /// `overlay.getRandomPeersV2` - is what identifies the traffic, and the
-    /// socket kind says whether anyone is listening for it.
+    /// `overlay.getRandomPeersV2` - is what identifies the traffic.
     ///
     /// Answers are logged as well, keyed by peer, because a query and an
     /// answer exercise different directions of the same pair: comparing who
     /// answers us with who holds an address list for us separates "the peer
     /// never saw us" from "the peer saw us but does not originate anything".
     fn log_inbound_queries(&self, contents: &PacketContents) {
-        let socket_kind = if self
-            .transient_address
-            .load(std::sync::atomic::Ordering::Relaxed)
-        {
-            "lookup"
-        } else {
-            "live"
-        };
         for message in contents
             .message
             .iter()
@@ -135,7 +113,7 @@ impl SessionInner {
         {
             if let AdnlMessage::Answer { query_id, .. } = message {
                 log::debug!(
-                    "ADNL inbound answer: socket={socket_kind} peer={:?} query_id={}",
+                    "ADNL inbound answer: peer={:?} query_id={}",
                     self.remote_id,
                     query_id.to_hex(),
                 );
@@ -152,13 +130,13 @@ impl SessionInner {
             }
             match wrapped {
                 Some((inner, overlay)) => log::debug!(
-                    "ADNL inbound overlay query: socket={socket_kind} peer={:?} query_id={} inner=0x{inner:08x} overlay={overlay} len={}",
+                    "ADNL inbound overlay query: peer={:?} query_id={} inner=0x{inner:08x} overlay={overlay} len={}",
                     self.remote_id,
                     query_id.to_hex(),
                     query.len(),
                 ),
                 None => log::debug!(
-                    "ADNL inbound query: socket={socket_kind} peer={:?} query_id={} id={} len={}",
+                    "ADNL inbound query: peer={:?} query_id={} id={} len={}",
                     self.remote_id,
                     query_id.to_hex(),
                     peek_u32(query).map_or_else(|| "?".into(), |id| format!("0x{id:08x}")),

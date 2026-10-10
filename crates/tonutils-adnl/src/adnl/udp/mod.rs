@@ -112,20 +112,13 @@ struct PeerPairState {
     /// The peer keeps exactly one source address per node id and replaces it
     /// only on a strictly greater version, so comparing this value against the
     /// `recv_addr_list_version` the peer echoes back tells whether the address
-    /// the peer will use is ours or a lookup socket's.
+    /// the peer will use is one this process stamped or an older one.
     our_addr_version: i32,
     /// Local port of the socket that stamped `our_addr_version`.
     ///
-    /// Two sockets of the same ADNL node id advertise versions one second
-    /// apart, so the version alone says which stamp won but not which socket
-    /// the peer will now talk to.
+    /// One node id sends from one socket, so this is the port the peer
+    /// addresses this node on whenever the recorded version wins.
     our_addr_socket: u16,
-    /// Whether `our_addr_socket` is a one-shot lookup socket.
-    ///
-    /// A lookup socket is dropped as soon as its query returns, so a peer whose
-    /// recorded address is owned by one is unreachable even though the live
-    /// session is still listening on its own port.
-    our_addr_lookup: bool,
 }
 
 /// Returns a short name for an `adnl.Message` used in receive traces.
@@ -230,25 +223,20 @@ fn note_peer_reinit_date(remote_id: &[u8; 32], date: i32) -> bool {
 /// `AdnlPeerPairImpl::update_addr_list`: within the same second the incumbent
 /// socket keeps the address, so the recorded port stays the one the peer is
 /// actually using.
-fn note_our_addr_version(remote_id: &[u8; 32], version: i32, socket: u16, lookup: bool) {
+fn note_our_addr_version(remote_id: &[u8; 32], version: i32, socket: u16) {
     with_peer_pair_state(remote_id, |state| {
         if version > state.our_addr_version {
             state.our_addr_version = version;
             state.our_addr_socket = socket;
-            state.our_addr_lookup = lookup;
         }
     })
 }
 
-/// Version this process last stamped for `remote_id`, the local port of the
-/// socket that stamped it, and whether that socket is a transient lookup one.
-fn our_addr_view(remote_id: &[u8; 32]) -> (i32, u16, bool) {
+/// Version this process last stamped for `remote_id` and the local
+/// port of the socket that stamped it.
+fn our_addr_view(remote_id: &[u8; 32]) -> (i32, u16) {
     with_peer_pair_state(remote_id, |state| {
-        (
-            state.our_addr_version,
-            state.our_addr_socket,
-            state.our_addr_lookup,
-        )
+        (state.our_addr_version, state.our_addr_socket)
     })
 }
 

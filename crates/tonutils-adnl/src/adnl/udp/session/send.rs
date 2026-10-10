@@ -114,15 +114,9 @@ impl SessionInner {
     /// pair and replaces it only on a strictly greater `version`, so a
     /// frozen value makes the *first* session to reach a peer win
     /// forever.  Re-stamping each packet with the time it is sent keeps
-    /// the long-lived session's address current.
-    ///
-    /// Ties are the remaining case: two sessions of the same ADNL node id
-    /// that send inside the same second both advertise the same `version`,
-    /// and the incumbent keeps the address. A lookup session therefore
-    /// stamps one second ahead of the wall clock when
-    /// [`AdnlUdpSession::set_transient_address`] is on, so it wins the
-    /// exchange it is waiting for, and the live session's next keepalive
-    /// takes the version lead back.
+    /// the long-lived session's address current, and one socket per node
+    /// id means every stamp advertises the same, always-reachable
+    /// address.
     ///
     /// `reinit_date` must equal the packet level reinit date
     /// ([`local_reinit_date`]): upstream compares it against the pair's
@@ -133,11 +127,7 @@ impl SessionInner {
     /// restarted sequence numbers and all later answers would be lost.
     fn fill_address(&self, state: &SessionState, contents: &mut PacketContents) {
         if contents.address.is_none() {
-            let version = if self.transient_address.load(Ordering::Relaxed) {
-                now_i32().saturating_add(1)
-            } else {
-                now_i32()
-            };
+            let version = now_i32();
             contents.address = Some(AddressList {
                 addrs: Vec::new(),
                 version,

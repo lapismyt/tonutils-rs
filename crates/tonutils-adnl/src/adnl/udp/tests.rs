@@ -7,7 +7,7 @@ use tonutils_tl::{Int256, Message as AdnlMessage};
 
 use crate::{
     AdnlAesParams, AdnlChannelCipher, AdnlChannelPacket, AdnlError, AdnlUdpPeer, AdnlUdpSession,
-    KeyPair, decrypt_direct, encrypt_direct, now_i32, ordered_channel_ciphers,
+    KeyPair, decrypt_direct, encrypt_direct, ordered_channel_ciphers,
 };
 
 #[test]
@@ -562,42 +562,6 @@ async fn address_version_is_restamped_on_every_packet() {
     assert!(
         second > first,
         "second packet must advertise a later address version, got {first} then {second}"
-    );
-}
-
-/// Two sessions of the same ADNL node id that send inside the same second tie
-/// on `version` and the incumbent keeps the address, so a one-shot lookup
-/// socket would never receive the answer to its own query.  A session marked
-/// with [`AdnlUdpSession::set_transient_address`] advertises one second ahead
-/// of the wall clock and wins that single exchange; the live session's next
-/// keepalive then carries a later timestamp and reclaims the address.
-#[tokio::test]
-async fn transient_session_stamps_one_second_ahead_of_a_plain_session() {
-    let (plain_sender, plain_receiver) = direct_pair().await;
-    let (marked_sender, marked_receiver) = direct_pair().await;
-    marked_sender.set_transient_address(true);
-
-    let before = now_i32();
-    plain_sender
-        .send_contents(custom_packet(vec![1]))
-        .await
-        .unwrap();
-    marked_sender
-        .send_contents(custom_packet(vec![2]))
-        .await
-        .unwrap();
-    let after = now_i32();
-
-    let plain = receive_address_version(&plain_receiver).await;
-    let marked = receive_address_version(&marked_receiver).await;
-
-    assert!(
-        (before..=after).contains(&plain),
-        "plain session must stamp the wall clock, got {plain} outside [{before}, {after}]"
-    );
-    assert!(
-        (before + 1..=after + 1).contains(&marked),
-        "transient session must stamp one second ahead, got {marked} outside [{before}, {after}] + 1"
     );
 }
 
