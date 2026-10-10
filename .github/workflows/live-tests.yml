@@ -91,8 +91,10 @@ jobs:
     timeout-minutes: 15
     env:
       # Surface mempool/ADNL diagnostics in the live-test logs so failed runs
-      # can be traced without reproducing them locally.
-      RUST_LOG: tonutils_mempool=debug,tonutils_adnl=info
+      # can be traced without reproducing them locally. The ADNL target must be
+      # debug: the inbound query census, per-peer address view, and ping
+      # senders all log at debug level and would otherwise be invisible.
+      RUST_LOG: tonutils_mempool=debug,tonutils_adnl=debug,tonutils_overlay=debug
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -177,29 +179,50 @@ jobs:
         env:
           TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS || '300' }}
         # Job logs require admin access, so a failed acceptance run must
-        # publish its own diagnosis: the delivery metrics and DHT address
-        # publishing lines go to a check annotation and a step summary, both
-        # readable on a public repo without admin rights.
+        # publish its own diagnosis: final metrics, DHT address publishing
+        # lines, the inbound query census by constructor, ping senders, and
+        # per-peer address-view counters go to a check annotation and a step
+        # summary, both readable on a public repo without admin rights.
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/delivery.log"
           rc=0
           cargo test -p tonutils-mempool --test live configured_seed_delivers_valid_external_message -- --ignored --nocapture 2>&1 | tee "$log" || rc=$?
           if [ "$rc" -ne 0 ]; then
-            key=$(grep -E 'phase=delivery|dht address publish' "$log" | tail -n 20)
-            waiting=$(grep -E 'phase=waiting' "$log" | tail -n 5)
-            msg=$(printf '%s\n%s\n' "$key" "$waiting" | sed '/^$/d' | awk 'BEGIN{ORS="%0A"}1')
-            if [ -z "$msg" ]; then
-              msg=$(tail -n 10 "$log" | awk 'BEGIN{ORS="%0A"}1')
-            fi
-            echo "::error title=Mempool delivery test failed::$msg"
+            set +e
+            diag="$RUNNER_TEMP/delivery-diag.txt"
+            {
+              echo "-- final metrics --"
+              grep -E 'phase=delivery|phase=waiting' "$log" | tail -n 4
+              echo "-- dht address publishing --"
+              grep 'dht address publish' "$log"
+              echo "-- inbound query census (distinct peers / total) --"
+              for spec in 'ping 690cb481' 'capabilities dee618f8' 'getRandomPeers 48ee64ab' 'getRandomPeersV2 a58e7ecc'; do
+                set -- $spec
+                all=$(grep 'ADNL inbound overlay query:' "$log" | grep "inner=0x$2" | grep -oE 'peer=\[[0-9, ]+\]')
+                distinct=$(printf '%s\n' "$all" | sed '/^$/d' | sort -u | wc -l)
+                total=$(printf '%s\n' "$all" | sed '/^$/d' | wc -l)
+                echo "$1: distinct_peers=$distinct total=$total"
+              done
+              echo "-- ping senders (we answered overlay.ping) --"
+              grep -oE 'answering overlay.ping for peer=PeerId\(\[[0-9, ]+\]\)' "$log" | sed 's/answering overlay.ping for //' | sort -u
+              echo "-- distinct peers holding no address list for us --"
+              grep 'holds no address list for us' "$log" | grep -oE 'peer=\[[0-9, ]+\]' | sort -u | wc -l
+              echo "-- distinct peers holding an address list for us --"
+              grep 'ADNL address view' "$log" | grep -oE 'peer=\[[0-9, ]+\]' | sort -u | wc -l
+              echo "-- growth --"
+              grep -E 'peer growth' "$log" | tail -n 5
+              echo "-- log tail --"
+              tail -n 40 "$log"
+            } > "$diag"
             {
               echo '### Mempool delivery test failed'
               echo
               echo '```'
-              printf '%s\n' "$key"
-              printf '%s\n' "$waiting"
+              cat "$diag"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
+            msg=$(awk 'BEGIN{ORS="%0A"}1' "$diag")
+            echo "::error title=Mempool delivery test failed::$msg"
           fi
           exit "$rc"
