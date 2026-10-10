@@ -332,6 +332,99 @@ impl DhtKeyDescription {
         out.extend_from_slice(&tl_proto::serialize(self.clone()));
         out
     }
+
+    /// Serialize with an empty signature — the exact bytes that
+    /// are signed by the key owner and verified by the DHT.
+    ///
+    /// Upstream signs `serialize_tl_object(description.tl(), true)`,
+    /// i.e. the boxed form with the signature field still empty
+    /// (`publish_address_list` in `adnl/adnl-local-id.cpp`).
+    #[must_use]
+    pub fn unsigned_bytes(&self) -> Vec<u8> {
+        let unsigned = Self {
+            key: self.key.clone(),
+            id: self.id.clone(),
+            update_rule: self.update_rule.clone(),
+            signature: Vec::new(),
+        };
+        unsigned.to_sign_bytes()
+    }
+
+    /// Verifies the description signature against the signed public
+    /// key.  Accepts both the bare 64-byte Ed25519 signature and
+    /// the 68-byte form some DHT nodes return.
+    #[must_use]
+    pub fn verify_signature(&self) -> bool {
+        let PublicKey::Ed25519 { key } = &self.id else {
+            return false;
+        };
+        let Ok(public_key) = VerifyingKey::from_bytes(&key.0) else {
+            return false;
+        };
+        let Some(signature) = signature_slice(&self.signature) else {
+            return false;
+        };
+        public_key
+            .verify(&self.unsigned_bytes(), &signature)
+            .is_ok()
+    }
+}
+
+/// `dht.stored = dht.Stored;` — the `dht.store` answer.
+///
+/// BARE constructor with no fields: on the wire it is just the
+/// `0x7026fb08` constructor prefix.
+#[derive(TlRead, TlWrite, Debug, Clone, Copy, PartialEq, Eq)]
+#[tl(boxed, id = 0x7026fb08)]
+pub struct DhtStored;
+
+impl DhtValue {
+    /// Serialize with an empty signature — the exact bytes that
+    /// are signed by the key owner and verified by the DHT.
+    ///
+    /// Upstream signs `serialize_tl_object(value.tl(), true)`, the
+    /// boxed form with the signature field still empty
+    /// (`publish_address_list` in `adnl/adnl-local-id.cpp`).
+    #[must_use]
+    pub fn unsigned_bytes(&self) -> Vec<u8> {
+        let unsigned = Self {
+            key: self.key.clone(),
+            value: self.value.clone(),
+            ttl: self.ttl,
+            signature: Vec::new(),
+        };
+        tl_proto::serialize(unsigned)
+    }
+
+    /// Verifies the value signature against the public key that
+    /// owns the DHT key.  Accepts both the bare 64-byte Ed25519
+    /// signature and the 68-byte form some DHT nodes return.
+    #[must_use]
+    pub fn verify_signature(&self) -> bool {
+        let PublicKey::Ed25519 { key } = &self.key.id else {
+            return false;
+        };
+        let Ok(public_key) = VerifyingKey::from_bytes(&key.0) else {
+            return false;
+        };
+        let Some(signature) = signature_slice(&self.signature) else {
+            return false;
+        };
+        public_key
+            .verify(&self.unsigned_bytes(), &signature)
+            .is_ok()
+    }
+}
+
+/// The Ed25519 signature of a DHT value, tolerating the 68-byte
+/// form some DHT nodes return.
+fn signature_slice(signature: &[u8]) -> Option<Signature> {
+    let bytes = match signature {
+        signature if signature.len() == 64 => signature,
+        signature if signature.len() == 68 => &signature[4..],
+        _ => return None,
+    };
+    Signature::from_slice(bytes).ok()
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
