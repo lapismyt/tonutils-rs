@@ -23,8 +23,8 @@ pub use quic::{QuicServer, QuicSession, sni_for_public_key};
 #[cfg(feature = "udp")]
 pub use udp::{
     AdnlChannelCipher, AdnlChannelPacket, AdnlUdpPeer, AdnlUdpSession, AdnlUdpSocket,
-    channel_id_for_secret, decrypt_direct, encrypt_direct, now_i32, ordered_channel_ciphers,
-    reverse_channel_secret,
+    AdnlUdpTransport, channel_id_for_secret, decrypt_direct, encrypt_direct, now_i32,
+    ordered_channel_ciphers, reverse_channel_secret,
 };
 pub use wrappers::builder::AdnlBuilder;
 pub use wrappers::peer::AdnlPeer;

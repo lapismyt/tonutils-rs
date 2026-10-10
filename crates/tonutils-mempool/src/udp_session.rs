@@ -8,7 +8,9 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Instant;
 use tl_proto::TlRead;
-use tonutils_adnl::{AdnlAddress, AdnlUdpSession, KeyPair, PublicKey as AdnlPublicKey, now_i32};
+use tonutils_adnl::{
+    AdnlAddress, AdnlUdpSession, AdnlUdpTransport, KeyPair, PublicKey as AdnlPublicKey, now_i32,
+};
 use tonutils_overlay::{
     OverlayId, OverlaySession, PeerId, SeedDiscoveryLookup, SeedPeer, TypedDiscoveryLookup,
 };
@@ -94,6 +96,30 @@ pub(crate) fn valid_overlay_node(node: &OverlayNode, overlay: OverlayId, now: i3
 }
 
 impl AdnlUdpOverlaySession {
+    /// Returns the shared-transport session for one peer.
+    ///
+    /// Every ADNL/UDP session of this scanner - live overlay
+    /// members, DHT seed queries, address resolution, and peer
+    /// growth alike - resolves its socket through
+    /// [`AdnlUdpTransport::for_node`], so all of them send from
+    /// one source address per node id, exactly the upstream
+    /// `AdnlNetworkManager` model.  A peer therefore keeps a
+    /// single, always-reachable address for this node instead of
+    /// the dead port a one-shot lookup socket would otherwise
+    /// leave in its connection table.
+    #[allow(clippy::large_types_passed_by_value)]
+    async fn session_on_transport(
+        local_addr: std::net::SocketAddr,
+        local_keypair: KeyPair,
+        remote_addr: std::net::SocketAddr,
+        remote_public: AdnlPublicKey,
+    ) -> Result<AdnlUdpSession, String> {
+        let transport = AdnlUdpTransport::for_node(local_addr, local_keypair)
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(transport.session_for_peer(remote_public, remote_addr))
+    }
+
     pub async fn connect(
         peer: PeerId,
         local_addr: std::net::SocketAddr,
@@ -102,9 +128,8 @@ impl AdnlUdpOverlaySession {
         remote_public: AdnlPublicKey,
     ) -> Result<Self, String> {
         let session =
-            AdnlUdpSession::connect(local_addr, remote_addr, local_keypair, remote_public)
-                .await
-                .map_err(|error| error.to_string())?;
+            Self::session_on_transport(local_addr, local_keypair, remote_addr, remote_public)
+                .await?;
         Ok(Self {
             peer,
             session,
@@ -124,15 +149,13 @@ impl AdnlUdpOverlaySession {
         remote_public: AdnlPublicKey,
         timeout: Duration,
     ) -> Result<Self, String> {
-        let session = AdnlUdpSession::connect_with_channel(
-            local_addr,
-            remote_addr,
-            local_keypair,
-            remote_public,
-            timeout,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
+        let session =
+            Self::session_on_transport(local_addr, local_keypair, remote_addr, remote_public)
+                .await?;
+        session
+            .establish_channel(timeout)
+            .await
+            .map_err(|error| error.to_string())?;
         Ok(Self {
             peer,
             session,
@@ -177,15 +200,13 @@ impl AdnlUdpOverlaySession {
         remote_public: AdnlPublicKey,
         timeout: Duration,
     ) -> Result<Self, String> {
-        let session = AdnlUdpSession::connect_with_channel(
-            local_addr,
-            remote_addr,
-            local_keypair,
-            remote_public,
-            timeout,
-        )
-        .await
-        .map_err(|error| error.to_string())?;
+        let session =
+            Self::session_on_transport(local_addr, local_keypair, remote_addr, remote_public)
+                .await?;
+        session
+            .establish_channel(timeout)
+            .await
+            .map_err(|error| error.to_string())?;
         let session = Self {
             peer,
             session,

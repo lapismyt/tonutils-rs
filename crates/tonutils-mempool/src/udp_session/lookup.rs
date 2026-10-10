@@ -7,6 +7,29 @@ use super::*;
 
 use tonutils_tl::tl::network::DhtValue;
 
+/// Returns the shared-transport session for one lookup hop.
+///
+/// Lookups resolve their socket through
+/// [`AdnlUdpTransport::for_node`], the same transport the live
+/// overlay sessions use, so a one-shot query sends from the
+/// node's single source address instead of a second port the
+/// peer would keep in its connection table only until the query
+/// returns.  The session is per peer id: a peer that already
+/// holds a live session is queried on it, and a peer that does
+/// not get a fresh one that ends with the query.
+#[allow(clippy::large_types_passed_by_value)]
+async fn shared_session(
+    local_addr: std::net::SocketAddr,
+    local_keypair: KeyPair,
+    remote: AdnlPublicKey,
+    remote_addr: std::net::SocketAddr,
+) -> Result<AdnlUdpSession, String> {
+    let transport = AdnlUdpTransport::for_node(local_addr, local_keypair)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(transport.session_for_peer(remote, remote_addr))
+}
+
 /// Stop resolving DHT `address` records for one seed once this many overlay
 /// candidates resolved.  Seed discovery queries every configured seed in
 /// parallel, so a handful of peers per seed already saturates the peer pool.
@@ -152,20 +175,15 @@ async fn resolve_address_on_session(
                     return None;
                 };
                 let remote = AdnlPublicKey::from_bytes(peer.peer.as_bytes())?;
-                let mut hop =
-                    match AdnlUdpSession::connect(local_addr, remote_addr, *local_keypair, remote)
-                        .await
-                    {
-                        Ok(hop) => hop,
-                        Err(error) => {
-                            log::debug!(
-                                "resolve_address: connect to {remote_addr} failed: {error}"
-                            );
-                            return None;
-                        }
-                    };
-                hop.set_confirm_channels(false);
-                hop.set_transient_address(true);
+                let mut hop = match shared_session(local_addr, *local_keypair, remote, remote_addr)
+                    .await
+                {
+                    Ok(hop) => hop,
+                    Err(error) => {
+                        log::debug!("resolve_address: connect to {remote_addr} failed: {error}");
+                        return None;
+                    }
+                };
                 let response =
                     query_dht_value_on_session(&mut hop, remote_addr, address_key, 1, timeout)
                         .await;
@@ -216,12 +234,9 @@ pub fn udp_dht_lookup(
                 let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
                 let address = seed.address.parse().ok()?;
                 Some(async move {
-                    let session =
-                        AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
-                            .await
-                            .ok()?;
-                    session.set_confirm_channels(false);
-                    session.set_transient_address(true);
+                    let session = shared_session(local_addr, local_keypair, remote, address)
+                        .await
+                        .ok()?;
                     session
                         .dht_find_node(tonutils_tl::Int256::random(), node_count, timeout)
                         .await
@@ -380,16 +395,13 @@ async fn query_overlay_seed(
             let overlay_dht_key = overlay_dht_key.clone();
             Some(async move {
                 let mut session =
-                    match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await
-                    {
+                    match shared_session(local_addr, local_keypair, remote, address).await {
                         Ok(session) => session,
                         Err(error) => {
                             log::debug!("query_overlay_seed: connect to {address} failed: {error}");
                             return None;
                         }
                     };
-                session.set_confirm_channels(false);
-                session.set_transient_address(true);
                 let response = query_dht_value_on_session(
                     &mut session,
                     address,
@@ -614,15 +626,13 @@ async fn query_overlay_random_peers(
     overlay: OverlayId,
     timeout: Duration,
 ) -> Option<Vec<SeedPeer>> {
-    let session = match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
+    let session = match shared_session(local_addr, local_keypair, remote, address).await {
         Ok(session) => session,
         Err(error) => {
             log::debug!("query_overlay_random_peers: connect to {address} failed: {error}");
             return None;
         }
     };
-    session.set_confirm_channels(false);
-    session.set_transient_address(true);
     log::debug!("query_overlay_random_peers: direct UDP ADNL session established to {address}");
     let overlay_int = tonutils_tl::Int256(overlay.as_bytes());
     log::debug!("query_overlay_random_peers: sending overlay.getRandomPeers to {address}");
@@ -727,15 +737,13 @@ async fn query_dht_value_seed(
     count: usize,
     timeout: Duration,
 ) -> Option<DhtValueResult> {
-    let session = match AdnlUdpSession::connect(local_addr, address, local_keypair, remote).await {
+    let session = match shared_session(local_addr, local_keypair, remote, address).await {
         Ok(session) => session,
         Err(error) => {
             log::debug!("query_dht_value_seed: connect to {address} failed: {error}");
             return None;
         }
     };
-    session.set_confirm_channels(false);
-    session.set_transient_address(true);
     match session
         .dht_find_value(key, count.min(i32::MAX as usize) as i32, timeout)
         .await
@@ -767,11 +775,9 @@ async fn query_dht_seed(
     node_count: i32,
     timeout: Duration,
 ) -> Option<Vec<tonutils_tl::tl::network::DhtNode>> {
-    let session = AdnlUdpSession::connect(local_addr, address, local_keypair, remote)
+    let session = shared_session(local_addr, local_keypair, remote, address)
         .await
         .ok()?;
-    session.set_confirm_channels(false);
-    session.set_transient_address(true);
     session
         .dht_find_node(tonutils_tl::Int256::random(), node_count, timeout)
         .await

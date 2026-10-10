@@ -16,7 +16,9 @@
 //! The transport is deliberately additive: [`AdnlUdpSession::connect`]
 //! keeps its signature and still gives every call its own connected
 //! socket, so existing callers keep working unchanged, while callers
-//! that need one session per peer adopt [`AdnlUdpTransport`].
+//! that need one session per peer adopt [`AdnlUdpTransport::for_node`],
+//! the process-wide transport cache keyed by node id and local
+//! address.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -78,10 +80,13 @@ pub(super) struct Route {
 }
 
 impl AdnlUdpTransport {
-    /// Binds the shared socket and starts its receive task.
+    /// Binds the shared socket.
     ///
-    /// The socket stays unconnected: the transport's task decides per
-    /// datagram which session it belongs to.
+    /// The socket stays unconnected: the transport's task decides
+    /// per datagram which session it belongs to.  The task itself
+    /// starts with the first session ([`Self::session_for`]), so
+    /// a transport that never serves a session releases its socket
+    /// as soon as its last handle is dropped.
     pub async fn bind(local_addr: SocketAddr, local: KeyPair) -> Result<Self, AdnlError> {
         let socket = UdpSocket::bind(local_addr).await?;
         let local_id = AdnlAddress::from(&local.public_key).to_bytes();
@@ -95,10 +100,38 @@ impl AdnlUdpTransport {
             demux: Mutex::new(DemuxState::default()),
             idle,
         });
-        let transport = Self {
-            inner: inner.clone(),
-        };
-        inner.start_demux();
+        Ok(Self { inner })
+    }
+
+    /// Returns the transport every session of this node id and
+    /// local address shares, binding it on first use.
+    ///
+    /// Upstream keeps one socket per ADNL node id
+    /// (`AdnlNetworkManager` in `adnl/adnl-network-manager.cpp`)
+    /// and pytoniq keeps a single `AdnlTransport` for the same
+    /// reason: a second socket for the same node id advertises a
+    /// second source address, while a peer keeps exactly one
+    /// address per node id and replaces it only on a strictly
+    /// greater `adnl.addressList.version`.  Sharing one socket is
+    /// therefore what keeps a one-shot lookup from outbidding a
+    /// live session's address list and leaving the peer with a
+    /// dead port in its connection table.
+    ///
+    /// Concurrent callers serialize on the cache lock, which is
+    /// held across the bind, so exactly one socket is bound per
+    /// key.  The cache holds weak handles and drops expired
+    /// entries, so a node id whose sessions and handles are all
+    /// gone releases its socket and binds fresh on the next use.
+    pub async fn for_node(local_addr: SocketAddr, local: KeyPair) -> Result<Self, AdnlError> {
+        let local_id = AdnlAddress::from(&local.public_key).to_bytes();
+        let key = (local_id, local_addr);
+        let mut transports = node_transports().lock().await;
+        if let Some(inner) = transports.get(&key).and_then(Weak::upgrade) {
+            return Ok(Self { inner });
+        }
+        transports.retain(|_, cached| Weak::upgrade(cached).is_some());
+        let transport = Self::bind(local_addr, local).await?;
+        transports.insert(key, Arc::downgrade(&transport.inner));
         Ok(transport)
     }
 
@@ -146,6 +179,31 @@ impl AdnlUdpTransport {
         sessions.insert(remote_id, Arc::downgrade(&session));
         session.into()
     }
+
+    /// Returns the session for `remote`, deriving its ADNL id.
+    pub fn session_for_peer(
+        &self,
+        remote: PublicKey,
+        remote_addr: SocketAddr,
+    ) -> super::AdnlUdpSession {
+        let remote_id = AdnlAddress::from(&remote).to_bytes();
+        self.session_for(remote_id, remote_addr, remote)
+    }
+}
+
+/// Transport handles of one process, keyed by node id and
+/// local address.
+type NodeTransports = HashMap<([u8; 32], SocketAddr), Weak<TransportInner>>;
+
+/// Process-wide transports, keyed by node id and local address.
+///
+/// The weak handles follow the transport's own reference
+/// counting: an entry expires once every session and every
+/// handle of that node id is gone.
+fn node_transports() -> &'static tokio::sync::Mutex<NodeTransports> {
+    static TRANSPORTS: std::sync::OnceLock<tokio::sync::Mutex<NodeTransports>> =
+        std::sync::OnceLock::new();
+    TRANSPORTS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()))
 }
 
 impl TransportInner {
@@ -169,10 +227,12 @@ impl TransportInner {
 
     /// Starts the demultiplexing task if it is not running.
     ///
-    /// Called by `bind` and by every `session_for`: the task drains
-    /// once the last session of this transport is dropped - releasing
-    /// the socket so a private transport's address can be rebound -
-    /// and a session created afterwards restarts it here.
+    /// Called by every `session_for`: the task drains once the
+    /// last session of this transport is dropped - releasing
+    /// the socket - and a session created afterwards restarts
+    /// it here.  A transport that never serves a session never
+    /// starts a task, so its socket is released with the
+    /// transport itself.
     fn start_demux(self: &Arc<Self>) {
         let mut demux = self.demux.lock().unwrap();
         if demux.running {
