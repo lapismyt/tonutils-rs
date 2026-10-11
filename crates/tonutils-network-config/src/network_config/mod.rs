@@ -1,7 +1,7 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::net::{Ipv4Addr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::ops::{Deref, DerefMut};
 use std::str::FromStr;
 
@@ -11,6 +11,10 @@ pub enum ConfigError {
     EmptyLiteServers,
     #[error("liteserver index {index} is out of bounds for {len} configured liteservers")]
     LiteServerIndexOutOfBounds { index: usize, len: usize },
+    #[error("global config JSON does not contain a supported bootstrap address")]
+    NoBootstrapAddresses,
+    #[error("bootstrap address is not usable: {0}")]
+    InvalidBootstrapAddress(String),
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -49,6 +53,22 @@ pub struct ConfigLiteServer {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConfigGlobal {
     pub liteservers: Vec<ConfigLiteServer>,
+}
+
+/// A validated network endpoint extracted from a global configuration.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ConfigBootstrapAddress {
+    pub address: SocketAddr,
+    pub public_key: Option<[u8; 32]>,
+}
+
+impl ConfigBootstrapAddress {
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.address.port() != 0
+            && !self.address.ip().is_unspecified()
+            && self.public_key.is_some_and(|key| key != [0; 32])
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -164,6 +184,177 @@ impl ConfigGlobal {
             .take(limit)
             .collect()
     }
+
+    /// Returns liteserver endpoints as generic bootstrap addresses.
+    ///
+    /// This is intentionally limited to data represented by [`ConfigGlobal`].
+    /// Applications that retain the original JSON can additionally call
+    /// [`extract_bootstrap_addresses`] to inspect DHT static nodes.
+    #[must_use]
+    pub fn bootstrap_addresses(&self) -> Vec<ConfigBootstrapAddress> {
+        self.liteservers
+            .iter()
+            .map(|server| ConfigBootstrapAddress {
+                address: SocketAddr::V4(server.socket_addr()),
+                public_key: Some(server.public_key()),
+            })
+            .filter(ConfigBootstrapAddress::is_valid)
+            .collect()
+    }
+}
+
+/// Extracts supported DHT and liteserver endpoints from raw global-config JSON.
+///
+/// The parser is deliberately tolerant of unrelated fields and of the several
+/// address-list shapes used by historical TON configs. It performs no network
+/// access and returns only syntactically valid socket addresses.
+pub fn extract_bootstrap_addresses(json: &str) -> Result<Vec<ConfigBootstrapAddress>, ConfigError> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|_| ConfigError::NoBootstrapAddresses)?;
+    let mut addresses = BTreeSet::new();
+
+    if let Some(servers) = value
+        .get("liteservers")
+        .and_then(serde_json::Value::as_array)
+    {
+        for server in servers {
+            let Some(ip) = server
+                .get("ip")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|ip| i32::try_from(ip).ok())
+            else {
+                continue;
+            };
+            let Some(port) = server
+                .get("port")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|port| u16::try_from(port).ok())
+            else {
+                continue;
+            };
+            let key = server.get("id").and_then(parse_public_key_value);
+            let candidate = ConfigBootstrapAddress {
+                address: SocketAddr::V4(SocketAddrV4::new(
+                    Ipv4Addr::from(ip.cast_unsigned()),
+                    port,
+                )),
+                public_key: key,
+            };
+            if candidate.is_valid() {
+                addresses.insert(candidate);
+            }
+        }
+    }
+
+    if let Some(nodes) = value
+        .pointer("/dht/static_nodes/nodes")
+        .and_then(serde_json::Value::as_array)
+    {
+        for node in nodes {
+            let key = node.get("id").and_then(parse_public_key_value);
+            let Some(addrs) = node.get("addr_list").and_then(|list| {
+                list.get("addrs")
+                    .or_else(|| list.get("addresses"))
+                    .and_then(serde_json::Value::as_array)
+            }) else {
+                continue;
+            };
+            for addr in addrs {
+                let Some(ip) = addr
+                    .get("ip")
+                    .and_then(serde_json::Value::as_i64)
+                    .and_then(|ip| i32::try_from(ip).ok())
+                else {
+                    continue;
+                };
+                let Some(port) = addr
+                    .get("port")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|port| u16::try_from(port).ok())
+                else {
+                    continue;
+                };
+                let candidate = ConfigBootstrapAddress {
+                    address: SocketAddr::new(IpAddr::V4(Ipv4Addr::from(ip.cast_unsigned())), port),
+                    public_key: key,
+                };
+                if candidate.is_valid() {
+                    addresses.insert(candidate);
+                }
+            }
+        }
+    }
+
+    let result = addresses.into_iter().collect::<Vec<_>>();
+    if result.is_empty() {
+        Err(ConfigError::NoBootstrapAddresses)
+    } else {
+        Ok(result)
+    }
+}
+
+/// Extracts only DHT static-node endpoints from a raw global config.
+pub fn extract_dht_addresses(json: &str) -> Result<Vec<ConfigBootstrapAddress>, ConfigError> {
+    let value: serde_json::Value =
+        serde_json::from_str(json).map_err(|_| ConfigError::NoBootstrapAddresses)?;
+    let mut addresses = BTreeSet::new();
+    let Some(nodes) = value
+        .pointer("/dht/static_nodes/nodes")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return Err(ConfigError::NoBootstrapAddresses);
+    };
+    for node in nodes {
+        let key = node.get("id").and_then(parse_public_key_value);
+        let Some(addrs) = node.get("addr_list").and_then(|list| {
+            list.get("addrs")
+                .or_else(|| list.get("addresses"))
+                .and_then(serde_json::Value::as_array)
+        }) else {
+            continue;
+        };
+        for addr in addrs {
+            let Some(ip) = addr
+                .get("ip")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|ip| i32::try_from(ip).ok())
+            else {
+                continue;
+            };
+            let Some(port) = addr
+                .get("port")
+                .and_then(serde_json::Value::as_u64)
+                .and_then(|port| u16::try_from(port).ok())
+            else {
+                continue;
+            };
+            let candidate = ConfigBootstrapAddress {
+                address: SocketAddr::new(IpAddr::V4(Ipv4Addr::from(ip.cast_unsigned())), port),
+                public_key: key,
+            };
+            if candidate.is_valid() {
+                addresses.insert(candidate);
+            }
+        }
+    }
+    let result = addresses.into_iter().collect::<Vec<_>>();
+    if result.is_empty() {
+        Err(ConfigError::NoBootstrapAddresses)
+    } else {
+        Ok(result)
+    }
+}
+
+fn parse_public_key_value(value: &serde_json::Value) -> Option<[u8; 32]> {
+    let key = value
+        .get("key")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| value.as_str())?;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(key)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(key))
+        .ok()?;
+    decoded.try_into().ok()
 }
 
 impl LiteServerBlacklist {

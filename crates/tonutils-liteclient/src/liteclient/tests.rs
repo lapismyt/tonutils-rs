@@ -330,7 +330,7 @@ async fn liteclient_basic_methods_build_requests_and_decode_responses() {
         )
         .await
         .unwrap();
-    assert!(stack.is_empty());
+    assert_eq!(stack, []);
 }
 
 #[tokio::test]

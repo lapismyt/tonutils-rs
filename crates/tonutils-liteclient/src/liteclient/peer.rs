@@ -121,6 +121,7 @@ impl<T> TagStore<Message, Message> for LitePeer<T> {
                 *random_id = random();
                 LiteTag::Long(*random_id)
             }
+            _ => unreachable!("LitePeer cannot tag non-LiteAPI ADNL messages"),
         }
     }
 
@@ -130,6 +131,7 @@ impl<T> TagStore<Message, Message> for LitePeer<T> {
             Message::Query { query_id, .. } => LiteTag::Int256(query_id.clone()),
             Message::Ping { random_id } => LiteTag::Long(*random_id),
             Message::Pong { random_id } => LiteTag::Long(*random_id),
+            _ => unreachable!("LitePeer cannot finish non-LiteAPI ADNL messages"),
         }
     }
 }

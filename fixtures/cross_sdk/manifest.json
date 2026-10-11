@@ -1,0 +1,71 @@
+{
+  "schema_revision": "upstream:3d478cbde854be03a18ab2a59f8fc3c565cf7d14;sha256:d6137cbeaa3324b632ccff597bc12c6bd7c194a7b6574fc57776266906cb90d6;constructors:672",
+  "comparison_rule": "Each case defines canonical logical fields. Every listed reference serializes those fields through its own TL engine; raw_hex is the byte string all implementations must produce for the identical input. The Rust test in crates/tonutils-tl/src/tl/cross_sdk.rs asserts that tonutils-rs serialization equals raw_hex and that reference bytes roundtrip through our decoders byte-for-byte. Field-to-field semantic relations (signatures, derived ids) are intentionally not checked; these fixtures compare wire layout only.",
+  "references": [
+    {
+      "name": "tonutils-go",
+      "pin": "v1.18.0",
+      "commit": "749603ab237d058cac5be4c42d36a52064db8b58",
+      "generator": "scripts/cross_sdk/gen_go",
+      "covers": ["dht", "overlay", "quic", "adnl"]
+    },
+    {
+      "name": "pytoniq-core",
+      "pin": "0.2.0",
+      "schema_sha256": "db5f20a51abcc76bb9b29ab1ab6b485e4f61b4a4fab05484bed6d2626ce9459c",
+      "schema_note": "The bundled pytoniq-core ton_api.tl contains no quic.* or overlay.ping constructors, so those cases are tonutils-go-only and are covered against the pinned upstream schema by the schema_audit test.",
+      "generator": "scripts/cross_sdk/gen_py.py",
+      "covers": ["dht", "overlay", "adnl"],
+      "excludes": ["quic.*", "overlay.ping"]
+    }
+  ],
+  "generated": "2026-09-23",
+  "fixtures": [
+    {
+      "name": "dht-queries",
+      "decoded_type": "dht.findNode / dht.findValue / dht.ping / dht.getSignedAddressList",
+      "evidence_kind": "offline_cross_sdk",
+      "path": "dht_queries.json",
+      "live_capture": "pending"
+    },
+    {
+      "name": "dht-responses",
+      "decoded_type": "dht.nodes / dht.node / dht.valueFound / dht.valueNotFound",
+      "evidence_kind": "offline_cross_sdk",
+      "path": "dht_responses.json",
+      "live_capture": "pending"
+    },
+    {
+      "name": "overlay-queries",
+      "decoded_type": "overlay.getRandomPeers / overlay.ping / overlay.query",
+      "evidence_kind": "offline_cross_sdk",
+      "path": "overlay_queries.json",
+      "live_capture": "pending"
+    },
+    {
+      "name": "quic-frames",
+      "decoded_type": "quic.query / quic.answer / quic.message",
+      "evidence_kind": "offline_cross_sdk",
+      "path": "quic_frames.json",
+      "live_capture": "pending"
+    },
+    {
+      "name": "adnl-messages",
+      "decoded_type": "adnl.message.query / adnl.message.answer / adnl.message.nop",
+      "evidence_kind": "offline_cross_sdk",
+      "path": "adnl_messages.json",
+      "live_capture": "pending"
+    },
+    {
+      "name": "live-dht-answers",
+      "decoded_type": "dht.nodes",
+      "evidence_kind": "live_capture",
+      "path": "live_dht_answers.json",
+      "live_capture": "2026-09-24",
+      "captured_from": "mainnet DHT seed 5.22.219.87:47163 via ADNL/UDP dht.findNode",
+      "captured_by": "cargo test -p tonutils-mempool --test live capture_cross_sdk_dht_answer_from_mainnet -- --ignored (TON_CAPTURE_CROSS_SDK=1)",
+      "sha256": "96d4b7c27667d1cc84267b7b7ae3e401deb841338e8b87d190aa1c8f1247b1fe",
+      "usage": "roundtrip-only: live answers have no canonical input fields; offline tests assert tonutils-rs decodes and re-encodes the raw bytes byte-for-byte"
+    }
+  ]
+}

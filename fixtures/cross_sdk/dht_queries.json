@@ -1,0 +1,53 @@
+{
+  "schema_revision": "upstream:3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
+  "cases": [
+    {
+      "name": "dht-find-node-k8",
+      "constructor": "dht.findNode",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "key": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+        "k": 8
+      },
+      "raw_hex": "6bcee26ca1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a108000000"
+    },
+    {
+      "name": "dht-find-value-k8",
+      "constructor": "dht.findValue",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "key": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+        "k": 8
+      },
+      "raw_hex": "11604baeb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b208000000"
+    },
+    {
+      "name": "dht-ping-42",
+      "constructor": "dht.ping",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {
+        "random_id": 42
+      },
+      "raw_hex": "183febcb2a00000000000000"
+    },
+    {
+      "name": "dht-get-signed-address-list",
+      "constructor": "dht.getSignedAddressList",
+      "references": [
+        "tonutils-go",
+        "pytoniq-core"
+      ],
+      "fields": {},
+      "raw_hex": "ed4879a9"
+    }
+  ]
+}

@@ -731,7 +731,7 @@ pub(super) fn bytes_needed(value: usize) -> usize {
         return 1;
     }
 
-    let bits = (usize::BITS - value.leading_zeros()) as usize;
+    let bits = value.bit_width() as usize;
     bits.div_ceil(8)
 }
 

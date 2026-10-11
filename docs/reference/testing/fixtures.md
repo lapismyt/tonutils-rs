@@ -37,6 +37,23 @@ structural and are not trustless proof verification. The
 gaps for account, block, config, shard-state, and Merkle proof/update payloads;
 network access is never required by the normal offline test suite.
 
+## Cross-SDK Fixture Set
+
+`fixtures/cross_sdk/` holds byte-comparison fixtures for the ADNL, DHT,
+overlay, and QUIC TL surface: each case stores language-neutral canonical
+`fields` plus the reference `raw_hex` bytes produced by pinned tonutils-go
+and pytoniq-core versions, and the `tonutils-tl` `cross_sdk` tests assert
+that tonutils-rs serializes the same input to exactly those bytes and that
+the bytes roundtrip. `evidence_kind` is `offline_cross_sdk` for generated
+cases and `live_capture` for raw mainnet bytes recorded by the ignored
+`capture_cross_sdk_dht_answer_from_mainnet` test; the manifest records
+pins, capture commands, dates, and file SHA-256. Reference verification
+runs in the `cross-sdk` CI job through `scripts/cross_sdk/gen_go` and
+`scripts/cross_sdk/gen_py.py`, so these fixtures never make the normal
+offline test suite depend on network access. The full format, invariants,
+and regeneration workflow are documented in
+[cross-SDK byte comparison](cross-sdk-comparison.md).
+
 ## Storage Rules
 
 - Keep binary fixtures small.

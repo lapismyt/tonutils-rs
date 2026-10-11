@@ -1,0 +1,8 @@
+filippo.io/edwards25519 v1.2.0 h1:crnVqOiS4jqYleHd9vaKZ+HKtHfllngJIiOpNpoJsjo=
+filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q77mc=
+github.com/pierrec/lz4/v4 v4.1.27 h1:+PhzhWDrjRj89TH2sw43nE3+4+W8lSxIuQadEHZyjUk=
+github.com/pierrec/lz4/v4 v4.1.27/go.mod h1:EoQMVJgeeEOMsCqCzqFm2O0cJvljX2nGZjcRIPL34O4=
+github.com/xssnick/raptorq v1.5.0 h1:sNtaD0JTO7rzTOIvITeFAz5Rla/to/gw5MKAy9DD1Mk=
+github.com/xssnick/raptorq v1.5.0/go.mod h1:mo5n6T4yaqZkNVMWonRuMS0tcyD4XQ6PwwTjaY3ZwQY=
+github.com/xssnick/tonutils-go v1.18.0 h1:VDH614303RfPQxO4e/GcfrtWbL3WanpHIfxlWVd0Ea0=
+github.com/xssnick/tonutils-go v1.18.0/go.mod h1:4z7dSfiufWiE2SnzgM0IYzlwpJ5UlHyPH45HP0QZNzQ=

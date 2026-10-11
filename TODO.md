@@ -192,6 +192,7 @@ postponed work moves to `# BACKLOG`.
 ## TL Schema And Code Generation
 
 - [ ] Build a checked TL schema workflow #tl
+  - [x] Add an offline audit of ADNL, DHT, overlay, and QUIC constructor ids and schema-shaped doc blocks against pinned upstream `ton_api.tl`, calibrated against live-wire ids #tl #tests
   - [ ] Add a local tool that parses `src/tl/schemas/lite_api.tl` and computes constructor ids #tl
     - [ ] Compare computed ids with handwritten `#[tl(id = ...)]` values #tl #tests
     - [ ] Fail tests when upstream schema and Rust types drift #tl #tests
@@ -360,30 +361,90 @@ postponed work moves to `# BACKLOG`.
 
 ## DHT, Overlay, QUIC, And Mempool
 
-- [ ] Research and implement native ADNL UDP #network #adnl
-  - [ ] Document packet format and channel negotiation #network #docs
-  - [ ] Add UDP codec tests #network #tests
-  - [ ] Add NAT and address list considerations #network
-- [ ] Implement DHT discovery #dht #network
-  - [ ] Add DHT TL types #dht #tl
-  - [ ] Verify node signatures #dht #crypto
+- [-] Research and implement native ADNL UDP #network #adnl
+  - [x] Add bounded encrypted datagram codec and malformed/trailing packet tests #network #tests
+  - [x] Add upstream-derived direct packet and AES-channel packet primitives with sequence checks #network #tests
+  - [x] Document packet format and channel negotiation #network #docs
+  - [x] Add UDP codec tests #network #tests
+  - [x] Bundle `adnl.message.createChannel` with the first `overlay.getRandomPeers` query so a dropped handshake cannot stall the session #adnl #overlay #tests
+  - [x] Hold up to `MAX_SESSION_CHANNELS` (3) channels per session and decode packets from any of them while the newest sends #adnl #network #tests
+  - [x] Add NAT and address list considerations: the route probe rejects non-globally-routable source addresses so a NAT'd host never poisons the DHT, `external_address` and `TON_MEMPOOL_EXTERNAL_ADDRESS` override the probe, and the limits are recorded in `docs/reference/network/dht-address-publishing.md` #network #docs
+  - [x] Split `crates/tonutils-adnl/src/adnl/udp.rs` into `udp/{mod,cipher,session,session/query,tests}.rs` to stay under the 1000 line repo limit #adnl #refactor
+- [-] Implement DHT discovery #dht #network
+  - [x] Add signed discovery records, verification, and explicit seed fallback #dht #crypto #tests
+  - [x] Extract and validate bootstrap endpoints from caller/global config JSON #dht #network #tests
+  - [x] Add upstream-derived ADNL/DHT/overlay TL packet types and round-trip fixtures #dht #tl #tests
+  - [x] Add canonical shard-public overlay ID derivation #dht #overlay #tests
   - [ ] Resolve liteservers and overlay peers through DHT #dht
-- [ ] Implement overlay protocol #overlay #network
-  - [ ] Add overlay node and peer exchange types #overlay #tl
-  - [ ] Add overlay query transport #overlay
-  - [ ] Add broadcast handling where needed for mempool #overlay #mempool
+  - [x] Resolve overlay seed peers through `dht.getValue(address)` with parallel per-node lookups so slow nodes cannot exhaust discovery time #dht #overlay #tests
+  - [x] Publish this node's own DHT `address` value (`DhtKey{pubkey_hash, "address", 0}`) so third parties can resolve and ping it: sign `dht.keyDescription` and `dht.value` over their boxed serialization with empty signatures exactly as upstream `publish_address_list` does, locate the closest nodes with one `dht.findNode` round, store on the four closest concurrently with `ttl = now + 3600`, verify retrieval with `dht.findValue`, re-publish every 10 minutes, and install the publisher on both `native_udp` and `native_udp_seeds_only` #dht #network #mempool #tests
+  - [x] Discover the external address behind NAT with an RFC 5389 STUN binding exchange: `BindingRequest` is sent from the shared ADNL transport socket through the new `AdnlUdpTransport::raw_exchange` (the demultiplexer captures the reply it would otherwise drop), so the reported mapping describes the socket sessions actually talk on rather than a separate probe socket NAT maps differently; the mapping is published only when two independent servers report the same `ip:port` (endpoint-independent mapping) and it passes the route probe's routable check, otherwise the round logs what it observed and skips publishing as before #dht #network #mempool #tests
+  - [ ] Confirm in a live run that the published `address` value is served by the DHT (`served_by_dht=true`) and that DHT-discovered peers resolve and ping this node through it: a NAT'd local host skips publishing unless STUN reaches agreement, so the evidence must come from a CI runner #dht #tests #mempool
+- [-] Implement overlay protocol #overlay #network
+  - [x] Add bounded overlay peer/routing/status primitives #overlay #tests
+  - [x] Add transport-neutral sessions, parallel receive loops, scoring, and shutdown #overlay #network #tests
+  - [ ] Add overlay node and peer exchange types from upstream schemas #overlay #tl
+    - [x] Add `overlay.node`, `overlay.nodes`, `overlay.node.toSign`, `overlay.getRandomPeers`, `overlay.ping`/`pong`, and the `overlay.query` wrappers #tl #overlay
+    - [x] Add `overlay.nodeV2`, `overlay.nodesV2`, `overlay.getRandomPeersV2`, and member certificate handling #tl #overlay
+  - [x] Add overlay query transport and live peer bootstrap #overlay
+  - [x] Add bounded broadcast hook for mempool #overlay #mempool
+  - [x] Connect scanner bootstrap to canonical ADNL UDP channels #adnl #overlay #mempool
+  - [x] Answer queries wrapped in `overlay.query`/`overlay.queryWithExtra` on the original query id after validating the overlay id #overlay #tests
+  - [x] Keep sessions alive across `OverlayConfig::peer_idle_timeout` while protocol traffic flows inside `receive` #overlay #network #tests
+  - [x] Record process-wide protocol and discovery counters for live-run diagnostics #mempool #tests
+  - [ ] Become a verified overlay member so broadcasts are pushed to this node #overlay #network #mempool
+    - [x] Expand membership from `overlay.getRandomPeers` answers: resolve returned node addresses over DHT and add sessions for them #overlay #dht #mempool
+    - [x] Grow membership after bootstrap on a 10 s cadence up to `overlay_max_peers` (default 30, pytoniq's `max_peers`) #overlay #mempool
+    - [x] Keep a session alive with a 10 s `overlay.getRandomPeers` keepalive instead of a one second cadence #overlay #network
+    - [x] Gossip up to five harvested members back in `overlay.getRandomPeers` answers through the shared `OverlayMemberCache` #overlay #tests
+    - [x] Resolve growth candidate addresses through the bootstrap DHT resolver seeds instead of the answering member's own session, pytoniq `DhtClient.get_overlay_node` parity: `MempoolScannerBuilder::start` fills a shared resolver list from the resolved bootstrap seeds, `udp_peer_growth_with_resolvers` rotates candidates across them, and each `dht.findValue` follows `valueNotFound` closer nodes via `resolve_address_on_session` instead of discarding them, so a member that never answers `dht.findValue` costs one bounded hop rather than the whole lookup; candidates resolve concurrently, each with its own deadline #overlay #dht #mempool
+      - [x] Confirm in a CI run that growth adds sessions past the bootstrap set (`udp_peer_growth`/`udp_overlay_lookup` lines are in the delivery annotation): run 38052555677 registered 65 peers from a seed set of 8, up from 32 before the resolver-seed fix #mempool #tests #network
+      - [ ] Check how member addresses are taken from `overlay.getRandomPeers` answers before touching the address logic again: 8 of the 14 growth targets in one 600 s run were `173.234.75.234` on 8 distinct ports, and `set_transient_address` produced only 4 stray-answer lines, so stored-address rerouting alone does not explain the timeouts #overlay #dht #tests
+      - [ ] Check whether the missing answers are channel packets a lookup socket cannot decrypt: `recv_contents: dropping packet (prefix=<channel id> local_id=...)` fired 15 times in a 300 s growth-on run, and upstream `send_messages_from_queue` sends everything through `via_channel = channel_ready_ && !try_reinit`, so a member whose channel was negotiated by this node's live session answers on that channel while the one-shot socket holds no channel and drops the datagram; a paired 300 s growth-off run still produced only 3 `overlay.ping` against 35 distinct peers, so growth is not the cause of the low ping count #adnl #overlay #network #tests
+    - [ ] Treat `dht.static_nodes` entries as DHT contacts only: a 600 s run answered `overlay.getRandomPeers` from every DHT-discovered member and from none of the sixteen config seeds, so membership must come from discovery #overlay #dht
+    - [x] Re-stamp `adnl.addressList.version` with the send time on every packet so a one-shot discovery/growth socket cannot permanently own the source address a peer uses for `overlay.ping` and broadcasts #adnl #overlay #network
+    - [ ] Explain from live evidence why only a minority of peers run the pending drain for this node's `overlay.node` record: the record is accepted (peers do `overlay.ping` it and return it from `overlay.getRandomPeers`), so no admission gate drops it universally, and the first push is then a neighbour-selection lottery #overlay #tests
+      - [x] Resolve the `recv_addr_list_version` absence: it is a **per-peer** property, not a decoder fault and not per-packet state. A raw `flags:#` probe read straight off the decrypted payload agreed with the TL decode on every packet, and grouping by ADNL channel id showed 39 channels of which 25 never set bit 8 and 14 always do, with none mixed; `AdnlPeerPairImpl` has a single outbound packet builder and sets the flag unconditionally for channel packets, so upstream `master` cannot produce the split and the field is unreliable as a "does this peer know us" signal on mainnet #adnl #overlay #tests #network
+      - [ ] Make a peer able to originate `overlay.ping` for this node: upstream discovers a node only through `OverlayImpl::process_query`'s `add_peers(query.peers_)` on an inbound `overlay.getRandomPeers`, then `process_pending_peers()` pings it using the stored `conns_`, and for a direct packet `update_addr_list` runs at `adnl-peer.cpp:236` *after* the `too new/old reinit date`, `old seqno` and `new ack seqno` drops, so any packet lost to those checks leaves the peer with no address and no way to build the ping; live evidence confirms the correlation - every peer that pinged this node (4 of 4) reported a `recv_addr_list_version` for it, while all 17 peers that reported none answered queries yet never pinged #adnl #overlay #network #tests
+    - [x] Answer `tonNode.getCapabilities` (`0xdee618f8`) with `tonNode.capabilities 3 2 0`; upstream resolves it in `validator/full-node-queries.hpp:469` through `FullNodeQueries::handle_query`'s `ton_api::downcast_call` (generic fallback `:237` returns `unknown query`), **not** through `OverlayImpl::process_query` - pinned in `docs/reference/network/overlay.md`; live evidence made the earlier deferral moot, since the probe was 12 of 22 inbound overlay queries in one 300 s run, and the fields are the full-node *protocol* version plus a `flags` bitmask upstream passes as a literal `0` rather than any validator claim #tl #overlay
+    - [x] Answer `overlay.getRandomPeersV2` (`0xa58e7ecc`) with `overlay.nodesV2`; upstream dispatches it in `OverlayImpl::process_query` for every non-private overlay (`overlay/overlay.cpp:170`) and answers via `send_random_peers_v2`, whose self record for a Public overlay carries `flags = 0` and an empty member certificate, so the signature is the same `overlay.node.toSign` bytes as the V1 record #tl #overlay
+    - [x] Answer `dht.ping` (`0xcbeb3f18`) with `dht.pong` (`0x5a8aef81`) echoing `random_id`: the pytoniq nodes that make up the mempool overlay keep their peer lists with `Node.ping`, which sends `dht.ping` wrapped in `overlay.query` every 60 s and removes a peer after four unanswered pings (`pytoniq/adnl/adnl.py`), so silence dropped this node from every pytoniq member's broadcast fan-out; upstream answers the same constructor from `DhtMemberImpl::process_query(dht_ping)` (`dht/dht.cpp`), making the pong protocol-identical for pytoniq and DHT members alike #tl #overlay #mempool #tests
+    - [x] Verify `overlay.broadcast` signatures over the broadcast id instead of the raw data hash: `OverlayBroadcast::payload_if_valid` signed `sha256(data)`, while upstream signs `overlay.broadcast.toSign{sha256(overlay.broadcast.id{src, sha256(data), flags}), date}` with `src = PublicKey::compute_short_id()` zeroed when `BroadcastFlagAnySender()` (1) is set (`compute_broadcast_id` and `BroadcastSimple::to_sign`, `overlay/broadcast-simple.cpp`), so every genuine pushed broadcast failed the check and was dropped at `trace` level - CI run 38099811429 counted 401 arriving custom overlay messages against `custom_messages: 0`; the fix adds the `overlay.broadcast.id` constructor (`0x51fd789a`, pinned by `schema_audit.rs`) and covers plain, AnySender, and tampered cases with upstream-shaped signatures #tl #overlay #mempool #tests
+    - [ ] Stop one-shot lookup sockets from owning the address a peer stores for this node: `set_transient_address` stamps `adnl.addressList.version = now + 1` while the live session stamps `now`, so a lookup outbids the live socket even in the same second and the peer's stored `conns_` then points at a port that closes when the lookup returns; live evidence is decisive - of 61 peers in a 300 s run, all 4 that sent `overlay.ping` had the live socket pinned as our address owner while 0 of the 37 owned by a lookup socket ever pinged, and the bump only bought ~4 stray answers. The fix is pytoniq's model (one socket for DHT and overlay), now built as `AdnlUdpTransport` in `tonutils-adnl`: one unconnected socket per node id, a demultiplexing task routing by channel id and peer address, one `AdnlUdpSession` per peer (cloneable, all methods `&self`), and answers routed to in-flight queries by query id. `AdnlUdpSession::connect` keeps its own connected socket, so the resource semantics of every existing caller are unchanged #adnl #overlay #dht #network
+      - [x] Switch the mempool's `direct_factory`, `channel_factory`, `overlay_factory` and `query_dht_seed` to `AdnlUdpTransport::session_for` so DHT lookups and the live overlay session share one source address: every UDP path (address resolution, `dht.findNode`, seed queries, `overlay.getRandomPeers` growth, and the `AdnlUdpOverlaySession` constructors) resolves its socket through `AdnlUdpTransport::for_node`, the process-wide cache keyed by node id and local address, and lookups no longer mutate `confirm_channels`/`transient_address` on a session they do not own #adnl #overlay #dht
+      - [x] Delete `set_transient_address` and the `now + 1` stamp once lookups go through the shared transport, and re-run the live delivery test to confirm `overlay_packets > 0`: the mark, the bump, the per-pair `our_addr_lookup` bookkeeping, and the lookup/live log labels are gone - one node id now stamps one always-reachable address, so there is no version race to win and no dead port to record #adnl #overlay #tests
+    - [ ] Reach `overlay_packets > 0` from a local run; direct UDP is partly ICMP-blocked, so the fallbacks are a SOCKS5 UDP relay, GitHub Actions, or a standalone binary on a server #mempool #tests #network
 - [ ] Implement native Rust QUIC transport #quic #network
   - [ ] Define optional feature gating without native runtime dependencies #quic #features
   - [ ] Add peer and session lifecycle handling #quic #network
   - [ ] Model stream and datagram semantics with rate limiting and backpressure #quic #network #perf
   - [ ] Integrate QUIC with block-sync, fast-sync, and overlay communication #quic #network #overlay
   - [ ] Add offline fixtures and interoperability tests #quic #network #tests
-- [ ] Build mempool scanning support #mempool
-  - [ ] Study `yungwine/ton-mempool` behavior and map required overlay flows #mempool #docs
-  - [ ] Identify public API for pending external messages #mempool
-  - [ ] Add stream API for pending messages #mempool
-  - [ ] Add backpressure and filtering #mempool #perf
-  - [ ] Add tests with captured fixtures before live network tests #mempool #tests
+  - [ ] Find a peer that actually listens for QUIC before investing in discovery: a QUIC Version Negotiation probe (validated against `google.com:443`, `cloudflare.com:443`, `1.1.1.1` and `8.8.8.8`, all of which answered) got zero replies from all sixteen mainnet `nodes.json` dht-server seeds at the base ADNL port, at `port + 1000`, and at offsets `+1001 +2000 -1000 +100 +10 +1 -1 +10000 +30000`, so `quic_overlay_lookup` returning 0 peers is a property of the seed set and not of the client; `engine.quicAddr` exists for catchain/consensus between validators #quic #network #tests
+- [ ] Add official-node wire fixtures for ADNL UDP, overlay FEC, and QUIC #network #tests #overlay #quic
+  - [x] Add live mainnet DHT answer capture fixture `fixtures/cross_sdk/live_dht_answers.json` with manifest provenance #dht #tests
+  - [ ] Capture live QUIC query frames; local NAT currently blocks QUIC reachability #quic #tests
+  - [ ] Capture live `adnl.packetContents` and overlay FEC broadcast frames #network #overlay #tests
+- [x] Detect and fix cross-SDK wire divergence for DHT, overlay, ADNL, and QUIC TL frames #tl #quic #dht #tests
+  - [x] Audit hard-coded constructor ids and field layouts against pinned upstream `ton_api.tl`, tonutils-go v1.18.0, and pytoniq-core 0.2.0 #tl #tests
+  - [x] Fix `quic.message`, `quic.query`, and `quic.answer` ids and drop the non-existent query id field; correlate QUIC answers per bidirectional stream #quic #tl
+  - [x] Add cross-SDK byte-comparison fixtures, reference generators, tonutils-rs byte tests, and a `cross-sdk` CI job #tests #tl #ci
+  - [x] Document the CRC paren-stripping rule, cross-SDK mechanism, and verified QUIC framing in `docs/reference/` #docs #tl #quic
+- [ ] Implement feature-gated RLDP2 typed transfer path; keep legacy RLDP decode-only until fixtures exist #rldp #network #tests
+- [x] Build mempool scanning support #mempool
+  - [x] Study `yungwine/ton-mempool` behavior and map required overlay flows #mempool #docs
+  - [x] Identify public API for pending external messages #mempool
+  - [x] Add stream API for pending messages #mempool
+  - [x] Add bounded backpressure and fast-path filtering #mempool #perf
+  - [x] Add offline structural tests before live network tests #mempool #tests
+  - [x] Add lazy decode, dedup TTL/eviction, diagnostics, and overlay receive adapter #mempool #tests
+  - [x] Add merged bootstrap builder and async global-config resolution #mempool #network #tests
+  - [x] Run mainnet/testnet DHT live probes with the existing live-test workflow #mempool #network #tests #ci
+  - [x] Add canonical `tonNode.externalMessageBroadcast` fixture and seed-only stream delivery #mempool #tests #network
+  - [x] Add overlay DHT discovery and QUIC discovery live tests with workflow steps and `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` soft-skip #mempool #tests #ci
+  - [x] Wire `native_quic` seed discovery through `quic_overlay_lookup` #quic #mempool
+  - [-] Add live FEC broadcast coverage for external messages - requires live seed configuration in GitHub Actions secrets #mempool #tests #network
+  - [ ] Add live coverage for receiving `overlay.ping` and a pushed broadcast from a verified member #mempool #overlay #tests
 
 ## CLI And Shell Automation
 
@@ -398,6 +459,15 @@ postponed work moves to `# BACKLOG`.
     - [ ] Support `--output raw` or hex/base64 where commands return bytes #cli #tl
     - [-] Keep human output separate from stderr diagnostics #cli
     - [ ] Add stable error objects for JSON output #cli
+  - [ ] Add configuration inputs suitable for shell scripts #cli
+    - [ ] Accept liteserver config path, inline JSON, and environment variables #cli #network
+    - [ ] Accept explicit peer address, public key, and timeout overrides #cli #network
+    - [ ] Add `--mainnet`, `--testnet`, and custom config selection when network config support is stable #cli #network
+    - [ ] Add `--timeout`, `--retries`, and `--failover` options for network commands #cli #balancer
+  - [ ] Mirror LiteClient public API in CLI commands #cli #liteclient
+    - [ ] `liteclient masterchain-info` #cli #liteclient
+    - [ ] `liteclient time` and `liteclient version` #cli #liteclient
+    - [ ] `liteclient raw-query` accepting hex, base64,cts for JSON output #cli
   - [ ] Add configuration inputs suitable for shell scripts #cli
     - [ ] Accept liteserver config path, inline JSON, and environment variables #cli #network
     - [ ] Accept explicit peer address, public key, and timeout overrides #cli #network
@@ -461,6 +531,7 @@ postponed work moves to `# BACKLOG`.
   - [ ] `cargo test` #tests
   - [ ] `cargo test --all-features` #tests #features
 - [ ] Add fixture strategy #tests
+  - [x] Add cross-SDK fixture set with pinned tonutils-go and pytoniq-core reference bytes verified in CI #tests #tl #ci
   - [ ] Store binary fixtures with source notes #tests #docs
   - [ ] Keep live-network tests ignored by default #tests
   - [ ] Add deterministic random seeds where tests do not require cryptographic randomness #tests

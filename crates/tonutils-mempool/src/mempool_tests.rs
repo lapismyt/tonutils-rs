@@ -1,0 +1,279 @@
+use super::*;
+use futures::StreamExt;
+
+struct PendingSession {
+    peer: PeerId,
+}
+
+impl OverlaySession for PendingSession {
+    fn peer_id(&self) -> PeerId {
+        self.peer
+    }
+
+    fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+        Box::pin(std::future::pending())
+    }
+
+    fn send(&mut self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn boc(body: u8) -> Vec<u8> {
+    vec![0xb5, 0xee, 0x9c, 0x72, body]
+}
+
+fn config() -> MempoolConfig {
+    MempoolConfig {
+        validate_message: false,
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn publishes_once_for_duplicate_peers() {
+    let scanner = MempoolScanner::new(config()).unwrap();
+    let mut events = Box::pin(scanner.events());
+    let routing = RoutingMetadata::new(OverlayId::from_name(b"test"), PeerId::from_bytes([1; 32]));
+    let raw = boc(7);
+    assert!(
+        scanner
+            .ingest(raw.clone(), routing.clone())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(scanner.ingest(raw, routing).await.unwrap().is_none());
+    assert!(matches!(
+        events.next().await,
+        Some(MempoolEvent::ExternalMessage { .. })
+    ));
+}
+
+#[tokio::test]
+async fn callback_handler_receives_external_event() {
+    let scanner = Arc::new(MempoolScanner::new(config()).unwrap());
+    let (sent, received) = tokio::sync::oneshot::channel();
+    let handler_scanner = scanner.clone();
+    let task = tokio::spawn(async move {
+        let mut sent = Some(sent);
+        handler_scanner
+            .run_handler(move |event| {
+                let sender = if matches!(event, MempoolEvent::ExternalMessage { .. }) {
+                    sent.take()
+                } else {
+                    None
+                };
+                async move {
+                    if let Some(sender) = sender {
+                        let _ = sender.send(());
+                    }
+                }
+            })
+            .await;
+    });
+    scanner
+        .ingest(
+            boc(8),
+            RoutingMetadata::new(OverlayId::from_name(b"test"), PeerId::from_bytes([1; 32])),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), received)
+        .await
+        .unwrap()
+        .unwrap();
+    task.abort();
+}
+
+#[test]
+fn event_exposes_lazy_message_without_decoding() {
+    let event = MempoolEvent::ExternalMessage {
+        hash: [3; 32],
+        raw_boc: Arc::from([0xb5, 0xee, 0x9c, 0x72].as_slice()),
+        destination: None,
+        routing: RoutingMetadata::new(OverlayId::from_name(b"test"), PeerId::from_bytes([1; 32])),
+        timestamp: SystemTime::now(),
+    };
+    let lazy = event.lazy_message().unwrap();
+    assert_eq!(lazy.hash(), [3; 32]);
+    assert_eq!(lazy.raw_boc().as_ref(), [0xb5, 0xee, 0x9c, 0x72]);
+}
+
+#[tokio::test]
+async fn rejects_non_boc_fast() {
+    let scanner = MempoolScanner::new(config()).unwrap();
+    assert_eq!(
+        scanner
+            .ingest(
+                vec![1, 2, 3, 4],
+                RoutingMetadata::new(OverlayId::from_name(b"test"), PeerId::from_bytes([1; 32]))
+            )
+            .await,
+        Err(MempoolError::InvalidBoc)
+    );
+}
+
+#[tokio::test]
+async fn builder_merges_and_deduplicates_explicit_seeds() {
+    let seed = SeedPeer {
+        peer: PeerId::from_bytes([9; 32]),
+        address: "127.0.0.1:30303".into(),
+    };
+    let (scanner, manager, events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .bootstrap_timeout(Duration::ZERO)
+        .seeds([seed.clone(), seed])
+        .start()
+        .await
+        .unwrap();
+
+    scanner
+        .ingest(
+            vec![0xb5, 0xee, 0x9c, 0x72, 1],
+            RoutingMetadata::new(
+                OverlayId::MAINNET_BASECHAIN_OVERLAY_ID,
+                PeerId::from_bytes([9; 32]),
+            ),
+        )
+        .await
+        .unwrap();
+    let mut events = Box::pin(events);
+    assert!(matches!(
+        events.next().await,
+        Some(MempoolEvent::ExternalMessage { .. })
+    ));
+    manager.shutdown();
+}
+
+#[tokio::test]
+async fn builder_requires_a_verified_bootstrap_source() {
+    let result = MempoolScannerBuilder::new()
+        .download_config(false)
+        .start()
+        .await;
+    assert!(matches!(result, Err(MempoolError::NoBootstrapPeers)));
+}
+
+#[tokio::test]
+async fn seed_only_mode_ignores_global_discovery_sources() {
+    let key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let seed = SeedPeer::from_public_key(key.public_key.to_bytes(), "127.0.0.1:30303");
+    let result = MempoolScannerBuilder::new()
+        .global_config_json("not json")
+        .seed(seed)
+        .bootstrap_timeout(Duration::ZERO)
+        .native_udp_seeds_only("0.0.0.0:0".parse().unwrap(), key, None)
+        .start()
+        .await;
+    assert!(result.is_ok());
+    if let Ok((_, manager, _)) = result {
+        manager.shutdown_wait().await;
+    }
+}
+
+#[tokio::test]
+async fn builder_connects_validated_peers_through_factory() {
+    let peer = PeerId::from_bytes([5; 32]);
+    let seed = SeedPeer {
+        peer,
+        address: "127.0.0.1:30303".into(),
+    };
+    let factory: OverlaySessionFactory = Arc::new(move |seed| {
+        Box::pin(async move {
+            assert_eq!(seed.peer, peer);
+            Ok(Box::new(PendingSession { peer }) as Box<dyn OverlaySession>)
+        })
+    });
+    let (_scanner, manager, _events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .seed(seed)
+        .session_factory(factory)
+        .start()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    assert_eq!(manager.peer_count().await, 1);
+    manager.shutdown();
+}
+
+#[tokio::test]
+async fn builder_retains_explicit_seeds_when_discovery_succeeds() {
+    let seed_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let discovered_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let seed = SeedPeer::from_public_key(seed_key.public_key.to_bytes(), "127.0.0.1:30303");
+    let discovered =
+        SeedPeer::from_public_key(discovered_key.public_key.to_bytes(), "127.0.0.1:30304");
+    let factory: OverlaySessionFactory = Arc::new(move |candidate| {
+        Box::pin(async move {
+            Ok(Box::new(PendingSession {
+                peer: candidate.peer,
+            }) as Box<dyn OverlaySession>)
+        })
+    });
+    let lookup: SeedDiscoveryLookup = Arc::new(move |_| {
+        let discovered = discovered.clone();
+        Box::pin(async move { vec![discovered] })
+    });
+    let (_scanner, manager, _events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .seed(seed)
+        .seed_discovery_lookup(lookup)
+        .session_factory(factory)
+        .start()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    assert_eq!(manager.peer_count().await, 2);
+    manager.shutdown();
+}
+
+#[tokio::test]
+async fn dedup_capacity_is_global_across_shards() {
+    let scanner = MempoolScanner::new(MempoolConfig {
+        dedup_shards: 8,
+        max_dedup_entries: 1,
+        validate_message: false,
+        ..Default::default()
+    })
+    .unwrap();
+    let routing = RoutingMetadata::new(OverlayId::from_name(b"test"), PeerId::from_bytes([1; 32]));
+    assert!(
+        scanner
+            .ingest(boc(1), routing.clone())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(scanner.ingest(boc(2), routing).await.unwrap().is_some());
+    assert!(scanner.dedup_entries.load(Ordering::Relaxed) <= 1);
+}
+
+#[tokio::test]
+async fn concurrent_ingest_publishes_one_copy() {
+    let scanner = Arc::new(MempoolScanner::new(config()).unwrap());
+    let routing = RoutingMetadata::new(OverlayId::from_name(b"test"), PeerId::from_bytes([1; 32]));
+    let first = scanner.ingest(boc(7), routing.clone());
+    let second = scanner.ingest(boc(7), routing);
+    let (first, second) = tokio::join!(first, second);
+    let accepted = [first.unwrap(), second.unwrap()]
+        .into_iter()
+        .flatten()
+        .count();
+    assert_eq!(accepted, 1);
+    assert_eq!(scanner.metrics().duplicates, 1);
+    assert_eq!(scanner.dedup_entries.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn overlay_receiver_stops_with_manager_shutdown() {
+    let scanner = Arc::new(MempoolScanner::new(config()).unwrap());
+    let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+    let receiver =
+        scanner.spawn_overlay_receiver_with_shutdown(manager.pool(), manager.subscribe_shutdown());
+    manager.shutdown_wait().await;
+    receiver.await.unwrap();
+}

@@ -24,11 +24,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-
       - name: Install mdBook
         run: cargo install mdbook --locked
 

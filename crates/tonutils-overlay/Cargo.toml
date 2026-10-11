@@ -1,0 +1,31 @@
+[package]
+name = "tonutils-overlay"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Native Rust TON overlay peer, routing, and bounded event primitives."
+readme = "../../README.md"
+documentation = "https://docs.rs/tonutils-overlay"
+keywords = ["ton", "overlay", "adnl", "dht", "networking"]
+categories = ["network-programming", "cryptography::cryptocurrencies"]
+
+[lints]
+workspace = true
+
+[features]
+default = ["runtime"]
+runtime = ["dep:futures", "dep:tokio"]
+
+[dependencies]
+ed25519-dalek.workspace = true
+futures = { workspace = true, optional = true }
+log.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tl-proto.workspace = true
+tokio = { workspace = true, optional = true }
+tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
+
+[dev-dependencies]
+hex.workspace = true

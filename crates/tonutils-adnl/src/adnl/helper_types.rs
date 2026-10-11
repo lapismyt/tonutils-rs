@@ -136,6 +136,8 @@ pub enum AdnlError {
     },
     #[error("Integrity error")]
     IntegrityError,
+    #[error("replayed UDP packet")]
+    ReplayDetected,
     #[error("Too short packet (32 bytes min)")]
     TooShortPacket,
     #[error("Too long packet (4 MiB max)")]
@@ -146,6 +148,18 @@ pub enum AdnlError {
     EndOfStream,
     #[error("Invalid public key")]
     InvalidPublicKey,
+    #[error("Invalid ADNL packet")]
+    InvalidPacket,
+    #[error("Malformed ADNL packet: {0}")]
+    MalformedPacket(String),
+    #[error("TLS/QUIC configuration error: {0}")]
+    TlsConfig(String),
+    #[error("invalid QUIC answer: {0}")]
+    InvalidQuicAnswer(String),
+    #[error("TLS certificate key mismatch: expected {expected:?}, got {got:?}")]
+    CertificateKeyMismatch { expected: [u8; 32], got: [u8; 32] },
+    #[error("channel confirmation mismatch: expected peer_key={expected:?}, got peer_key={got:?}")]
+    ChannelConfirmMismatch { expected: [u8; 32], got: [u8; 32] },
 }
 
 /// Information about connected peers.

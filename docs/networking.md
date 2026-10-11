@@ -1,12 +1,11 @@
 # TON Networking in Rust: ADNL, LiteAPI, and Global Config
 
-The current networking surface is native ADNL TCP for LiteAPI liteserver
-connections plus optional public network config parsing. ADNL UDP, DHT,
-overlays, and mempool networking are documented as future boundaries but are
-not public runtime APIs yet.
+The current networking surface includes native ADNL TCP for LiteAPI liteserver
+connections, authenticated ADNL UDP sessions, typed DHT lookups, and a bounded
+seed-only mempool overlay path.
 
 Audience: callers configuring transport features and contributors separating
-current LiteAPI networking from future DHT, overlay, and mempool work.
+LiteAPI networking from UDP/DHT/overlay/mempool workflows.
 Prerequisites: `adnl-tcp` for direct liteserver sockets, `network-config` for
 global config parsing, and live network access for real liteserver calls.
 
@@ -16,6 +15,8 @@ global config parsing, and live network access for real liteserver calls.
 - `adnl-tcp`: TCP transport, crypto handshake, frame codec, and peer wrapper.
 - `liteclient`: LiteAPI client over ADNL TCP.
 - `network-config`: TON global config JSON parsing and liteserver helpers.
+- `tonutils-mempool`: seed-only overlay sessions, external-message validation,
+  FEC reassembly, and bounded application delivery.
 - `cli`: downloads public configs and exposes shell commands.
 
 The default feature set enables `std`, `adnl-tcp`, and `liteclient`.
@@ -60,15 +61,17 @@ fn example(config_json: &str) -> anyhow::Result<()> {
 }
 ```
 
-The config parser currently focuses on the `liteservers` section and Ed25519
-public keys. It does not resolve DHT entries or overlay peers.
+The config parser exposes liteservers and validated DHT static-node endpoints.
+The mempool builder can use explicit `SeedPeer` values without any DHT
+expansion, or opt into bounded typed DHT lookup.
 
-## Future Protocols
+## UDP, DHT, And Overlay
 
-ADNL UDP will be the lower-level datagram transport needed by DHT and overlays.
-DHT will resolve nodes and liteservers with signed peer records. Overlays will
-carry overlay queries and broadcasts, including future mempool workflows.
+`AdnlUdpSession` handles authenticated direct packets, optional channel
+create/confirm, sequence checks, and DHT/overlay query routing. The
+`native_udp_seeds_only` scanner mode connects only configured peers and passes
+validated `ExternalIn` messages through its `Stream` or callback handler.
 
-These protocols are intentionally separate from the current ADNL TCP LiteAPI
-path. Until they land, this crate cannot discover peers through DHT, join
-overlays, or stream pending external messages from the mempool.
+These protocols remain separate from the ADNL TCP LiteAPI path. Iterative
+overlay peer discovery and non-RaptorQ broadcast variants remain optional
+follow-up work outside the minimal seed-only scanner path.

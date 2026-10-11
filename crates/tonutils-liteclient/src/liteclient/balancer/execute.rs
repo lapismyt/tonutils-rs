@@ -57,10 +57,10 @@ impl LiteBalancer {
         Ok(())
     }
 
-    pub(super) async fn connect_to_peer(_client: &mut LiteClient) -> bool {
+    pub(super) fn connect_to_peer(_client: &mut LiteClient) -> std::future::Ready<bool> {
         // Just return true - the client connection already succeeded in the CLI
         // We'll verify health during actual requests
-        true
+        std::future::ready(true)
     }
 
     pub(super) fn spawn_health_checker(&self) -> JoinHandle<()> {

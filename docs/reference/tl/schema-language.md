@@ -41,6 +41,27 @@ liteServer.signatureSet.ordinary#f644a6e6 ... = liteServer.SignatureSet;
 
 If omitted, the id is CRC32 of the normalized constructor string.
 
+CRC normalization rule, verified against ids observed in live network
+captures:
+
+1. Take the constructor statement text: trim each line, join multi-line
+   statements with single spaces, collapse whitespace runs to single
+   spaces, and drop the trailing `;`.
+2. Delete every `(` and `)` character from that text (vector and union
+   subtypes such as `(vector dht.node)` are inlined without parentheses).
+3. Compute CRC32 (IEEE, reflected: polynomial `0xEDB88320`, initial value
+   `0xFFFFFFFF`, final xor `0xFFFFFFFF`) over the ASCII bytes of the
+   result.
+4. The 32-bit value is written to the wire in little-endian order.
+
+This matches the scheme registration in `tonutils-go`'s `tl/loader.go` and
+`tl_scheme::compute_tl_id()` in this repository. The audit test in
+`crates/tonutils-tl/src/tl/schema_audit.rs` recomputes ids for every
+constructor in the pinned `ton_api.tl` with this rule and calibrates them
+against a table of ids observed on the live TON network (`dht.nodes`,
+`adnl.packetContents`, `overlay.nodes`, and others), so a normalization
+drift fails tests before anything else.
+
 Implementation requirement:
 
 - ids in Rust annotations must match schema ids,

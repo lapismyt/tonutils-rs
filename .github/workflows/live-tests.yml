@@ -21,11 +21,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
-          rustup default stable
-
       - name: Cache Cargo
         uses: actions/cache@v6
         with:
@@ -58,18 +53,51 @@ jobs:
             exit 1
           fi
 
-  live-tests:
-    name: Live liteserver smoke tests
+  cross-sdk:
+    name: Cross-SDK TL byte comparison
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Install Rust
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: scripts/cross_sdk/gen_go/go.mod
+          cache-dependency-path: scripts/cross_sdk/gen_go/go.sum
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install pinned pytoniq-core
+        run: python3 -m pip install pytoniq-core==0.2.0
+
+      - name: Verify fixtures against tonutils-go
+        working-directory: scripts/cross_sdk/gen_go
+        run: go run .
+
+      - name: Verify fixtures against pytoniq-core
+        run: python3 scripts/cross_sdk/gen_py.py
+
+      - name: Verify fixtures against tonutils-rs
+        run: cargo test -p tonutils-tl --lib
+
+  live-tests:
+    name: Live liteserver and mempool smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Surface mempool/ADNL diagnostics in the live-test logs so failed runs
+      # can be traced without reproducing them locally. The ADNL target must be
+      # debug: the inbound query census, per-peer address view, and ping
+      # senders all log at debug level and would otherwise be invisible.
+      RUST_LOG: tonutils_mempool=debug,tonutils_adnl=debug,tonutils_overlay=debug
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
 
       - name: Load public TON global config
         run: |
@@ -80,6 +108,140 @@ jobs:
               https://ton.org/global.config.json
             echo 'TON_GLOBAL_CONFIG_JSON_EOF'
           } >> "$GITHUB_ENV"
+          {
+            echo 'TON_TESTNET_GLOBAL_CONFIG_JSON<<TON_TESTNET_GLOBAL_CONFIG_JSON_EOF'
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-all-errors --retry-delay 2 \
+              https://ton.org/testnet-global.config.json
+            echo 'TON_TESTNET_GLOBAL_CONFIG_JSON_EOF'
+          } >> "$GITHUB_ENV"
 
       - name: Run live workflow smoke tests
         run: cargo test -p tonutils-liteclient --test live_workflows -- --ignored --nocapture
+
+      - name: Run mempool bootstrap smoke test
+        run: cargo test -p tonutils-mempool --test live configured_global_config_can_start_scanner -- --ignored --nocapture
+
+      - name: Run seed-only scanner stream test
+        run: cargo test -p tonutils-mempool --test seed_scanner -- --nocapture
+
+      - name: Run mempool mainnet DHT probe
+        env:
+          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
+        run: cargo test -p tonutils-mempool --test live mainnet_dht_seed_answers_find_node -- --ignored --nocapture
+
+      - name: Run mempool testnet DHT probe
+        env:
+          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
+        run: cargo test -p tonutils-mempool --test live testnet_dht_seed_answers_find_node -- --ignored --nocapture
+
+      - name: Derive mempool live seeds from global config
+        run: |
+          seeds=$(
+            echo "$TON_GLOBAL_CONFIG_JSON" | jq -r '
+              [.dht.static_nodes.nodes[]? |
+               .id.key as $key |
+               .addr_list.addrs[]? |
+               select(.ip != null and .port != null) |
+               (.ip + if .ip < 0 then 4294967296 else 0 end) as $ip |
+               $key + "@" +
+               (($ip / 16777216 | floor | tostring) + "." +
+                (($ip % 16777216) / 65536 | floor | tostring) + "." +
+                (($ip % 65536) / 256 | floor | tostring) + "." +
+                ($ip % 256 | tostring)) + ":" + (.port | tostring)
+              ] | join("\n")
+            ' | while IFS='@' read -r b64key rest; do
+              hexkey=$(printf '%s' "$b64key" | base64 -d | xxd -p | tr -d ' \n')
+              printf '%s@%s\n' "$hexkey" "$rest"
+            done | paste -sd ';'
+          )
+          if [ -n "$seeds" ]; then
+            echo "TON_MEMPOOL_LIVE_SEEDS=$seeds" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set default mempool overlay ID
+        run: |
+          if [ -z "${TON_MEMPOOL_LIVE_OVERLAY_ID:-}" ]; then
+            echo "TON_MEMPOOL_LIVE_OVERLAY_ID=12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run mempool overlay DHT discovery live test
+        env:
+          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
+        run: cargo test -p tonutils-mempool --test live mainnet_overlay_dht_discovery_returns_peers -- --ignored --nocapture
+
+      - name: Run mempool overlay QUIC discovery live test
+        env:
+          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
+        run: cargo test -p tonutils-mempool --test live mainnet_overlay_quic_discovery_returns_peers -- --ignored --nocapture
+
+      - name: Run configured seed-only mempool live test
+        env:
+          TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS || '300' }}
+        # Job logs require admin access, so a failed acceptance run must
+        # publish its own diagnosis: the final metrics line, ADNL channel
+        # negotiation counts, custom-message (broadcast candidate) counters,
+        # the inbound query census by constructor, and the growth/publishing
+        # lines go to a check annotation (GitHub caps annotations at 4 KiB,
+        # so the compact view comes first) and to the step summary, both
+        # readable on a public repo without admin rights.
+        run: |
+          set -o pipefail
+          log="$RUNNER_TEMP/delivery.log"
+          rc=0
+          cargo test -p tonutils-mempool --test live configured_seed_delivers_valid_external_message -- --ignored --nocapture 2>&1 | tee "$log" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            set +e
+            diag="$RUNNER_TEMP/delivery-diag.txt"
+            {
+              echo "-- final delivery --"
+              grep 'phase=delivery' "$log" | tail -n 1
+              echo "-- channel negotiation --"
+              printf 'requested=%s confirmed=%s installed=%s\n' \
+                "$(grep -c 'ADNL channel requested' "$log")" \
+                "$(grep -c 'ADNL channel confirmed by peer' "$log")" \
+                "$(grep -c 'ADNL channel installed' "$log")"
+              echo "-- custom overlay messages (broadcast candidates) --"
+              printf 'arrived=%s rejected=%s foreign_overlay=%s\n' \
+                "$(grep -c 'overlay UDP custom message' "$log")" \
+                "$(grep -c 'custom payload rejected' "$log")" \
+                "$(grep -c 'custom payload for another overlay' "$log")"
+              echo "-- ping answers --"
+              printf 'overlay.ping_distinct_peers=%s dht.ping=%s pongs=%s\n' \
+                "$(grep -oE 'answering overlay.ping for peer=PeerId\(\[[0-9, ]+\]\)' "$log" | sort -u | wc -l)" \
+                "$(grep -c 'answering dht.ping' "$log")" \
+                "$(grep -oE 'pongs_sent: [0-9]+' "$log" | tail -n 1 | grep -oE '[0-9]+')"
+              echo "-- inbound query census (distinct peers / total) --"
+              for spec in 'ping 690cb481' 'capabilities dee618f8' 'getRandomPeers 48ee64ab' 'getRandomPeersV2 a58e7ecc'; do
+                set -- $spec
+                all=$(grep 'ADNL inbound overlay query:' "$log" | grep "inner=0x$2" | grep -oE 'peer=\[[0-9, ]+\]')
+                distinct=$(printf '%s\n' "$all" | sed '/^$/d' | sort -u | wc -l)
+                total=$(printf '%s\n' "$all" | sed '/^$/d' | wc -l)
+                echo "$1: distinct_peers=$distinct total=$total"
+              done
+              echo "-- growth rounds --"
+              grep 'peer growth' "$log" | tail -n 4
+              echo "-- growth address resolution --"
+              grep -E 'udp_peer_growth:|udp_overlay_lookup:' "$log" | tail -n 6
+              echo "-- dht address publishing --"
+              grep 'dht address publish' "$log" | tail -n 6
+              echo "-- log tail (waiting metrics elided) --"
+              grep -v 'phase=waiting metrics=' "$log" | tail -n 25
+            } > "$diag"
+            {
+              echo '### Mempool delivery test failed'
+              echo
+              echo '```'
+              cat "$diag"
+              echo '```'
+              echo '<details><summary>Full log tail</summary>'
+              echo
+              echo '```'
+              tail -n 60 "$log"
+              echo '```'
+              echo '</details>'
+            } >> "$GITHUB_STEP_SUMMARY"
+            msg=$(awk 'BEGIN{ORS="%0A"}1' "$diag")
+            echo "::error title=Mempool delivery test failed::$msg"
+          fi
+          exit "$rc"

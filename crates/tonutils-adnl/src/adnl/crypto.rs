@@ -94,6 +94,43 @@ impl KeyPair {
     pub fn compute_shared_secret(&self, other_public_key: &PublicKey) -> [u8; 32] {
         self.secret_key.compute_shared_secret(other_public_key)
     }
+
+    /// Returns the Ed25519 private key as a PKCS8 DER-encoded structure.
+    ///
+    /// This is used by the QUIC TLS layer to present the Ed25519 key as a
+    /// certificate private key for `rustls`.
+    #[cfg(feature = "quic")]
+    pub fn private_key_der(&self) -> rustls_pki_types::PrivateKeyDer<'static> {
+        let seed = self.secret_key.key_bytes;
+        let pkcs8 = build_ed25519_pkcs8(&seed);
+        rustls_pki_types::PrivateKeyDer::Pkcs8(rustls_pki_types::PrivatePkcs8KeyDer::from(pkcs8))
+    }
+}
+
+/// Builds a PKCS8 DER structure for an Ed25519 private key.
+#[cfg(feature = "quic")]
+pub(crate) fn build_ed25519_pkcs8(seed: &[u8; 32]) -> Vec<u8> {
+    // Ed25519 PKCS8 private keyInfo structure:
+    // SEQUENCE {
+    //   INTEGER 0
+    //   SEQUENCE {
+    //     OID 1.3.101.112 (Ed25519)
+    //   }
+    //   OCTET STRING (32 bytes, encapsulated private key)
+    // }
+    let mut der = Vec::with_capacity(48);
+    // Outer SEQUENCE
+    der.extend_from_slice(&[0x30, 0x2e]);
+    // INTEGER 0
+    der.extend_from_slice(&[0x02, 0x01, 0x00]);
+    // Inner SEQUENCE (AlgorithmIdentifier)
+    der.extend_from_slice(&[0x30, 0x05]);
+    // OID 1.3.101.112 (Ed25519)
+    der.extend_from_slice(&[0x06, 0x03, 0x2b, 0x65, 0x70]);
+    // OCTET STRING wrapping the 32-byte seed
+    der.extend_from_slice(&[0x04, 0x22, 0x04, 0x20]);
+    der.extend_from_slice(seed);
+    der
 }
 
 impl From<ExpandedSecretKey> for KeyPair {
@@ -323,6 +360,11 @@ impl ExpandedSecretKey {
     #[inline(always)]
     pub fn nonce(&'_ self) -> &'_ [u8; 32] {
         &self.nonce
+    }
+
+    #[inline(always)]
+    pub fn key_bytes(&'_ self) -> &'_ [u8; 32] {
+        &self.key_bytes
     }
 
     pub fn sign_tl<T: tl_proto::TlWrite>(&self, message: T, public_key: &PublicKey) -> [u8; 64] {

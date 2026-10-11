@@ -20,6 +20,8 @@ workspace = true
 default = ["adnl-tcp", "liteclient-network-config"]
 adnl-tcp = ["tonutils-adnl/tcp"]
 liteclient-network-config = ["tonutils-liteclient/network-config"]
+mempool = ["dep:tonutils-mempool"]
+overlay = ["dep:tonutils-overlay"]
 jetton-provider = ["tonutils-jetton/provider"]
 nft-provider = ["tonutils-nft/provider"]
 wallet-provider = ["tonutils-wallet/provider"]
@@ -30,6 +32,7 @@ tonutils-contracts = { path = "../tonutils-contracts", version = "2.0.0" }
 tonutils-crc = { path = "../tonutils-crc", version = "2.0.0" }
 tonutils-jetton = { path = "../tonutils-jetton", version = "2.0.0", default-features = false }
 tonutils-liteclient = { path = "../tonutils-liteclient", version = "2.0.0", default-features = false }
+tonutils-mempool = { path = "../tonutils-mempool", version = "2.0.0", optional = true }
 tonutils-metadata = { path = "../tonutils-metadata", version = "2.0.0" }
 tonutils-network-config = { path = "../tonutils-network-config", version = "2.0.0" }
 tonutils-nft = { path = "../tonutils-nft", version = "2.0.0", default-features = false }
@@ -37,3 +40,4 @@ tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
 tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
 tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
 tonutils-wallet = { path = "../tonutils-wallet", version = "2.0.0", default-features = false }
+tonutils-overlay = { path = "../tonutils-overlay", version = "2.0.0", optional = true }
