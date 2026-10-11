@@ -235,6 +235,17 @@ impl AdnlUdpSession {
             .store(enabled, Ordering::Relaxed);
     }
 
+    /// The peer's current source address.
+    ///
+    /// Starts as the address the session was dialled with and follows the
+    /// transport's route table whenever the peer's datagrams arrive from a
+    /// newer source address, so it stays correct across NAT rebinding and
+    /// peer mobility - unlike the address the caller dialled.
+    #[must_use]
+    pub fn remote_addr(&self) -> SocketAddr {
+        *self.inner.remote_addr.lock().unwrap()
+    }
+
     /// Starts ADNL channel negotiation without waiting for the answer.
     ///
     /// Sends `adnl.message.createChannel` so that the peer confirms a

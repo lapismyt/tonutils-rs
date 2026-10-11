@@ -6,7 +6,10 @@ use futures::StreamExt;
 use tonutils_adnl::AdnlUdpSession;
 use tonutils_adnl::{KeyPair, PublicKey};
 use tonutils_mempool::MempoolScannerBuilder;
-use tonutils_mempool::{MempoolConfig, MempoolEvent, quic_overlay_lookup, udp_overlay_lookup};
+use tonutils_mempool::{
+    MempoolConfig, MempoolEvent, OverlayMemberEndpoints, quic_overlay_lookup_with_endpoints,
+    registered_member_count, udp_overlay_lookup, udp_overlay_lookup_with_endpoints,
+};
 use tonutils_network_config::extract_dht_addresses;
 use tonutils_overlay::{OverlayId, PeerId, SeedPeer};
 use tonutils_tl::Int256;
@@ -488,29 +491,75 @@ async fn mainnet_overlay_dht_discovery_returns_peers() {
     assert_discovery_peers("udp", peers, allow_unavailable);
 }
 
-/// Same discovery coverage as [`mainnet_overlay_dht_discovery_returns_peers`]
-/// but over the QUIC transport (`quic_overlay_lookup`).
+/// QUIC overlay discovery against the members the UDP path resolves first.
 ///
-/// Soft-skips when QUIC is unreachable and
-/// `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` is set.
+/// The bootstrap seeds are `dht-server` deployments, which run no QUIC
+/// listener at all (`dht-server/*.cpp` contains no QUIC code), while upstream
+/// full nodes bind a `QuicServer` on `adnl_udp_port + 1000`
+/// (`quic/quic-sender.h::NODE_PORT_OFFSET`).  Phase 1 therefore runs the
+/// proven UDP discovery to populate a shared
+/// [`OverlayMemberEndpoints`] registry; phase 2 probes those members over
+/// QUIC and reports the probe counts.
+///
+/// Soft-skips - with an explicit `members=`/`quic_peers=` log - when either
+/// phase finds nothing and `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` is set.
 #[tokio::test]
 #[ignore = "requires live mainnet QUIC access"]
 async fn mainnet_overlay_quic_discovery_returns_peers() {
     let _ = pretty_env_logger::try_init();
     let allow_unavailable = std::env::var("TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE").is_ok();
     let overlay = OverlayId::from_bytes(discovery_overlay_id());
-    let lookup = quic_overlay_lookup(
-        "0.0.0.0:0".parse().expect("wildcard address must parse"),
-        KeyPair::generate(&mut rand::rngs::OsRng),
+    let local_addr: SocketAddr = "0.0.0.0:0".parse().expect("wildcard address must parse");
+    let keypair = KeyPair::generate(&mut rand::rngs::OsRng);
+    let endpoints = OverlayMemberEndpoints::default();
+
+    // Phase 1: ADNL/UDP discovery registers live overlay members and any
+    // advertised `adnl.address.quic` their DHT address records carry.
+    let udp_lookup = udp_overlay_lookup_with_endpoints(
+        local_addr,
+        keypair,
         overlay,
         overlay.as_bytes(),
         16,
         Duration::from_secs(30),
+        endpoints.clone(),
+    );
+    let udp_peers: Vec<SeedPeer> =
+        tokio::time::timeout(Duration::from_secs(45), udp_lookup(configured_live_seeds()))
+            .await
+            .unwrap_or_default();
+    let members = registered_member_count(&endpoints);
+    eprintln!(
+        "live overlay discovery kind=quic phase=members registered={members} udp_peers={}",
+        udp_peers.len()
+    );
+    if members == 0 {
+        if allow_unavailable {
+            log::debug!("skipping QUIC overlay discovery: no overlay members registered");
+            return;
+        }
+        panic!("UDP discovery registered no overlay members to probe over QUIC");
+    }
+
+    // Phase 2: probe the registered members over QUIC.
+    let lookup = quic_overlay_lookup_with_endpoints(
+        local_addr,
+        keypair,
+        overlay,
+        overlay.as_bytes(),
+        16,
+        Duration::from_secs(30),
+        endpoints.clone(),
     );
     let peers: Vec<SeedPeer> =
         tokio::time::timeout(Duration::from_secs(45), lookup(configured_live_seeds()))
             .await
             .unwrap_or_default();
+    eprintln!(
+        "live overlay discovery kind=quic phase=probe members_before={members} quic_peers={} members_after={}",
+        peers.len(),
+        registered_member_count(&endpoints)
+    );
     assert_discovery_peers("quic", peers, allow_unavailable);
 }
 

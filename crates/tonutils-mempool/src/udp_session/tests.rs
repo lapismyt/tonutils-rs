@@ -44,6 +44,7 @@ async fn reassembles_single_source_raptorq_external_message() {
         last_keepalive: Instant::now(),
         last_activity: Instant::now(),
         members: OverlayMemberCache::default(),
+        endpoints: crate::OverlayMemberEndpoints::default(),
     };
     let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
     let fec = OverlayBroadcastFec {
@@ -101,6 +102,7 @@ async fn waits_for_all_source_symbols_before_publishing_fec_payload() {
         last_keepalive: Instant::now(),
         last_activity: Instant::now(),
         members: OverlayMemberCache::default(),
+        endpoints: crate::OverlayMemberEndpoints::default(),
     };
     let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
     for (index, packet) in packets.into_iter().enumerate() {
@@ -154,6 +156,7 @@ async fn rejects_truncated_serialized_fec_packet() {
         last_keepalive: Instant::now(),
         last_activity: Instant::now(),
         members: OverlayMemberCache::default(),
+        endpoints: crate::OverlayMemberEndpoints::default(),
     };
     let payload = tl_proto::serialize(OverlayBroadcastFec {
         src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![3] },
@@ -323,6 +326,7 @@ async fn broadcast_test_adapter() -> AdnlUdpOverlaySession {
         last_keepalive: Instant::now(),
         last_activity: Instant::now(),
         members: OverlayMemberCache::default(),
+        endpoints: crate::OverlayMemberEndpoints::default(),
     }
 }
 

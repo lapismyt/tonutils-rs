@@ -14,7 +14,8 @@ connection.
 - `DiscoveryConfig::discover` applies a timeout-bounded DHT-first callback and
   deterministic seed fallback.
 - `tonutils-adnl` owns the opt-in UDP direct packet, channel packet, and
-  authenticated `AdnlUdpSession` primitives; it does not implement QUIC.
+  authenticated `AdnlUdpSession` primitives, plus the `QuicSession`
+  transport behind the `quic` feature.
 
 ## Fast-path model
 
@@ -23,6 +24,43 @@ requires a registered peer, and applies bounded backpressure through Tokio's
 multi-producer channel. Consumers can keep a persistent receive loop separate
 from application callbacks. `RoutingMetadata` records overlay, peer, receive
 time, and hop count without decoding the payload.
+
+## QUIC member discovery
+
+QUIC discovery does not dial the bootstrap seeds. Upstream runs QUIC only in
+`validator-engine`: `validator/full-node-fast-sync-overlays.cpp` starts a
+`QuicServer` unconditionally ("Enable quic server even if use_quic is not
+set") on `adnl_udp_port + NODE_PORT_OFFSET` (`quic/quic-sender.h`, offset
+1000), while the global config's `dht.static_nodes` are `dht-server`
+deployments whose sources contain no QUIC listener at all, so probing them
+at `port + 1000` can only time out.
+
+`MempoolScannerBuilder` therefore owns an `OverlayMemberEndpoints` registry
+that the UDP path fills from three sources:
+
+- every DHT `address` record resolved during seed discovery and peer growth,
+  including an advertised `adnl.address.quic` entry, which upstream
+  `QuicSender::get_ip_address` prefers over the derived port;
+- every member that answers `overlay.getRandomPeers` with at least one node
+  record valid for the overlay - the growth path and the QUIC path alike;
+- the source route of a session whose peer answers `overlay.getRandomPeers`
+  (`AdnlUdpSession::remote_addr`, which follows NAT rebinding through the
+  transport's `adopt_address`).
+
+`quic_overlay_lookup_with_endpoints` probes the registered members - sorted
+by peer id so the subset is stable across runs, capped at `max_records` -
+and falls back to the bootstrap seeds only when the registry is empty, which
+is logged. Each probe emits one line:
+
+```text
+quic probe: member=<hex> target=<ip:port> source=<advertised|udp+1000> result=<connected|timeout|error: ...> via=<dht.findValue|getRandomPeers|session>
+```
+
+Whether mainnet full nodes answer QUIC from a third-party source is still
+open: upstream shows no post-handshake allowlist either way, and validator
+builds predating the QUIC merge do not listen at all. The ignored live test
+`mainnet_overlay_quic_discovery_returns_peers` runs UDP discovery first and
+reports `members=`/`quic_peers=` so a CI run answers the question.
 
 ## Failure modes
 

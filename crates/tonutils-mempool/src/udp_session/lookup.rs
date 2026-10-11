@@ -91,7 +91,17 @@ pub(super) async fn query_dht_value_on_session(
 
 /// Parses a DHT `address` record into the peer it belongs to plus its UDP
 /// `ip:port`.
-fn parse_address_record(value: DhtValue, source: std::net::SocketAddr) -> Option<SeedPeer> {
+///
+/// Both endpoints land in `endpoints`: the UDP one the scanner connects on,
+/// and an advertised `adnl.address.quic` entry when the record carries one,
+/// which upstream `QuicSender::get_ip_address` prefers over the `+1000`
+/// fallback.  `pub(crate)` so the QUIC discovery path records the same fields
+/// from the records it resolves.
+pub(crate) fn parse_address_record(
+    value: DhtValue,
+    source: std::net::SocketAddr,
+    endpoints: &crate::OverlayMemberEndpoints,
+) -> Option<SeedPeer> {
     let Ok(address_list) = tl_proto::deserialize::<AddressListBoxed>(&value.value) else {
         log::debug!("resolve_address: record from {source} is not an address list");
         return None;
@@ -100,6 +110,22 @@ fn parse_address_record(value: DhtValue, source: std::net::SocketAddr) -> Option
         return None;
     };
     let peer = PeerId::from_bytes(key.0);
+    for address in &address_list.addrs {
+        let Address::Quic { ip, port } = address else {
+            continue;
+        };
+        if *port == 0 || *ip == 0 {
+            continue;
+        }
+        let Ok(port) = u16::try_from(*port) else {
+            continue;
+        };
+        let quic = std::net::SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::from(ip.cast_unsigned())),
+            port,
+        );
+        crate::record_member_quic(endpoints, peer, quic);
+    }
     for address in address_list.addrs {
         let Address::Udp { ip, port } = address else {
             continue;
@@ -110,9 +136,14 @@ fn parse_address_record(value: DhtValue, source: std::net::SocketAddr) -> Option
         if port == 0 || ip == 0 {
             continue;
         }
+        let udp = std::net::SocketAddr::new(
+            std::net::IpAddr::V4(std::net::Ipv4Addr::from(ip.cast_unsigned())),
+            port,
+        );
+        crate::record_member(endpoints, peer, udp);
         return Some(SeedPeer {
             peer,
-            address: format!("{}:{port}", std::net::Ipv4Addr::from(ip.cast_unsigned())),
+            address: format!("{udp}"),
         });
     }
     log::debug!("resolve_address: record from {source} has no usable UDP address");
@@ -128,6 +159,7 @@ fn parse_address_record(value: DhtValue, source: std::net::SocketAddr) -> Option
 /// Every follow-up hop asks the nodes the DHT pointed at, because the first
 /// hop is usually not responsible for the candidate's `address` key and
 /// answers `dht.valueNotFound`.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn resolve_address_on_session(
     local_addr: std::net::SocketAddr,
     local_keypair: &KeyPair,
@@ -136,12 +168,15 @@ pub(super) async fn resolve_address_on_session(
     address_key: tonutils_tl::Int256,
     timeout: Duration,
     deadline: tokio::time::Instant,
+    endpoints: &crate::OverlayMemberEndpoints,
 ) -> Option<SeedPeer> {
     let address_key_hex = address_key.to_hex();
     let first =
         query_dht_value_on_session(session, seed_address, address_key.clone(), 1, timeout).await;
     let mut pending = match first {
-        Some(DhtValueResult::Found { value }) => return parse_address_record(value, seed_address),
+        Some(DhtValueResult::Found { value }) => {
+            return parse_address_record(value, seed_address, endpoints);
+        }
         Some(DhtValueResult::NotFound { nodes }) => nodes.nodes,
         None => {
             log::debug!(
@@ -202,7 +237,7 @@ pub(super) async fn resolve_address_on_session(
                     log::debug!(
                         "resolve_address: {address_key_hex} resolved at {remote_addr} on round {round}"
                     );
-                    return parse_address_record(value, remote_addr);
+                    return parse_address_record(value, remote_addr, endpoints);
                 }
                 Some(DhtValueResult::NotFound { nodes }) => {
                     answered += 1;
@@ -312,26 +347,62 @@ pub fn udp_overlay_lookup(
     max_records: usize,
     timeout: Duration,
 ) -> SeedDiscoveryLookup {
+    udp_overlay_lookup_with_endpoints(
+        local_addr,
+        local_keypair,
+        overlay,
+        overlay_key,
+        max_records,
+        timeout,
+        crate::OverlayMemberEndpoints::default(),
+    )
+}
+
+/// [`udp_overlay_lookup`] that also records every resolved member endpoint
+/// into `endpoints`.
+///
+/// The registry is what lets the QUIC discovery path target overlay members
+/// (full nodes, which run a QUIC server on `adnl_udp_port + 1000`) instead
+/// of the bootstrap `dht.static_nodes`, whose `dht-server` binary has no
+/// QUIC listener at all.  See [`crate::OverlayMemberEndpoints`].
+pub fn udp_overlay_lookup_with_endpoints(
+    local_addr: std::net::SocketAddr,
+    local_keypair: KeyPair,
+    overlay: OverlayId,
+    overlay_key: [u8; 32],
+    max_records: usize,
+    timeout: Duration,
+    endpoints: crate::OverlayMemberEndpoints,
+) -> SeedDiscoveryLookup {
     Arc::new(move |seeds: Vec<SeedPeer>| {
+        let endpoints = Arc::clone(&endpoints);
         Box::pin(async move {
             // The bootstrap seeds are DHT nodes, so they double as the
             // resolver set for candidate address lookups - the same role
             // pytoniq's DhtClient node set plays.
             let resolvers = seeds.clone();
+            // A shared reference so every per-seed future borrows the one
+            // resolver list instead of moving it.
+            let resolvers = &resolvers;
             let responses = join_all(seeds.into_iter().filter_map(|seed| {
                 let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes())?;
                 let address = seed.address.parse().ok()?;
-                Some(query_overlay_seed(
-                    local_addr,
-                    local_keypair,
-                    remote,
-                    address,
-                    overlay,
-                    overlay_key,
-                    max_records,
-                    timeout,
-                    &resolvers,
-                ))
+                let endpoints = Arc::clone(&endpoints);
+                Some(async move {
+                    query_overlay_seed(
+                        local_addr,
+                        local_keypair,
+                        remote,
+                        address,
+                        overlay,
+                        overlay_key,
+                        max_records,
+                        timeout,
+                        resolvers,
+                        &endpoints,
+                    )
+                    .await
+                })
             }))
             .await;
             let mut result = Vec::new();
@@ -371,6 +442,7 @@ async fn query_overlay_seed(
     max_records: usize,
     timeout: Duration,
     resolvers: &[SeedPeer],
+    endpoints: &crate::OverlayMemberEndpoints,
 ) -> Option<Vec<SeedPeer>> {
     let initial = SeedPeer {
         peer: PeerId::from_bytes(remote.to_bytes()),
@@ -484,6 +556,7 @@ async fn query_overlay_seed(
                             address_key,
                             per_query_timeout,
                             deadline,
+                            endpoints,
                         )
                         .await
                         else {
@@ -550,6 +623,7 @@ async fn query_overlay_seed(
         overlay,
         per_query_timeout,
         resolvers,
+        endpoints,
     )
     .await
     {
@@ -649,6 +723,30 @@ pub fn overlay_factory(
     overlay: OverlayId,
     channel_timeout: Option<Duration>,
 ) -> crate::OverlaySessionFactory {
+    overlay_factory_with_endpoints(
+        local_addr,
+        local_keypair,
+        overlay,
+        channel_timeout,
+        crate::OverlayMemberEndpoints::default(),
+    )
+}
+
+/// [`overlay_factory`] that also shares one endpoint registry with every
+/// session it spawns.
+///
+/// When a peer answers `overlay.getRandomPeers` on one of these sessions,
+/// `overlay_inbound::trace_membership` records the session's source address
+/// into `endpoints` - the route the transport actually sees, which follows
+/// NAT rebinding - so the QUIC discovery path can probe the member at
+/// `adnl_udp_port + 1000`.
+pub fn overlay_factory_with_endpoints(
+    local_addr: std::net::SocketAddr,
+    local_keypair: KeyPair,
+    overlay: OverlayId,
+    channel_timeout: Option<Duration>,
+    endpoints: crate::OverlayMemberEndpoints,
+) -> crate::OverlaySessionFactory {
     // One cache for every session this factory spawns: a member admitted
     // through one peer becomes gossip for all of them, which is what keeps
     // answers to `overlay.getRandomPeers` from collapsing to this node alone.
@@ -656,6 +754,7 @@ pub fn overlay_factory(
     Arc::new(move |seed: SeedPeer| {
         let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes());
         let shared = shared.clone();
+        let endpoints = Arc::clone(&endpoints);
         Box::pin(async move {
             let remote = remote.ok_or_else(|| "seed peer is not a valid Ed25519 key".to_owned())?;
             let mut session = match channel_timeout {
@@ -688,6 +787,7 @@ pub fn overlay_factory(
                 }
             };
             session.members = shared;
+            session.endpoints = endpoints;
             Ok(Box::new(session) as Box<dyn OverlaySession>)
         })
     })

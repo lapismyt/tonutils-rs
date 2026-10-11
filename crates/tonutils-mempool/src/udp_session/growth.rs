@@ -47,27 +47,37 @@ pub fn udp_peer_growth(
         overlay,
         timeout,
         Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        crate::OverlayMemberEndpoints::default(),
     )
 }
 
-/// [`udp_peer_growth`] with a DHT resolver seed set shared with the caller.
+/// [`udp_peer_growth`] with a DHT resolver seed set and an overlay member
+/// endpoint registry shared with the caller.
 ///
 /// The resolver list is the bootstrap seed set - explicit seeds and the
 /// global config's `dht.static_nodes` - which are DHT nodes by construction,
 /// the same node set pytoniq's `DhtClient` resolves `address` values
 /// through.  `MempoolScannerBuilder::start` fills the shared list after
 /// bootstrap resolution.
+///
+/// Every address record resolved during growth is also recorded into
+/// `endpoints`, so the QUIC discovery path can target overlay members -
+/// full nodes, which run a QUIC server on `adnl_udp_port + 1000` - instead
+/// of the bootstrap `dht.static_nodes`, whose `dht-server` binary never
+/// listens for QUIC.  See [`crate::OverlayMemberEndpoints`].
 pub fn udp_peer_growth_with_resolvers(
     local_addr: std::net::SocketAddr,
     local_keypair: KeyPair,
     overlay: OverlayId,
     timeout: Duration,
     resolvers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>>,
+    endpoints: crate::OverlayMemberEndpoints,
 ) -> SeedDiscoveryLookup {
     let cursor = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     Arc::new(move |seeds: Vec<SeedPeer>| {
         let cursor = Arc::clone(&cursor);
         let resolvers = Arc::clone(&resolvers);
+        let endpoints = Arc::clone(&endpoints);
         Box::pin(async move {
             if seeds.is_empty() {
                 return Vec::new();
@@ -89,6 +99,7 @@ pub fn udp_peer_growth_with_resolvers(
                 overlay,
                 timeout,
                 &resolvers,
+                &endpoints,
             )
             .await
             {
@@ -127,6 +138,7 @@ pub(super) async fn query_overlay_random_peers(
     overlay: OverlayId,
     timeout: Duration,
     resolvers: &[SeedPeer],
+    endpoints: &crate::OverlayMemberEndpoints,
 ) -> Option<Vec<SeedPeer>> {
     let session = match shared_session(local_addr, local_keypair, remote, address).await {
         Ok(session) => session,
@@ -171,6 +183,12 @@ pub(super) async fn query_overlay_random_peers(
         );
         return None;
     }
+    // Membership evidence: a peer that answers `overlay.getRandomPeers` for
+    // this overlay with valid signed node records is an overlay member, so its
+    // endpoint is a valid QUIC probe target (`adnl_udp_port + 1000` upstream).
+    // Config seeds are never recorded here - dht-servers answer DHT queries
+    // but do not run overlay sessions, so they fail this check.
+    crate::record_member(endpoints, PeerId::from_bytes(remote.to_bytes()), address);
     // The answer above consumed up to `per_query`; resolution gets a full
     // `timeout` budget after it, mirroring pytoniq, which resolves every
     // returned node through its DhtClient under its own timeout.
@@ -207,6 +225,7 @@ pub(super) async fn query_overlay_random_peers(
                             address_key.clone(),
                             per_query,
                             deadline,
+                            endpoints,
                         )
                         .await
                     {
@@ -226,6 +245,7 @@ pub(super) async fn query_overlay_random_peers(
                         address_key,
                         per_query,
                         deadline,
+                        endpoints,
                     )
                     .await
                 }

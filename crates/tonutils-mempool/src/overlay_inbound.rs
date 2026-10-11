@@ -199,6 +199,7 @@ pub(crate) fn trace_membership(
     session: &AdnlUdpSession,
     overlay: Option<OverlayId>,
     members: &OverlayMemberCache,
+    endpoints: &crate::OverlayMemberEndpoints,
     answer: &[u8],
 ) {
     let Some(overlay) = overlay else {
@@ -209,6 +210,23 @@ pub(crate) fn trace_membership(
         log::debug!("overlay getRandomPeers answer: peer={peer:?} (not overlay.nodes)");
         return;
     };
+    // The peer answered our `overlay.getRandomPeers` with a parseable
+    // membership list holding at least one record valid for this overlay,
+    // which is the same evidence the growth path uses to treat a peer as a
+    // member, so its session source address becomes a QUIC probe target
+    // (`adnl_udp_port + 1000` upstream).  `remote_addr` is the route the
+    // transport actually sees, which follows NAT rebinding through
+    // `adopt_address` - unlike the address this node dialled, which is
+    // recorded elsewhere from the peer's DHT `address` record.
+    let now = now_i32();
+    let valid_members = nodes
+        .nodes
+        .iter()
+        .filter(|node| valid_overlay_node(node, overlay, now))
+        .count();
+    if valid_members > 0 {
+        crate::record_member(endpoints, *peer, session.remote_addr());
+    }
     let ours = session.local_overlay_node(tonutils_tl::Int256(overlay.as_bytes()));
     let listed = nodes.nodes.iter().any(|node| node.id == ours.id);
     protocol_stats::record_membership_answer(listed);
@@ -355,6 +373,11 @@ mod tests {
     /// Fresh empty member cache for one test.
     fn cache() -> OverlayMemberCache {
         OverlayMemberCache::default()
+    }
+
+    /// Fresh empty member endpoint registry for one test.
+    fn endpoints() -> crate::OverlayMemberEndpoints {
+        crate::OverlayMemberEndpoints::default()
     }
 
     /// Builds a `overlay.node` record signed by `key`, valid for `overlay`.
@@ -547,15 +570,31 @@ mod tests {
         let overlay = OverlayId::from_name(b"tonutils query test");
         let session = test_session().await;
         let members = cache();
+        let endpoints = endpoints();
         let peer = PeerId::from_bytes([7; 32]);
         let ours = session.local_overlay_node(tonutils_tl::Int256(overlay.as_bytes()));
         let answer = tl_proto::serialize(OverlayNodesBoxed { nodes: vec![ours] });
         let before = protocol_stats::protocol_stats();
 
-        trace_membership(&peer, &session, Some(overlay), &members, &answer);
+        trace_membership(
+            &peer,
+            &session,
+            Some(overlay),
+            &members,
+            &endpoints,
+            &answer,
+        );
 
         let after = protocol_stats::protocol_stats();
         assert!(after.membership_listed > before.membership_listed);
+        // A well-formed answer also registers the answerer's session route as
+        // a member endpoint for the QUIC probe registry.
+        assert_eq!(crate::registered_member_count(&endpoints), 1);
+        assert_eq!(
+            crate::known_member_seeds(&endpoints),
+            vec![(peer, session.remote_addr())],
+            "the session source address must be the registered endpoint"
+        );
     }
 
     #[tokio::test]
@@ -563,15 +602,30 @@ mod tests {
         let overlay = OverlayId::from_name(b"tonutils query test");
         let session = test_session().await;
         let members = cache();
+        let endpoints = endpoints();
         let peer = PeerId::from_bytes([8; 32]);
         let foreign = signed_node(&KeyPair::generate(&mut rand::rngs::OsRng), overlay, None);
         let answer = tl_proto::serialize(OverlayNodesBoxed {
             nodes: vec![foreign.clone()],
         });
 
-        trace_membership(&peer, &session, Some(overlay), &members, &answer);
+        trace_membership(
+            &peer,
+            &session,
+            Some(overlay),
+            &members,
+            &endpoints,
+            &answer,
+        );
         // Duplicates and this node's own record must not grow the cache.
-        trace_membership(&peer, &session, Some(overlay), &members, &answer);
+        trace_membership(
+            &peer,
+            &session,
+            Some(overlay),
+            &members,
+            &endpoints,
+            &answer,
+        );
 
         let ours = session.local_overlay_node(tonutils_tl::Int256(overlay.as_bytes()));
         trace_membership(
@@ -579,6 +633,7 @@ mod tests {
             &session,
             Some(overlay),
             &members,
+            &endpoints,
             &tl_proto::serialize(OverlayNodesBoxed {
                 nodes: vec![ours.clone()],
             }),
@@ -611,6 +666,7 @@ mod tests {
         let overlay = OverlayId::from_name(b"tonutils query test");
         let session = test_session().await;
         let members = cache();
+        let endpoints = endpoints();
         let peer = PeerId::from_bytes([9; 32]);
         // Signed for this overlay but already past the 600 second peer TTL.
         let stale = signed_node(
@@ -627,11 +683,23 @@ mod tests {
             nodes: vec![stale, foreign_overlay],
         });
 
-        trace_membership(&peer, &session, Some(overlay), &members, &answer);
+        trace_membership(
+            &peer,
+            &session,
+            Some(overlay),
+            &members,
+            &endpoints,
+            &answer,
+        );
 
         assert!(
             members.lock().unwrap().is_empty(),
             "expired and foreign records must never enter the cache"
+        );
+        assert_eq!(
+            crate::registered_member_count(&endpoints),
+            0,
+            "an answer without a single valid record is no membership evidence"
         );
     }
 

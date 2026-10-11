@@ -48,6 +48,10 @@ pub struct AdnlUdpOverlaySession {
     /// Sessions created by one factory share a single cache, see
     /// [`overlay_factory`](crate::overlay_factory).
     members: OverlayMemberCache,
+    /// Overlay member endpoint registry this session records into when a
+    /// peer answers `overlay.getRandomPeers`, see
+    /// [`overlay_factory_with_endpoints`](crate::overlay_factory_with_endpoints).
+    endpoints: crate::OverlayMemberEndpoints,
 }
 
 mod growth;
@@ -143,6 +147,7 @@ impl AdnlUdpOverlaySession {
             last_keepalive: Instant::now(),
             last_activity: Instant::now(),
             members: OverlayMemberCache::default(),
+            endpoints: crate::OverlayMemberEndpoints::default(),
         })
     }
 
@@ -169,6 +174,7 @@ impl AdnlUdpOverlaySession {
             last_keepalive: Instant::now(),
             last_activity: Instant::now(),
             members: OverlayMemberCache::default(),
+            endpoints: crate::OverlayMemberEndpoints::default(),
         })
     }
 
@@ -220,6 +226,7 @@ impl AdnlUdpOverlaySession {
             last_keepalive: Instant::now(),
             last_activity: Instant::now(),
             members: OverlayMemberCache::default(),
+            endpoints: crate::OverlayMemberEndpoints::default(),
         };
         if let Err(error) = session
             .session
@@ -296,6 +303,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                             &self.session,
                             self.overlay,
                             &self.members,
+                            &self.endpoints,
                             answer,
                         );
                         continue;

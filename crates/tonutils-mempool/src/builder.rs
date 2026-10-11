@@ -39,6 +39,14 @@ pub struct MempoolScannerBuilder {
     /// `address` values through nodes guaranteed to answer `dht.findValue`.
     /// See [`udp_peer_growth_with_resolvers`].
     growth_resolvers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>>,
+    /// Overlay member endpoints shared with the UDP lookups and the QUIC
+    /// discovery path.
+    ///
+    /// The UDP lookups record every resolved member's ADNL UDP endpoint (and
+    /// any advertised `adnl.address.quic`); QUIC discovery probes those
+    /// members, because the bootstrap `dht.static_nodes` run `dht-server`,
+    /// which has no QUIC listener.  See [`crate::OverlayMemberEndpoints`].
+    member_endpoints: crate::OverlayMemberEndpoints,
     overlay_max_peers: u32,
     external_address: Option<std::net::SocketAddr>,
     address_publisher: Option<DhtAddressPublisher>,
@@ -75,6 +83,10 @@ impl fmt::Debug for MempoolScannerBuilder {
             .field("reconnect_backoff", &self.reconnect_backoff)
             .field("peer_growth_lookup", &self.peer_growth_lookup.is_some())
             .field("growth_resolvers", &self.growth_resolvers)
+            .field(
+                "member_endpoints",
+                &crate::registered_member_count(&self.member_endpoints),
+            )
             .field("overlay_max_peers", &self.overlay_max_peers)
             .field("external_address", &self.external_address)
             .field("address_publisher", &self.address_publisher.is_some())
@@ -106,6 +118,7 @@ impl Default for MempoolScannerBuilder {
             reconnect_backoff: Duration::from_secs(1),
             peer_growth_lookup: None,
             growth_resolvers: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            member_endpoints: crate::OverlayMemberEndpoints::default(),
             overlay_max_peers: 30,
             external_address: None,
             address_publisher: None,
@@ -211,16 +224,25 @@ impl MempoolScannerBuilder {
         let discovery_timeout = self.discovery_timeout;
         let overlay = self.overlay_id;
         let external_address = self.external_address;
-        let session_factory = overlay_factory(local_addr, local_keypair, overlay, channel_timeout);
+        let session_factory = overlay_factory_with_endpoints(
+            local_addr,
+            local_keypair,
+            overlay,
+            channel_timeout,
+            self.member_endpoints.clone(),
+        );
         let mut builder = self.session_factory(session_factory);
+        // Cloned before the call below moves `builder` into its receiver.
+        let member_endpoints = builder.member_endpoints.clone();
         builder = match builder.dht_overlay_key {
-            Some(overlay_key) => builder.seed_discovery_lookup(udp_overlay_lookup(
+            Some(overlay_key) => builder.seed_discovery_lookup(udp_overlay_lookup_with_endpoints(
                 local_addr,
                 local_keypair,
                 overlay,
                 overlay_key,
                 16,
                 discovery_timeout,
+                member_endpoints,
             )),
             None => builder,
         };
@@ -230,6 +252,7 @@ impl MempoolScannerBuilder {
             overlay,
             discovery_timeout,
             Arc::clone(&builder.growth_resolvers),
+            builder.member_endpoints.clone(),
         ));
         builder.address_publisher = Some(address_publisher(
             local_addr,
@@ -260,21 +283,32 @@ impl MempoolScannerBuilder {
     /// Configures QUIC-based overlay sessions for peer connections.
     ///
     /// With a configured [`Self::dht_overlay_key`] the builder also installs
-    /// the QUIC-backed seed discovery ([`quic_overlay_lookup`]), mirroring what
-    /// [`Self::native_udp`] does for direct ADNL/UDP sessions.
+    /// the QUIC-backed seed discovery ([`quic_overlay_lookup_with_endpoints`]),
+    /// mirroring what [`Self::native_udp`] does for direct ADNL/UDP sessions.
+    ///
+    /// Discovery and sessions prefer the overlay members registered in
+    /// [`Self::member_endpoints`] over the bootstrap seeds: upstream runs
+    /// QUIC in full nodes, not in `dht-server`, so only members can answer.
     pub fn native_quic(self, local_addr: std::net::SocketAddr, local_keypair: KeyPair) -> Self {
         let discovery_timeout = self.discovery_timeout;
         let overlay = self.overlay_id;
-        let session_factory = quic_overlay_factory(local_addr, local_keypair, overlay);
+        let endpoints = self.member_endpoints.clone();
+        let session_factory = quic_overlay_factory_with_endpoints(
+            local_addr,
+            local_keypair,
+            overlay,
+            endpoints.clone(),
+        );
         let builder = self.session_factory(session_factory);
         match builder.dht_overlay_key {
-            Some(overlay_key) => builder.seed_discovery_lookup(quic_overlay_lookup(
+            Some(overlay_key) => builder.seed_discovery_lookup(quic_overlay_lookup_with_endpoints(
                 local_addr,
                 local_keypair,
                 overlay,
                 overlay_key,
                 16,
                 discovery_timeout,
+                endpoints,
             )),
             None => builder,
         }
@@ -295,8 +329,13 @@ impl MempoolScannerBuilder {
         self.seed_discovery_lookup = None;
         let discovery_timeout = self.discovery_timeout;
         let external_address = self.external_address;
-        let session_factory =
-            overlay_factory(local_addr, local_keypair, self.overlay_id, channel_timeout);
+        let session_factory = overlay_factory_with_endpoints(
+            local_addr,
+            local_keypair,
+            self.overlay_id,
+            channel_timeout,
+            self.member_endpoints.clone(),
+        );
         let mut builder = self.session_factory(session_factory);
         // Explicit seeds are still DHT nodes, so publishing here lets the
         // seeds resolve this node's address back, same as on the full
@@ -374,6 +413,19 @@ impl MempoolScannerBuilder {
     /// [`udp_peer_growth`]; set it manually only for a custom session factory.
     pub fn peer_growth_lookup(mut self, lookup: SeedDiscoveryLookup) -> Self {
         self.peer_growth_lookup = Some(lookup);
+        self
+    }
+
+    /// Shares an overlay member endpoint registry with this builder.
+    ///
+    /// [`native_udp`](Self::native_udp) records every member it resolves -
+    /// and any advertised `adnl.address.quic` - into the builder's own
+    /// registry, while [`native_quic`](Self::native_quic) probes registered
+    /// members instead of the bootstrap seeds.  Set the same registry on
+    /// several builders to hand a UDP-discovered member set to a QUIC
+    /// scanner; the default is a fresh, empty registry per builder.
+    pub fn member_endpoints(mut self, endpoints: crate::OverlayMemberEndpoints) -> Self {
+        self.member_endpoints = endpoints;
         self
     }
 

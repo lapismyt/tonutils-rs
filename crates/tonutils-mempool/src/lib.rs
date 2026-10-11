@@ -24,18 +24,27 @@ use tonutils_overlay::{
 };
 use tonutils_overlay::{DiscoveryLookup, TypedDiscoveryLookup};
 mod builder;
+mod endpoints;
 mod overlay_inbound;
 mod protocol_stats;
 mod quic_session;
 mod udp_session;
 
 pub use builder::{MempoolScannerBuilder, OverlaySessionFactory};
+pub use endpoints::{
+    MemberEndpoint, OverlayMemberEndpoints, QuicEndpointSource, known_member_seeds,
+    member_quic_target, record_member, record_member_quic, registered_member_count,
+};
 pub use protocol_stats::{ProtocolStats, protocol_stats};
-pub use quic_session::{QuicOverlaySession, quic_overlay_factory, quic_overlay_lookup};
+pub use quic_session::{
+    QuicOverlaySession, quic_overlay_factory, quic_overlay_factory_with_endpoints,
+    quic_overlay_lookup, quic_overlay_lookup_with_endpoints,
+};
 pub use udp_session::{
     AdnlUdpOverlaySession, DhtAddressPublisher, PUBLISH_INTERVAL, address_publisher,
-    channel_factory, direct_factory, overlay_factory, udp_dht_lookup, udp_iterative_dht_lookup,
-    udp_overlay_lookup, udp_peer_growth, udp_peer_growth_with_resolvers,
+    channel_factory, direct_factory, overlay_factory, overlay_factory_with_endpoints,
+    udp_dht_lookup, udp_iterative_dht_lookup, udp_overlay_lookup,
+    udp_overlay_lookup_with_endpoints, udp_peer_growth, udp_peer_growth_with_resolvers,
 };
 
 /// Delay between two peer-growth rounds after bootstrap.
