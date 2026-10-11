@@ -392,7 +392,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Answer queries wrapped in `overlay.query`/`overlay.queryWithExtra` on the original query id after validating the overlay id #overlay #tests
   - [x] Keep sessions alive across `OverlayConfig::peer_idle_timeout` while protocol traffic flows inside `receive` #overlay #network #tests
   - [x] Record process-wide protocol and discovery counters for live-run diagnostics #mempool #tests
-  - [ ] Become a verified overlay member so broadcasts are pushed to this node #overlay #network #mempool
+  - [x] Become a verified overlay member so broadcasts are pushed to this node: CI run 38105224655 on `b69da11` passed `configured_seed_delivers_valid_external_message`, so a verified member pushed an external-message broadcast that this node verified, unwrapped, and published as a `MempoolEvent::ExternalMessage` whose payload decoded as a TL-B `ExternalIn` #overlay #network #mempool
     - [x] Expand membership from `overlay.getRandomPeers` answers: resolve returned node addresses over DHT and add sessions for them #overlay #dht #mempool
     - [x] Grow membership after bootstrap on a 10 s cadence up to `overlay_max_peers` (default 30, pytoniq's `max_peers`) #overlay #mempool
     - [x] Keep a session alive with a 10 s `overlay.getRandomPeers` keepalive instead of a one second cadence #overlay #network
@@ -414,7 +414,7 @@ postponed work moves to `# BACKLOG`.
     - [ ] Stop one-shot lookup sockets from owning the address a peer stores for this node: `set_transient_address` stamps `adnl.addressList.version = now + 1` while the live session stamps `now`, so a lookup outbids the live socket even in the same second and the peer's stored `conns_` then points at a port that closes when the lookup returns; live evidence is decisive - of 61 peers in a 300 s run, all 4 that sent `overlay.ping` had the live socket pinned as our address owner while 0 of the 37 owned by a lookup socket ever pinged, and the bump only bought ~4 stray answers. The fix is pytoniq's model (one socket for DHT and overlay), now built as `AdnlUdpTransport` in `tonutils-adnl`: one unconnected socket per node id, a demultiplexing task routing by channel id and peer address, one `AdnlUdpSession` per peer (cloneable, all methods `&self`), and answers routed to in-flight queries by query id. `AdnlUdpSession::connect` keeps its own connected socket, so the resource semantics of every existing caller are unchanged #adnl #overlay #dht #network
       - [x] Switch the mempool's `direct_factory`, `channel_factory`, `overlay_factory` and `query_dht_seed` to `AdnlUdpTransport::session_for` so DHT lookups and the live overlay session share one source address: every UDP path (address resolution, `dht.findNode`, seed queries, `overlay.getRandomPeers` growth, and the `AdnlUdpOverlaySession` constructors) resolves its socket through `AdnlUdpTransport::for_node`, the process-wide cache keyed by node id and local address, and lookups no longer mutate `confirm_channels`/`transient_address` on a session they do not own #adnl #overlay #dht
       - [x] Delete `set_transient_address` and the `now + 1` stamp once lookups go through the shared transport, and re-run the live delivery test to confirm `overlay_packets > 0`: the mark, the bump, the per-pair `our_addr_lookup` bookkeeping, and the lookup/live log labels are gone - one node id now stamps one always-reachable address, so there is no version race to win and no dead port to record #adnl #overlay #tests
-    - [ ] Reach `overlay_packets > 0` from a local run; direct UDP is partly ICMP-blocked, so the fallbacks are a SOCKS5 UDP relay, GitHub Actions, or a standalone binary on a server #mempool #tests #network
+    - [x] Reach `overlay_packets > 0`; direct UDP is partly ICMP-blocked locally, so delivery was proven on the GitHub Actions fallback instead: CI run 38105224655 on `b69da11` passed `configured_seed_delivers_valid_external_message` against the mainnet mempool overlay, so the counter and the event stream both moved from a hosted runner #mempool #tests #network
 - [ ] Implement native Rust QUIC transport #quic #network
   - [ ] Define optional feature gating without native runtime dependencies #quic #features
   - [ ] Add peer and session lifecycle handling #quic #network
@@ -445,7 +445,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Add overlay DHT discovery and QUIC discovery live tests with workflow steps and `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` soft-skip #mempool #tests #ci
   - [x] Wire `native_quic` seed discovery through `quic_overlay_lookup` #quic #mempool
   - [-] Add live FEC broadcast coverage for external messages - requires live seed configuration in GitHub Actions secrets #mempool #tests #network
-  - [ ] Add live coverage for receiving `overlay.ping` and a pushed broadcast from a verified member #mempool #overlay #tests
+  - [x] Add live coverage for receiving `overlay.ping` and a pushed broadcast from a verified member: CI run 38105224655 on `b69da11` passed `configured_seed_delivers_valid_external_message`, which requires a verified member to push a broadcast this node accepts, and the same workflow's annotation counts `overlay.ping` receivers by distinct peer (11-12 peers in the recent runs), so both halves now have live evidence behind a green job #mempool #overlay #tests
 
 ## CLI And Shell Automation
 
