@@ -115,6 +115,20 @@ echoing `random_id`, the same answer upstream builds in
 `DhtMemberImpl::process_query(dht_ping)` (`dht/dht.cpp`). The wire form is
 identical whether the ping arrives wrapped (the pytoniq shape) or bare.
 
+A pushed broadcast is accepted only after its Ed25519 signature verifies, and
+the signed payload is the *broadcast id*, not the data hash. Upstream computes
+`broadcast_hash = sha256(overlay.broadcast.id{src, data_hash, flags})` where
+`src` is the sender's ADNL short id - `sha256(serialize(pub.ed25519 key))` -
+zeroed when `BroadcastFlagAnySender()` (1) is set, `data_hash` is
+`sha256(data)`, and the signature covers `overlay.broadcast.toSign{broadcast_hash,
+date}` (`compute_broadcast_id` and `BroadcastSimple::to_sign` in
+`overlay/broadcast-simple.cpp`). A verifier that signs the raw data hash
+instead rejects every genuine broadcast, so `OverlayBroadcast::payload_if_valid`
+recomputes the id the upstream way; this is what turns arriving
+`overlay.broadcast` frames into delivered `overlay_packets`. The
+`overlay.broadcast.id` constructor (`0x51fd789a`) is pinned by
+`schema_audit.rs` against `ton_api.tl`.
+
 Verification is necessary but not sufficient for a push. Upstream
 `BroadcastSimple::send` and the Plumtree path both choose
 `propagate_broadcast_to_` (5) members out of at most `max_neighbours_` (10),

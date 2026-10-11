@@ -150,13 +150,19 @@ pub enum OverlayBroadcast {
 }
 
 impl OverlayBroadcast {
+    /// `overlay.BroadcastFlagAnySender()` in upstream `overlay/overlays.h`:
+    /// when set, the sender's short id is zeroed inside the broadcast id so
+    /// any node may relay the same payload.
+    const FLAG_ANY_SENDER: u32 = 1;
+
     pub fn payload_if_valid(&self, now: i32) -> Option<&[u8]> {
         let Self::Broadcast {
             src: PublicKey::Ed25519 { key },
+            certificate: _,
+            flags,
             data,
             date,
             signature,
-            ..
         } = self
         else {
             return None;
@@ -166,8 +172,35 @@ impl OverlayBroadcast {
         }
         let signature = Signature::from_slice(signature).ok()?;
         let public_key = VerifyingKey::from_bytes(&key.0).ok()?;
-        let hash = Int256(Sha256::digest(data).into());
-        let to_sign = OverlayBroadcastToSign { hash, date: *date };
+
+        // Upstream signs the broadcast id, not the raw data hash:
+        // `compute_broadcast_id` serializes an `overlay.broadcast.id` whose
+        // `src` is the sender's ADNL short id - zeroed when the AnySender
+        // flag is set - and whose `data_hash` is `sha256(data)`, then hashes
+        // that serialization (`overlay/broadcast-simple.cpp`).
+        let data_hash = Int256(Sha256::digest(data).into());
+        let any_sender = (*flags as u32) & Self::FLAG_ANY_SENDER != 0;
+        let src = if any_sender {
+            Int256([0u8; 32])
+        } else {
+            // `PublicKey::compute_short_id()` is `sha256(serialize(tl()))`
+            // over the boxed `pub.ed25519 key:int256` form
+            // (`keys/keys.cpp`).
+            let mut boxed = 0x4813b4c6u32.to_le_bytes().to_vec();
+            boxed.extend_from_slice(&key.0);
+            Int256(Sha256::digest(boxed).into())
+        };
+        let broadcast_id = tl_proto::serialize(OverlayBroadcastId {
+            src,
+            data_hash,
+            flags: *flags,
+        });
+        let broadcast_hash = Int256(Sha256::digest(broadcast_id).into());
+
+        let to_sign = OverlayBroadcastToSign {
+            hash: broadcast_hash,
+            date: *date,
+        };
         public_key
             .verify(&tl_proto::serialize(to_sign), &signature)
             .ok()?;
@@ -217,6 +250,26 @@ pub struct OverlayBroadcastFec {
     pub fec: FecType,
     pub date: i32,
     pub signature: Vec<u8>,
+}
+
+/// overlay.broadcast.id src:int256 data_hash:int256 flags:int = overlay.broadcast.Id;
+///
+/// The preimage of a broadcast's identity hash. Upstream signs the
+/// broadcast id, not the raw data hash, so a receiver must recompute
+/// `sha256(src ‖ data_hash ‖ flags)` and verify the signature over the
+/// `toSign` object built from it (`compute_broadcast_id` and
+/// `BroadcastSimple::to_sign` in `overlay/broadcast-simple.cpp`).
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(
+    boxed,
+    id = 0x51fd789a,
+    scheme_inline = r##"overlay.broadcast.id src:int256 data_hash:int256 flags:int = overlay.broadcast.Id;"##
+)]
+pub struct OverlayBroadcastId {
+    pub src: Int256,
+    pub data_hash: Int256,
+    pub flags: i32,
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -349,30 +402,98 @@ mod tests {
         );
     }
 
+    /// Signs `toSign` the way upstream does: `hash` is the broadcast id
+    /// `sha256(overlay.broadcast.id[src, sha256(data), flags])`, where `src`
+    /// is the sender's ADNL short id - or all-zero when the AnySender flag
+    /// (1) is set - and `date` is the broadcast timestamp.
+    fn upstream_signature(
+        signing_key: &ed25519_dalek::SigningKey,
+        data: &[u8],
+        flags: u32,
+        date: i32,
+    ) -> [u8; 64] {
+        let public_key = signing_key.verifying_key().to_bytes();
+        let mut boxed = 0x4813b4c6u32.to_le_bytes().to_vec();
+        boxed.extend_from_slice(&public_key);
+        let src = if flags & 1 != 0 {
+            Int256([0u8; 32])
+        } else {
+            Int256(Sha256::digest(&boxed).into())
+        };
+        let broadcast_id = serialize(OverlayBroadcastId {
+            src,
+            data_hash: Int256(Sha256::digest(data).into()),
+            flags: flags as i32,
+        });
+        let to_sign = OverlayBroadcastToSign {
+            hash: Int256(Sha256::digest(&broadcast_id).into()),
+            date,
+        };
+        ed25519_dalek::Signer::sign(signing_key, &serialize(to_sign)).to_bytes()
+    }
+
     #[test]
     fn signed_overlay_broadcast_rejects_tampering() {
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&[13; 32]);
         let data = vec![4, 5, 6];
-        let to_sign = OverlayBroadcastToSign {
-            hash: Int256(Sha256::digest(&data).into()),
-            date: 100,
-        };
-        let signature = ed25519_dalek::Signer::sign(&signing_key, &serialize(to_sign));
+        let signature = upstream_signature(&signing_key, &data, 0, 100);
         let mut broadcast = OverlayBroadcast::Broadcast {
             src: PublicKey::Ed25519 {
                 key: Int256(signing_key.verifying_key().to_bytes()),
             },
             certificate: OverlayCertificate::Empty,
             flags: 0,
-            data,
+            data: data.clone(),
             date: 100,
-            signature: signature.to_bytes().to_vec(),
+            signature: signature.to_vec(),
         };
-        assert_eq!(broadcast.payload_if_valid(100), Some([4, 5, 6].as_slice()));
+        assert_eq!(broadcast.payload_if_valid(100), Some(data.as_slice()));
         if let OverlayBroadcast::Broadcast { data, .. } = &mut broadcast {
             data[0] ^= 1;
         }
         assert!(broadcast.payload_if_valid(100).is_none());
+    }
+
+    #[test]
+    fn any_sender_broadcast_ignores_the_signing_sender() {
+        // With flag 1 the broadcast id zeroes `src`, so a relay re-signs the
+        // same payload under its own key and every member still accepts it.
+        let relay = ed25519_dalek::SigningKey::from_bytes(&[7; 32]);
+        let data = vec![9, 8, 7];
+        let signature = upstream_signature(&relay, &data, 1, 100);
+        let broadcast = OverlayBroadcast::Broadcast {
+            src: PublicKey::Ed25519 {
+                key: Int256(relay.verifying_key().to_bytes()),
+            },
+            certificate: OverlayCertificate::Empty,
+            flags: 1,
+            data: data.clone(),
+            date: 100,
+            signature: signature.to_vec(),
+        };
+        assert_eq!(broadcast.payload_if_valid(100), Some(data.as_slice()));
+
+        // A signature made over the sender-specific id must NOT validate
+        // once the broadcast is flagged AnySender...
+        let signed_as_specific = upstream_signature(&relay, &data, 0, 100);
+        let mut flipped = OverlayBroadcast::Broadcast {
+            src: PublicKey::Ed25519 {
+                key: Int256(relay.verifying_key().to_bytes()),
+            },
+            certificate: OverlayCertificate::Empty,
+            flags: 1,
+            data: data.clone(),
+            date: 100,
+            signature: signed_as_specific.to_vec(),
+        };
+        assert!(flipped.payload_if_valid(100).is_none());
+
+        // ...but the same signature is accepted once the AnySender flag is
+        // cleared, because the verifier then hashes the sender-specific src.
+        if let OverlayBroadcast::Broadcast { flags, .. } = &mut flipped {
+            *flags = 0;
+        }
+        assert_eq!(flipped.payload_if_valid(100), Some(data.as_slice()));
     }
 
     #[test]
