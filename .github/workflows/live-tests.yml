@@ -179,10 +179,12 @@ jobs:
         env:
           TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS || '300' }}
         # Job logs require admin access, so a failed acceptance run must
-        # publish its own diagnosis: final metrics, DHT address publishing
-        # lines, the inbound query census by constructor, ping senders, and
-        # per-peer address-view counters go to a check annotation and a step
-        # summary, both readable on a public repo without admin rights.
+        # publish its own diagnosis: the final metrics line, ADNL channel
+        # negotiation counts, custom-message (broadcast candidate) counters,
+        # the inbound query census by constructor, and the growth/publishing
+        # lines go to a check annotation (GitHub caps annotations at 4 KiB,
+        # so the compact view comes first) and to the step summary, both
+        # readable on a public repo without admin rights.
         run: |
           set -o pipefail
           log="$RUNNER_TEMP/delivery.log"
@@ -192,10 +194,23 @@ jobs:
             set +e
             diag="$RUNNER_TEMP/delivery-diag.txt"
             {
-              echo "-- final metrics --"
-              grep -E 'phase=delivery|phase=waiting' "$log" | tail -n 4
-              echo "-- dht address publishing --"
-              grep 'dht address publish' "$log"
+              echo "-- final delivery --"
+              grep 'phase=delivery' "$log" | tail -n 1
+              echo "-- channel negotiation --"
+              printf 'requested=%s confirmed=%s installed=%s\n' \
+                "$(grep -c 'ADNL channel requested' "$log")" \
+                "$(grep -c 'ADNL channel confirmed by peer' "$log")" \
+                "$(grep -c 'ADNL channel installed' "$log")"
+              echo "-- custom overlay messages (broadcast candidates) --"
+              printf 'arrived=%s rejected=%s foreign_overlay=%s\n' \
+                "$(grep -c 'overlay UDP custom message' "$log")" \
+                "$(grep -c 'custom payload rejected' "$log")" \
+                "$(grep -c 'custom payload for another overlay' "$log")"
+              echo "-- ping answers --"
+              printf 'overlay.ping_distinct_peers=%s dht.ping=%s pongs=%s\n' \
+                "$(grep -oE 'answering overlay.ping for peer=PeerId\(\[[0-9, ]+\]\)' "$log" | sort -u | wc -l)" \
+                "$(grep -c 'answering dht.ping' "$log")" \
+                "$(grep -oE 'pongs_sent: [0-9]+' "$log" | tail -n 1 | grep -oE '[0-9]+')"
               echo "-- inbound query census (distinct peers / total) --"
               for spec in 'ping 690cb481' 'capabilities dee618f8' 'getRandomPeers 48ee64ab' 'getRandomPeersV2 a58e7ecc'; do
                 set -- $spec
@@ -204,18 +219,14 @@ jobs:
                 total=$(printf '%s\n' "$all" | sed '/^$/d' | wc -l)
                 echo "$1: distinct_peers=$distinct total=$total"
               done
-              echo "-- ping senders (we answered overlay.ping) --"
-              grep -oE 'answering overlay.ping for peer=PeerId\(\[[0-9, ]+\]\)' "$log" | sed 's/answering overlay.ping for //' | sort -u
-              echo "-- distinct peers holding no address list for us --"
-              grep 'holds no address list for us' "$log" | grep -oE 'peer=\[[0-9, ]+\]' | sort -u | wc -l
-              echo "-- distinct peers holding an address list for us --"
-              grep 'ADNL address view' "$log" | grep -oE 'peer=\[[0-9, ]+\]' | sort -u | wc -l
               echo "-- growth rounds --"
-              grep 'peer growth' "$log" | tail -n 6
+              grep 'peer growth' "$log" | tail -n 4
               echo "-- growth address resolution --"
-              grep -E 'udp_peer_growth:|udp_overlay_lookup:' "$log" | tail -n 12
-              echo "-- log tail --"
-              tail -n 40 "$log"
+              grep -E 'udp_peer_growth:|udp_overlay_lookup:' "$log" | tail -n 6
+              echo "-- dht address publishing --"
+              grep 'dht address publish' "$log" | tail -n 6
+              echo "-- log tail (waiting metrics elided) --"
+              grep -v 'phase=waiting metrics=' "$log" | tail -n 25
             } > "$diag"
             {
               echo '### Mempool delivery test failed'
@@ -223,6 +234,12 @@ jobs:
               echo '```'
               cat "$diag"
               echo '```'
+              echo '<details><summary>Full log tail</summary>'
+              echo
+              echo '```'
+              tail -n 60 "$log"
+              echo '```'
+              echo '</details>'
             } >> "$GITHUB_STEP_SUMMARY"
             msg=$(awk 'BEGIN{ORS="%0A"}1' "$diag")
             echo "::error title=Mempool delivery test failed::$msg"

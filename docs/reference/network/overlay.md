@@ -105,6 +105,16 @@ the flow `overlay.getRandomPeers` -> bounded pending set -> `overlay.ping` ->
 `overlay.pong`; without a successful pending verification, a member never
 pushes broadcasts to this node.
 
+The pytoniq nodes that make up the mempool overlay keep peer lists with a
+different constructor. `Node.ping` (`pytoniq/adnl/adnl.py`) sends `dht.ping`
+(`0xcbeb3f18`) wrapped in `overlay.query` every 60 seconds and removes a peer
+after four unanswered pings plus a 15 s guard, so an `overlay.pong`-only peer
+is silently dropped from the broadcast fan-out minutes after joining. This
+crate therefore also answers `dht.ping` with `dht.pong` (`0x5a8aef81`),
+echoing `random_id`, the same answer upstream builds in
+`DhtMemberImpl::process_query(dht_ping)` (`dht/dht.cpp`). The wire form is
+identical whether the ping arrives wrapped (the pytoniq shape) or bare.
+
 Verification is necessary but not sufficient for a push. Upstream
 `BroadcastSimple::send` and the Plumtree path both choose
 `propagate_broadcast_to_` (5) members out of at most `max_neighbours_` (10),

@@ -20,6 +20,14 @@
 //! only verified members receive overlay broadcasts, so an unanswered ping
 //! leaves the node connected but silent.
 //!
+//! The pytoniq nodes that make up the mempool overlay keep their peers alive
+//! with a different constructor: `Node.ping` sends `dht.ping` wrapped in
+//! `overlay.query` every 60 seconds and removes a peer after four unanswered
+//! pings (`pytoniq/adnl/adnl.py`), long before any broadcast fan-out would
+//! reach it. [`build_overlay_answer`] therefore answers `dht.ping` with
+//! `dht.pong` as well, echoing `random_id` the way upstream
+//! `DhtMemberImpl::process_query(dht_ping)` does (`dht/dht.cpp`).
+//!
 //! Every query arrives wrapped: upstream serializes queries with
 //! `create_serialize_tl_object_suffix` (`OverlayManager::send_query` in
 //! `overlay/overlay-manager.cpp`), i.e. it prefixes the inner query with
@@ -41,8 +49,8 @@ use tonutils_adnl::{AdnlUdpSession, now_i32};
 use tonutils_overlay::{OverlayId, PeerId};
 use tonutils_tl::tl::TonNodeCapabilities;
 use tonutils_tl::tl::network::{
-    OverlayMemberCertificate, OverlayNode, OverlayNodeV2, OverlayNodesBoxed, OverlayNodesV2Boxed,
-    OverlayPong, OverlayQuery,
+    DhtMessage, DhtPong, OverlayMemberCertificate, OverlayNode, OverlayNodeV2, OverlayNodesBoxed,
+    OverlayNodesV2Boxed, OverlayPong, OverlayQuery,
 };
 
 use crate::protocol_stats;
@@ -90,6 +98,12 @@ pub(crate) fn build_overlay_answer(
     let mut data = query;
     let mut effective_id = tl_id(query);
     let mut wrapped = false;
+    // Start of the inner query, kept for constructors that are not part of
+    // `OverlayQuery`: pytoniq wraps its `dht.ping` keepalive in
+    // `overlay.query` (`OverlayTransport.send_query_message`), so the ping
+    // arrives here with a valid wrapper but an inner constructor this
+    // function must match itself.
+    let mut inner = query;
     let parsed = match OverlayQuery::read_from(&mut data) {
         Ok(OverlayQuery::Query { overlay: wrapper })
         | Ok(OverlayQuery::QueryWithExtra {
@@ -107,6 +121,7 @@ pub(crate) fn build_overlay_answer(
                 );
                 return None;
             }
+            inner = data;
             OverlayQuery::read_from(&mut data)
         }
         other => other,
@@ -146,12 +161,26 @@ pub(crate) fn build_overlay_answer(
             protocol_stats::record_random_peers_answer();
             Some(tl_proto::serialize(nodes))
         }
-        other => {
+        // `Err` is a constructor this enum does not model — `dht.ping` is
+        // the one that matters in practice; a nested `overlay.query` is a
+        // double-wrapped query and equally unanswerable.
+        Ok(OverlayQuery::Query { .. } | OverlayQuery::QueryWithExtra { .. }) | Err(_) => {
+            // pytoniq pings its overlay peers with `dht.ping` wrapped in
+            // `overlay.query` and removes a peer after four unanswered
+            // pings (`Node.ping` in `pytoniq/adnl/adnl.py`), so silence
+            // here silently drops this node from the peer's broadcast
+            // fan-out.  Upstream answers the same constructor from the
+            // DHT member (`DhtMemberImpl::process_query(dht_ping)`).
+            let mut dht = inner;
+            if let Ok(DhtMessage::Ping { random_id }) = DhtMessage::read_from(&mut dht) {
+                log::debug!("answering dht.ping for peer={peer:?}");
+                protocol_stats::record_pong_sent();
+                return Some(tl_proto::serialize(DhtPong { random_id }));
+            }
             protocol_stats::record_query_unhandled(effective_id);
             log::debug!(
-                "unhandled overlay query: peer={peer:?} id={effective_id:08x} wrapped={wrapped} len={} recognised={}",
+                "unhandled overlay query: peer={peer:?} id={effective_id:08x} wrapped={wrapped} len={}",
                 query.len(),
-                other.is_ok(),
             );
             None
         }
@@ -382,6 +411,44 @@ mod tests {
         let answer = build_overlay_answer(&peer, &session, Some(overlay), &members, &ping)
             .expect("bare ping must be answered");
         assert_eq!(answer, tl_proto::serialize(OverlayPong));
+    }
+
+    #[tokio::test]
+    async fn answers_wrapped_dht_ping_with_pong() {
+        let overlay = OverlayId::from_name(b"tonutils query test");
+        let session = test_session().await;
+        let members = cache();
+        let peer = PeerId::from_bytes([4; 32]);
+        // pytoniq's `Node.ping` shape: `dht.ping` wrapped in `overlay.query`,
+        // random_id echoed back or the peer counts the ping as lost.
+        let ping = tl_proto::serialize(DhtMessage::Ping { random_id: 42 });
+        let wrapped = wrap(overlay, &ping);
+        assert_eq!(&wrapped[..4], &OVERLAY_QUERY_WIRE);
+
+        let answer = build_overlay_answer(&peer, &session, Some(overlay), &members, &wrapped)
+            .expect("wrapped dht.ping must be answered");
+        assert_eq!(&answer[..4], &[0x81, 0xef, 0x8a, 0x5a]);
+        assert_eq!(answer, tl_proto::serialize(DhtPong { random_id: 42 }));
+    }
+
+    #[tokio::test]
+    async fn answers_bare_dht_ping_with_pong() {
+        let overlay = OverlayId::from_name(b"tonutils query test");
+        let session = test_session().await;
+        let members = cache();
+        let peer = PeerId::from_bytes([5; 32]);
+        let ping = tl_proto::serialize(DhtMessage::Ping {
+            random_id: u64::MAX,
+        });
+
+        let answer = build_overlay_answer(&peer, &session, Some(overlay), &members, &ping)
+            .expect("bare dht.ping must be answered");
+        assert_eq!(
+            answer,
+            tl_proto::serialize(DhtPong {
+                random_id: u64::MAX
+            })
+        );
     }
 
     #[tokio::test]

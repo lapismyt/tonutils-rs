@@ -82,7 +82,12 @@ is what eventually produces an incoming `overlay.ping`; answering it is what
 makes the peer treat this node as a verified neighbour that receives pushed
 broadcasts. A one second cadence produced tens of thousands of queries per run
 without improving admission, because the peer's drain rate - not our query
-rate - decides when this node is pinged.
+rate - decides when this node is pinged. pytoniq-based members keep the
+membership alive on top of that with `dht.ping` every 60 seconds, dropping a
+peer after four unanswered pings (`Node.ping` in `pytoniq/adnl/adnl.py`); the
+scanner answers `dht.ping` with `dht.pong` (see
+`docs/reference/network/overlay.md`) so those members do not evict it after
+admission.
 
 After bootstrap, `native_udp` also installs a peer-growth lookup
 (`udp_peer_growth`, `PEER_GROWTH_INTERVAL` of 10 seconds, pytoniq's

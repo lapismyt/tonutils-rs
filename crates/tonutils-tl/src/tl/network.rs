@@ -378,6 +378,18 @@ impl DhtKeyDescription {
 #[tl(boxed, id = 0x7026fb08)]
 pub struct DhtStored;
 
+/// dht.pong random_id:long = dht.Pong;
+///
+/// The `dht.ping` answer.  pytoniq nodes ping their overlay peers with
+/// `dht.ping` (not `overlay.ping`) and drop a peer whose pings go
+/// unanswered four times (`Node.ping` in `pytoniq/adnl/adnl.py`), so
+/// answering this constructor is what keeps a peer in their peer list.
+#[derive(TlRead, TlWrite, Debug, Clone, Copy, PartialEq, Eq)]
+#[tl(boxed, id = 0x5a8aef81)]
+pub struct DhtPong {
+    pub random_id: u64,
+}
+
 impl DhtValue {
     /// Serialize with an empty signature — the exact bytes that
     /// are signed by the key owner and verified by the DHT.
