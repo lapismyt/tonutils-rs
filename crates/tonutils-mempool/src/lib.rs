@@ -559,6 +559,28 @@ impl MempoolScanner {
     }
 }
 
+/// Extracts the deliverable external-message BoC from an overlay payload.
+///
+/// Upstream `FullNodeShardImpl::send_external_message`
+/// (`validator/full-node-shard.cpp`) and pytoniq
+/// `ShardOverlay.send_external_message` both serialize
+/// `tonNode.externalMessageBroadcast message:tonNode.ExternalMessage` into
+/// the broadcast `data` field, so the raw BoC sits one wrapper below the
+/// verified broadcast payload; the upstream receiver performs the same
+/// `fetch_tl_object<tonNode_externalMessageBroadcast>` unwrap in
+/// `check_broadcast`, and this crate's FEC path already unwraps it too.
+/// Payloads that are not that wrapper - bare BoCs relayed through
+/// `overlay.unicast`, for instance - pass through unchanged so
+/// [`validate_envelope`] stays the single accept/reject point.
+pub(crate) fn unwrap_external_message_payload(payload: Vec<u8>) -> Vec<u8> {
+    match tl_proto::deserialize::<tonutils_tl::tl::network::TonNodeExternalMessageBroadcast>(
+        &payload,
+    ) {
+        Ok(broadcast) => broadcast.message.data,
+        Err(_) => payload,
+    }
+}
+
 fn validate_envelope(
     raw_boc: &[u8],
     config: &MempoolConfig,

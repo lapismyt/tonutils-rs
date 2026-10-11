@@ -328,7 +328,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                                 Ok(OverlayMessage::Message { overlay })
                                 | Ok(OverlayMessage::MessageWithExtra { overlay, .. }) => overlay,
                                 _ => {
-                                    log::trace!(
+                                    log::debug!(
                                         "overlay UDP custom payload has no overlay header: peer={:?}",
                                         self.peer
                                     );
@@ -336,7 +336,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                                 }
                             };
                             if message_overlay.0 != overlay.as_bytes() {
-                                log::trace!(
+                                log::debug!(
                                     "overlay UDP custom payload for another overlay: peer={:?} got={:02x?} joined={:02x?}",
                                     self.peer,
                                     message_overlay.0,
@@ -347,7 +347,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                             match self.unwrap_overlay_payload(data) {
                                 Ok(data) => data,
                                 Err(error) => {
-                                    log::trace!(
+                                    log::debug!(
                                         "overlay UDP custom payload rejected: peer={:?} reason={error}",
                                         self.peer
                                     );
@@ -358,7 +358,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                             match self.unwrap_overlay_payload(&data) {
                                 Ok(data) => data,
                                 Err(error) => {
-                                    log::trace!(
+                                    log::debug!(
                                         "direct UDP payload rejected: peer={:?} reason={error}",
                                         self.peer
                                     );
@@ -532,10 +532,16 @@ impl AdnlUdpOverlaySession {
             return Ok(broadcast.message.data);
         }
         match tl_proto::deserialize::<OverlayBroadcast>(data) {
-            Ok(OverlayBroadcast::Unicast { data }) => Ok(data),
+            Ok(OverlayBroadcast::Unicast { data }) => {
+                Ok(crate::unwrap_external_message_payload(data))
+            }
             Ok(broadcast) => broadcast
                 .payload_if_valid(now_i32())
-                .map(ToOwned::to_owned)
+                // A verified simple broadcast still carries the
+                // `tonNode.externalMessageBroadcast` wrapper, so the
+                // deliverable BoC is one unwrap below the payload
+                // (`unwrap_external_message_payload`).
+                .map(|payload| crate::unwrap_external_message_payload(payload.to_owned()))
                 .ok_or_else(|| "invalid overlay broadcast".to_owned()),
             Err(_) => Err("invalid overlay payload".to_owned()),
         }

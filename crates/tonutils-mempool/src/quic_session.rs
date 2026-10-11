@@ -131,10 +131,16 @@ impl QuicOverlaySession {
             return Ok(broadcast.message.data);
         }
         match tl_proto::deserialize::<OverlayBroadcast>(data) {
-            Ok(OverlayBroadcast::Unicast { data }) => Ok(data),
+            Ok(OverlayBroadcast::Unicast { data }) => {
+                Ok(crate::unwrap_external_message_payload(data))
+            }
             Ok(broadcast) => broadcast
                 .payload_if_valid(now_i32())
-                .map(ToOwned::to_owned)
+                // A verified simple broadcast still carries the
+                // `tonNode.externalMessageBroadcast` wrapper, so the
+                // deliverable BoC is one unwrap below the payload
+                // (`unwrap_external_message_payload`).
+                .map(|payload| crate::unwrap_external_message_payload(payload.to_owned()))
                 .ok_or_else(|| "invalid overlay broadcast".to_owned()),
             Err(_) => Err("invalid overlay payload".to_owned()),
         }

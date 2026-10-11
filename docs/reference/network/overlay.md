@@ -129,6 +129,20 @@ recomputes the id the upstream way; this is what turns arriving
 `overlay.broadcast.id` constructor (`0x51fd789a`) is pinned by
 `schema_audit.rs` against `ton_api.tl`.
 
+A verified broadcast still carries a *wrapper*, not a BoC. Upstream
+`FullNodeShardImpl::send_external_message` (`validator/full-node-shard.cpp`)
+and pytoniq `ShardOverlay.send_external_message` both serialize
+`tonNode.externalMessageBroadcast message:tonNode.ExternalMessage` into the
+broadcast `data` field, and upstream's receiver unwraps it with
+`fetch_tl_object<tonNode_externalMessageBroadcast>` in `check_broadcast`.
+The deliverable BoC is therefore the nested `message.data`, one level below
+the signed payload; handing the wrapper itself to the scanner fails
+`validate_envelope`'s BoC magic check (`0x3d1b1867` vs `0xb5ee9c72`) and
+counts as a rejected packet. `unwrap_external_message_payload` performs the
+same unwrap on the simple-broadcast and `overlay.unicast` paths, matching
+what this crate's FEC path already did; payloads that are not that wrapper
+pass through so `validate_envelope` stays the single accept/reject point.
+
 Verification is necessary but not sufficient for a push. Upstream
 `BroadcastSimple::send` and the Plumtree path both choose
 `propagate_broadcast_to_` (5) members out of at most `max_neighbours_` (10),
