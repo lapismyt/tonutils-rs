@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use futures::future::join_all;
-use tonutils_adnl::AdnlUdpSession;
-use tonutils_adnl::{KeyPair, PublicKey};
+use tonutils_adnl::{AdnlUdpSession, KeyPair, PublicKey, QuicSession};
 use tonutils_mempool::MempoolScannerBuilder;
 use tonutils_mempool::{
     MempoolConfig, MempoolEvent, OverlayMemberEndpoints, known_member_seeds, member_quic_target,
@@ -13,10 +12,16 @@ use tonutils_mempool::{
     udp_overlay_lookup_with_endpoints,
 };
 use tonutils_network_config::extract_dht_addresses;
-use tonutils_overlay::{OverlayId, PeerId, SeedPeer};
+use tonutils_overlay::{OverlayId, PeerId, PeerStatus, SeedPeer};
 use tonutils_tl::Int256;
 use tonutils_tl::tl::adnl::Message as AdnlMessage;
 use tonutils_tl::tl::network::{DhtMessage, DhtNodesBoxed, PacketContents};
+
+// Shared environment parsing and soft-skip assertion for the
+// live tests in this directory; re-exported so call sites read
+// unchanged.
+mod common;
+pub use common::*;
 
 fn configured_seed(variable: &str) -> SocketAddr {
     let value = std::env::var(variable)
@@ -289,23 +294,16 @@ fn write_live_fixture(peer: &str, answer: &[u8]) {
     eprintln!("wrote {path} ({} bytes)", answer.len());
 }
 
-fn configured_bytes(variable: &str) -> Option<[u8; 32]> {
-    let value = match std::env::var(variable) {
-        Ok(value) => value,
-        Err(std::env::VarError::NotPresent) => return None,
-        Err(error) => panic!("failed to read {variable}: {error}"),
-    };
-    if value.trim().is_empty() {
-        return None;
-    }
-    let bytes =
-        hex::decode(value).unwrap_or_else(|error| panic!("{variable} must be hex: {error}"));
-    bytes
-        .try_into()
-        .ok()
-        .or_else(|| panic!("{variable} must contain 32 bytes"))
-}
-
+/// Delivers one valid external message over the live mainnet
+/// mempool overlay, then proves non-seed connectivity: at least
+/// one peer outside the configured seed list must complete an
+/// authenticated overlay session, and a direct ADNL/UDP session
+/// to a non-seed registry member must answer
+/// `overlay.getRandomPeers`.
+///
+/// The seeds are `dht-server` deployments that do not run overlay
+/// sessions, so every Connected peer and every registry member
+/// comes from discovery or peer growth - never from the seed list.
 #[tokio::test]
 #[ignore = "requires a configured live overlay seed and external-message traffic"]
 async fn configured_seed_delivers_valid_external_message() {
@@ -336,11 +334,16 @@ async fn configured_seed_delivers_valid_external_message() {
     let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let overlay = OverlayId::from_bytes(overlay_bytes);
     let dht_overlay_key: [u8; 32] = overlay_bytes;
+    // Shared with the builder so the UDP discovery, peer-growth and
+    // session factory all record into the registry this test reads
+    // after bootstrap: it holds every runtime-resolved member, which
+    // is the non-seed peer set the connectivity checks below dial.
+    let member_endpoints = OverlayMemberEndpoints::default();
     let (scanner, manager, stream) = MempoolScannerBuilder::new()
         .download_config(false)
         .overlay_id(overlay)
         .config(MempoolConfig::default())
-        .seeds(seeds)
+        .seeds(seeds.clone())
         .reconnect_attempts(2)
         .discovery_timeout(Duration::from_secs(30))
         .dht_overlay_key(dht_overlay_key)
@@ -350,6 +353,7 @@ async fn configured_seed_delivers_valid_external_message() {
         // members reached transitively, which is what raises the number of peers
         // that can verify this node and push broadcasts to it.
         .overlay_max_peers(overlay_max_peers)
+        .member_endpoints(member_endpoints.clone())
         .native_udp("0.0.0.0:0".parse().unwrap(), local_key, None)
         .start()
         .await
@@ -367,12 +371,27 @@ async fn configured_seed_delivers_valid_external_message() {
     let mut events = Box::pin(stream);
     let mut progress = tokio::time::interval(Duration::from_secs(10));
     progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Peers outside the configured seed list that completed an
+    // authenticated overlay session with this node: bootstrap
+    // connects the discovery results, and periodic growth keeps
+    // adding members that answer `overlay.getRandomPeers`.
+    let seed_ids: std::collections::HashSet<PeerId> = seeds.iter().map(|seed| seed.peer).collect();
+    let mut non_seed_connected: Vec<PeerId> = Vec::new();
     let event = tokio::time::timeout(Duration::from_secs(timeout), async {
         loop {
             tokio::select! {
                 event = events.next() => {
-                    if let Some(event @ MempoolEvent::ExternalMessage { .. }) = event {
-                        break event;
+                    if let Some(event) = event {
+                        if let MempoolEvent::PeerStatus(PeerStatus::Connected { peer }) = &event
+                            && !seed_ids.contains(peer)
+                            && !non_seed_connected.contains(peer)
+                        {
+                            eprintln!("live mempool phase=non-seed peer connected: peer={peer:?}");
+                            non_seed_connected.push(*peer);
+                        }
+                        if let event @ MempoolEvent::ExternalMessage { .. } = event {
+                            break event;
+                        }
                     }
                 }
                 _ = progress.tick() => {
@@ -407,64 +426,71 @@ async fn configured_seed_delivers_valid_external_message() {
         message.info,
         tonutils_tlb::CommonMsgInfo::ExternalIn { .. }
     ));
-    manager.shutdown_wait().await;
-}
-
-/// Resolves the seed set shared by the mempool live tests: either the
-/// `;`-separated `TON_MEMPOOL_LIVE_SEEDS` list, or a single
-/// `TON_MEMPOOL_LIVE_SEED` address paired with `TON_MEMPOOL_LIVE_PEER_KEY`.
-fn configured_live_seeds() -> Vec<SeedPeer> {
-    match std::env::var("TON_MEMPOOL_LIVE_SEEDS") {
-        Ok(value) if !value.trim().is_empty() => parse_live_seeds(&value),
-        Ok(_) | Err(std::env::VarError::NotPresent) => {
-            let seed_address: SocketAddr = match std::env::var("TON_MEMPOOL_LIVE_SEED") {
-                Ok(value) => value
-                    .parse()
-                    .expect("TON_MEMPOOL_LIVE_SEED must be IP:port"),
-                Err(error) => panic!("TON_MEMPOOL_LIVE_SEED must be set to IP:port: {error}"),
-            };
-            let peer_key = configured_bytes("TON_MEMPOOL_LIVE_PEER_KEY")
-                .expect("TON_MEMPOOL_LIVE_PEER_KEY must be set to 32-byte hex");
-            vec![SeedPeer {
-                peer: PeerId::from_bytes(peer_key),
-                address: seed_address.to_string(),
-            }]
-        }
-        Err(error) => panic!("failed to read TON_MEMPOOL_LIVE_SEEDS: {error}"),
-    }
-}
-
-/// Overlay id used by the discovery live tests, defaulting to the mainnet
-/// mempool overlay that CI also uses for the delivery test.
-fn discovery_overlay_id() -> [u8; 32] {
-    configured_bytes("TON_MEMPOOL_LIVE_OVERLAY_ID").unwrap_or_else(|| {
-        let hex = "12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649";
-        hex::decode(hex)
-            .expect("static overlay id must be hex")
-            .try_into()
-            .expect("static overlay id must contain 32 bytes")
-    })
-}
-
-/// Shared assertion for the discovery live tests: a discovery run either
-/// yields usable peers or, with `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` set,
-/// logs and passes instead of failing on transport unavailability.
-fn assert_discovery_peers(kind: &str, peers: Vec<SeedPeer>, allow_unavailable: bool) {
-    eprintln!(
-        "live overlay discovery kind={kind} phase=lookup peers={}",
-        peers.len()
-    );
-    if peers.is_empty() {
-        if allow_unavailable {
-            log::debug!("skipping unavailable {kind} overlay discovery: no peers");
-            return;
-        }
-        panic!("{kind} overlay discovery returned no peers");
-    }
+    // Non-seed connectivity gate: the scanner must have completed
+    // an authenticated overlay session with at least one peer
+    // outside the configured seed list.  The seeds are
+    // `dht-server` deployments that do not run overlay sessions,
+    // so every Connected peer here came from discovery or growth.
     assert!(
-        peers.iter().all(SeedPeer::is_valid),
-        "{kind} overlay discovery must return usable KEY@IP:PORT peers"
+        !non_seed_connected.is_empty(),
+        "live mempool phase=non-seed: no peer outside the seed list connected (seed_count={} registered_peers={})",
+        seeds.len(),
+        manager.peer_count().await
     );
+    eprintln!(
+        "live mempool phase=non-seed connected={} seed_count={}",
+        non_seed_connected.len(),
+        seeds.len()
+    );
+    // Round-trip proof against one non-seed member: open a direct
+    // ADNL/UDP session to a registry member the discovery path
+    // resolved - never a configured seed - and ask it for random
+    // peers, the same query the growth path uses.
+    let (member_peer, member_addr) = known_member_seeds(&member_endpoints)
+        .into_iter()
+        .find(|(peer, _)| !seed_ids.contains(peer))
+        .expect("the member registry must hold a non-seed peer after delivery");
+    let member_key = PublicKey::from_bytes(member_peer.as_bytes())
+        .expect("registry member public key must decompress");
+    let roundtrip_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let session = tokio::time::timeout(
+        Duration::from_secs(30),
+        AdnlUdpSession::connect(
+            "0.0.0.0:0".parse().expect("wildcard address must parse"),
+            member_addr,
+            roundtrip_key,
+            member_key,
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        panic!("live mempool phase=non-seed udp roundtrip: connect to {member_addr} timed out")
+    })
+    .unwrap_or_else(|error| {
+        panic!(
+            "live mempool phase=non-seed udp roundtrip: connect to {member_addr} failed: {error}"
+        )
+    });
+    let nodes = tokio::time::timeout(
+        Duration::from_secs(15),
+        session.overlay_get_random_peers(Int256(overlay.as_bytes()), Duration::from_secs(10)),
+    )
+    .await
+    .unwrap_or_else(|_| {
+        panic!(
+            "live mempool phase=non-seed udp roundtrip: overlay.getRandomPeers to {member_addr} timed out"
+        )
+    })
+    .unwrap_or_else(|error| {
+        panic!(
+            "live mempool phase=non-seed udp roundtrip: overlay.getRandomPeers to {member_addr} failed: {error}"
+        )
+    });
+    eprintln!(
+        "live mempool phase=non-seed udp roundtrip target={member_addr} result=ok random_peers={}",
+        nodes.nodes.len()
+    );
+    manager.shutdown_wait().await;
 }
 
 /// Runs the native ADNL/UDP DHT overlay discovery (`udp_overlay_lookup`)
@@ -637,8 +663,12 @@ async fn probe_all(
 /// handshake failures; phase 2 probes those members over QUIC and reports
 /// the probe counts.
 ///
-/// Soft-skips - with an explicit `members=`/`quic_peers=` log - when either
-/// phase finds nothing and `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` is set.
+/// Soft-skips only the discovery phases - with an explicit
+/// `members=`/`quic_peers=` log - when they find nothing and
+/// `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` is set.  The connect phase
+/// hard-requires at least one runtime-discovered member to answer a
+/// QUIC handshake, because that is the reachability claim this test
+/// exists to check.
 #[tokio::test]
 #[ignore = "requires live mainnet QUIC access"]
 async fn mainnet_overlay_quic_discovery_returns_peers() {
@@ -682,7 +712,8 @@ async fn mainnet_overlay_quic_discovery_returns_peers() {
     // fails": any RFC-compliant QUIC server must answer the probe
     // (RFC 9000 ss 5.2.2) whatever version it supports. The controls show
     // whether this runner can reach public QUIC servers over UDP at all.
-    let targets: Vec<SocketAddr> = known_member_seeds(&endpoints)
+    let members_seeds = known_member_seeds(&endpoints);
+    let targets: Vec<SocketAddr> = members_seeds
         .iter()
         .map(|(peer, udp)| member_quic_target(&endpoints, *peer, *udp, QUIC_PORT_OFFSET).0)
         .collect();
@@ -734,26 +765,77 @@ async fn mainnet_overlay_quic_discovery_returns_peers() {
         registered_member_count(&endpoints)
     );
     assert_discovery_peers("quic", peers, allow_unavailable);
-}
 
-fn parse_live_seeds(value: &str) -> Vec<SeedPeer> {
-    value
-        .split(';')
-        .filter(|entry| !entry.trim().is_empty())
-        .map(|entry| {
-            let (key, address) = entry
-                .split_once('@')
-                .unwrap_or_else(|| panic!("live seed must use KEY@IP:PORT: {entry}"));
-            let peer_key = hex::decode(key).expect("live seed key must be hex");
-            let peer_key: [u8; 32] = peer_key
-                .try_into()
-                .expect("live seed key must contain 32 bytes");
-            address
-                .parse::<SocketAddr>()
-                .unwrap_or_else(|_| panic!("live seed address must be IP:PORT: {address}"));
-            SeedPeer::from_public_key(peer_key, address)
-        })
-        .collect()
+    // Phase 2b: direct QUIC connects to the registered members. The
+    // lookup above dials members internally but reports only the peers
+    // its queries discovered, not which member completed the handshake;
+    // dialing each member directly proves that at least one
+    // runtime-discovered member - never a configured seed - answers a
+    // QUIC connect, and the connected sessions speak the overlay query
+    // framing.
+    let connect_results = join_all(members_seeds.iter().map(|(peer, udp)| {
+        let target = member_quic_target(&endpoints, *peer, *udp, QUIC_PORT_OFFSET).0;
+        let remote = PublicKey::from_bytes(peer.as_bytes());
+        async move {
+            let Some(remote) = remote else {
+                return (target, Err("invalid member public key".to_owned()));
+            };
+            let attempt = tokio::time::timeout(
+                Duration::from_secs(5),
+                QuicSession::connect(local_addr, target, keypair, remote),
+            )
+            .await;
+            match attempt {
+                Err(_) => (target, Err("timeout".to_owned())),
+                Ok(Err(error)) => (target, Err(error.to_string())),
+                Ok(Ok(session)) => (target, Ok(session)),
+            }
+        }
+    }))
+    .await;
+    let mut connected = 0usize;
+    let mut timeouts = 0usize;
+    let mut errors = 0usize;
+    for (target, result) in &connect_results {
+        match result {
+            Ok(session) => {
+                connected += 1;
+                let query = session
+                    .overlay_get_random_peers(Int256(overlay.as_bytes()), Duration::from_secs(15))
+                    .await;
+                match query {
+                    Ok(nodes) => eprintln!(
+                        "live overlay discovery kind=quic phase=connect target={target} result=connected random_peers={}",
+                        nodes.nodes.len()
+                    ),
+                    Err(error) => eprintln!(
+                        "live overlay discovery kind=quic phase=connect target={target} result=connected query_error={error}"
+                    ),
+                }
+            }
+            Err(error) if error == "timeout" => {
+                timeouts += 1;
+                eprintln!(
+                    "live overlay discovery kind=quic phase=connect target={target} result=timeout"
+                );
+            }
+            Err(error) => {
+                errors += 1;
+                eprintln!(
+                    "live overlay discovery kind=quic phase=connect target={target} result=error error={error}"
+                );
+            }
+        }
+    }
+    eprintln!(
+        "live overlay discovery kind=quic phase=connect targets={} connected={connected} timeouts={timeouts} errors={errors}",
+        connect_results.len()
+    );
+    assert!(
+        connected > 0,
+        "live overlay discovery kind=quic phase=connect: no runtime-discovered member answered a QUIC connect ({} targets, {timeouts} timeouts, {errors} errors)",
+        connect_results.len()
+    );
 }
 
 #[test]
