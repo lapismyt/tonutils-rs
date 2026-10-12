@@ -133,23 +133,32 @@ short id fails during the handshake.
   `rpk-server` and received an HTTP 200, and upstream's `rpk-client`
   completed our mandatory-client-auth, SNI-gated handshake and finished all
   of its phases (path migration, CID rotation) with exit code 0.
-- Live reachability (CI runs 38237835993 and 38289674977, 2026-10-12):
-  mainnet QUIC ports are mostly silent to third-party sources
-  from GitHub Actions. Run 38237835993 measured `vn_replies=0`
-  from 13 member targets while both controls answered; run
+- Live reachability (CI runs 38237835993, 38289674977, and
+  38292378027, 2026-10-12): mainnet QUIC ports are
+  mostly silent to third-party sources from GitHub
+  Actions, but the fleet is not uniformly unreachable.
+  Run 38237835993 measured `vn_replies=0` from 13
+  member targets while both controls answered. Run
   38289674977 refined this over 25 targets: 24 stayed
-  completely silent (no Version Negotiation reply, no handshake
-  response), while one member (`198.13.134.211:9589`) runs a
-  live QUIC endpoint that actively aborts the cryptographic
-  handshake with CRYPTO_ERROR `0x170` - TLS alert 112
-  (`bad_certificate_status_response` per the IANA registry).
-  So at least one mainnet member listens on
-  `adnl_udp_port + 1000` but rejects this client's TLS profile
-  for a reason a single datagram cannot reveal, and full QUIC
-  connectivity is 0/25. The live test's per-target
-  `phase=connect` lines separate silence from active rejection,
-  and its hard `connected > 0` assert keeps the CI step red
-  until a member completes a handshake.
+  completely silent (no Version Negotiation reply, no
+  handshake response), while one member
+  (`198.13.134.211:9589`) runs a live QUIC endpoint
+  that actively aborts the cryptographic handshake with
+  CRYPTO_ERROR `0x170` - TLS alert 112
+  (`bad_certificate_status_response` per the IANA
+  registry). Run 38292378027 measured the first
+  completed handshake: 23 targets, 21 silent, 1
+  aborting with alert 112 (`91.108.10.44:33000`), and
+  1 (`5.199.161.213:31310`) completing the full TLS 1.3
+  / RFC 7250 raw-public-key handshake with mandatory
+  client auth - so the live test's hard `connected > 0`
+  assert passed and the CI step went green. The
+  connected member did not answer `overlay.getRandomPeers`
+  within 15s (logged as `query_error`), which is the
+  open question tracked in `TODO.md`. The live test's
+  per-target `phase=connect` lines separate silence,
+  active rejection, and completed handshakes on every
+  run.
 
 ## Missing work
 
@@ -157,12 +166,16 @@ short id fails during the handshake.
   pairing upstream's `test-quic-interop.sh` matrix never exercised (their
   Test 3 rustls server ran with `offer_client_auth() = false`); tracked in
   `TODO.md`.
-- Whether mainnet full nodes answer QUIC from third-party sources has a
-  split verdict: 24 of 25 probed members are silent, and one
-  (`198.13.134.211:9589`) answers with a cryptographic handshake abort
-  (TLS alert 112) - see Evidence above. Full connectivity is 0/25 from
-  GitHub Actions, which the live test's hard `connected > 0` assert
-  reports as a red CI step until a member completes a handshake; the
-  C++-client pairing above remains unproven either way.
+- Whether mainnet full nodes answer QUIC from third-party sources
+  has a three-way verdict across the recorded runs: most probed
+  members are silent, some abort the handshake with TLS alert 112,
+  and one member per run (`5.199.161.213:31310` in run
+  38292378027) completes the full handshake but did not answer
+  `overlay.getRandomPeers` within 15s - see Evidence above and
+  the open question in `TODO.md`. The live test's hard
+  `connected > 0` assert passed in run 38292378027, so the CI
+  step is green while at least one member completes a handshake
+  on a given run; the C++-client pairing above remains unproven
+  either way.
 - Concurrent routing and unsolicited-message handling on `QuicSession` are
   not implemented (see the [protocol matrix](protocol-matrix.md)).

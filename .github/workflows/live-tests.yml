@@ -245,9 +245,10 @@ jobs:
 
       - name: Run mempool overlay QUIC discovery live test
         # Hard-asserts at least one member QUIC connect (phase 2b).
-        # Red while mainnet members stay unreachable from hosted
-        # runners; see docs/reference/network/quic.md for the
-        # reachability verdict and the per-target log format.
+        # Green only while some mainnet member completes a handshake
+        # from hosted runners (first seen in CI run 38292378027);
+        # see docs/reference/network/quic.md for the reachability
+        # verdict and the per-target log format.
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
         run: cargo test -p tonutils-mempool --test live mainnet_overlay_quic_discovery_returns_peers -- --ignored --nocapture
