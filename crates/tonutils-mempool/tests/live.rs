@@ -442,53 +442,91 @@ async fn configured_seed_delivers_valid_external_message() {
         non_seed_connected.len(),
         seeds.len()
     );
-    // Round-trip proof against one non-seed member: open a direct
-    // ADNL/UDP session to a registry member the discovery path
-    // resolved - never a configured seed - and ask it for random
-    // peers, the same query the growth path uses.
-    let (member_peer, member_addr) = known_member_seeds(&member_endpoints)
+    // Round-trip proof against non-seed members: open direct
+    // ADNL/UDP sessions to registry members the discovery path
+    // resolved - never configured seeds - and ask them for
+    // random peers, the same query the growth path uses. A
+    // member's recorded endpoint can go stale between discovery
+    // and this check (NAT rebinding) and any single member can
+    // be transiently unresponsive, so a handful of members are
+    // probed and at least one must answer.
+    let non_seed_members: Vec<(PeerId, SocketAddr)> = known_member_seeds(&member_endpoints)
         .into_iter()
-        .find(|(peer, _)| !seed_ids.contains(peer))
-        .expect("the member registry must hold a non-seed peer after delivery");
-    let member_key = PublicKey::from_bytes(member_peer.as_bytes())
-        .expect("registry member public key must decompress");
-    let roundtrip_key = KeyPair::generate(&mut rand::rngs::OsRng);
-    let session = tokio::time::timeout(
-        Duration::from_secs(30),
-        AdnlUdpSession::connect(
-            "0.0.0.0:0".parse().expect("wildcard address must parse"),
-            member_addr,
-            roundtrip_key,
-            member_key,
-        ),
-    )
-    .await
-    .unwrap_or_else(|_| {
-        panic!("live mempool phase=non-seed udp roundtrip: connect to {member_addr} timed out")
-    })
-    .unwrap_or_else(|error| {
-        panic!(
-            "live mempool phase=non-seed udp roundtrip: connect to {member_addr} failed: {error}"
+        .filter(|(peer, _)| !seed_ids.contains(peer))
+        .collect();
+    assert!(
+        !non_seed_members.is_empty(),
+        "live mempool phase=non-seed: the member registry holds only configured seeds (seed_count={})",
+        seeds.len()
+    );
+    let roundtrip_budget = non_seed_members.len().min(3);
+    let mut roundtrip_ok = 0usize;
+    for (member_peer, member_addr) in non_seed_members.into_iter().take(roundtrip_budget) {
+        let member_key = match PublicKey::from_bytes(member_peer.as_bytes()) {
+            Some(member_key) => member_key,
+            None => {
+                eprintln!(
+                    "live mempool phase=non-seed udp roundtrip target={member_addr} result=invalid-key"
+                );
+                continue;
+            }
+        };
+        let roundtrip_key = KeyPair::generate(&mut rand::rngs::OsRng);
+        let session = match tokio::time::timeout(
+            Duration::from_secs(30),
+            AdnlUdpSession::connect(
+                "0.0.0.0:0".parse().expect("wildcard address must parse"),
+                member_addr,
+                roundtrip_key,
+                member_key,
+            ),
         )
-    });
-    let nodes = tokio::time::timeout(
-        Duration::from_secs(15),
-        session.overlay_get_random_peers(Int256(overlay.as_bytes()), Duration::from_secs(10)),
-    )
-    .await
-    .unwrap_or_else(|_| {
-        panic!(
-            "live mempool phase=non-seed udp roundtrip: overlay.getRandomPeers to {member_addr} timed out"
+        .await
+        {
+            Ok(Ok(session)) => session,
+            Ok(Err(error)) => {
+                eprintln!(
+                    "live mempool phase=non-seed udp roundtrip target={member_addr} result=connect_error error={error}"
+                );
+                continue;
+            }
+            Err(_) => {
+                eprintln!(
+                    "live mempool phase=non-seed udp roundtrip target={member_addr} result=connect_timeout"
+                );
+                continue;
+            }
+        };
+        let nodes = match tokio::time::timeout(
+            Duration::from_secs(15),
+            session.overlay_get_random_peers(Int256(overlay.as_bytes()), Duration::from_secs(10)),
         )
-    })
-    .unwrap_or_else(|error| {
-        panic!(
-            "live mempool phase=non-seed udp roundtrip: overlay.getRandomPeers to {member_addr} failed: {error}"
-        )
-    });
-    eprintln!(
-        "live mempool phase=non-seed udp roundtrip target={member_addr} result=ok random_peers={}",
-        nodes.nodes.len()
+        .await
+        {
+            Ok(Ok(nodes)) => nodes,
+            Ok(Err(error)) => {
+                eprintln!(
+                    "live mempool phase=non-seed udp roundtrip target={member_addr} result=query_error error={error}"
+                );
+                continue;
+            }
+            Err(_) => {
+                eprintln!(
+                    "live mempool phase=non-seed udp roundtrip target={member_addr} result=query_timeout"
+                );
+                continue;
+            }
+        };
+        roundtrip_ok += 1;
+        eprintln!(
+            "live mempool phase=non-seed udp roundtrip target={member_addr} result=ok random_peers={}",
+            nodes.nodes.len()
+        );
+    }
+    assert!(
+        roundtrip_ok > 0,
+        "live mempool phase=non-seed udp roundtrip: no non-seed member answered overlay.getRandomPeers ({roundtrip_budget} probed, seed_count={})",
+        seeds.len()
     );
     manager.shutdown_wait().await;
 }
