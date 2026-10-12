@@ -133,17 +133,23 @@ short id fails during the handshake.
   `rpk-server` and received an HTTP 200, and upstream's `rpk-client`
   completed our mandatory-client-auth, SNI-gated handshake and finished all
   of its phases (path migration, CID rotation) with exit code 0.
-- Live reachability (CI run 38237835993, 2026-10-12): the
-  `mainnet_overlay_quic_discovery_returns_peers` test registered 13
-  overlay members over UDP, then sent raw Version Negotiation probes to
-  their QUIC targets: `vn_replies=0` while `1.1.1.1:443` and `8.8.8.8:443`
-  both answered in the same phase, and the same hosts answered ADNL UDP
-  from the same runner minutes earlier - so mainnet QUIC ports are silent
-  to third-party sources from GitHub Actions (no listener at
-  `adnl_udp_port + 1000`, or datagrams dropped before TLS), and the
-  handshake layer never gets the chance to fail. The phase's `vn_replies=`
-  line keeps separating that silence from rejected handshakes on future
-  runs.
+- Live reachability (CI runs 38237835993 and 38289674977, 2026-10-12):
+  mainnet QUIC ports are mostly silent to third-party sources
+  from GitHub Actions. Run 38237835993 measured `vn_replies=0`
+  from 13 member targets while both controls answered; run
+  38289674977 refined this over 25 targets: 24 stayed
+  completely silent (no Version Negotiation reply, no handshake
+  response), while one member (`198.13.134.211:9589`) runs a
+  live QUIC endpoint that actively aborts the cryptographic
+  handshake with CRYPTO_ERROR `0x170` - TLS alert 112
+  (`bad_certificate_status_response` per the IANA registry).
+  So at least one mainnet member listens on
+  `adnl_udp_port + 1000` but rejects this client's TLS profile
+  for a reason a single datagram cannot reveal, and full QUIC
+  connectivity is 0/25. The live test's per-target
+  `phase=connect` lines separate silence from active rejection,
+  and its hard `connected > 0` assert keeps the CI step red
+  until a member completes a handshake.
 
 ## Missing work
 
@@ -151,11 +157,12 @@ short id fails during the handshake.
   pairing upstream's `test-quic-interop.sh` matrix never exercised (their
   Test 3 rustls server ran with `offer_client_auth() = false`); tracked in
   `TODO.md`.
-- Whether mainnet full nodes answer QUIC from third-party sources has one
-  negative data point: `vn_replies=0/13` from GitHub Actions with both
-  controls answering (see Evidence above). It is a reachability limit of
-  the current mainnet fleet, not of this client, and future CI runs may
-  turn positive as nodes upgrade; the C++-client pairing above remains
-  unproven either way.
+- Whether mainnet full nodes answer QUIC from third-party sources has a
+  split verdict: 24 of 25 probed members are silent, and one
+  (`198.13.134.211:9589`) answers with a cryptographic handshake abort
+  (TLS alert 112) - see Evidence above. Full connectivity is 0/25 from
+  GitHub Actions, which the live test's hard `connected > 0` assert
+  reports as a red CI step until a member completes a handshake; the
+  C++-client pairing above remains unproven either way.
 - Concurrent routing and unsolicited-message handling on `QuicSession` are
   not implemented (see the [protocol matrix](protocol-matrix.md)).
