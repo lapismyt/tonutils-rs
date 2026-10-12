@@ -56,17 +56,20 @@ is logged. Each probe emits one line:
 quic probe: member=<hex> target=<ip:port> source=<advertised|udp+1000> result=<connected|timeout|error: ...> via=<dht.findValue|getRandomPeers|session>
 ```
 
-Whether mainnet full nodes answer QUIC from a third-party source is still
-open: upstream shows no post-handshake allowlist either way, and validator
-builds predating the QUIC merge do not listen at all. The ignored live test
-`mainnet_overlay_quic_discovery_returns_peers` runs UDP discovery first,
-then raw Version Negotiation probes against the same targets (plus
-`1.1.1.1:443` and `8.8.8.8:443` egress controls) so a
-`phase=version-negotiation vn_replies=` line separates firewalled ports
-from rejected handshakes, and reports `members=`/`quic_peers=` so a CI run
-answers the question. The TLS handshake itself - ALPN, short-id SNI, and
-raw public keys in both directions - is specified in
-[QUIC TLS and wire profile](quic.md).
+Whether mainnet full nodes answer QUIC from a third-party source is
+settled for GitHub Actions as of run 38237835993 (2026-10-12): they do
+not answer at all. Raw Version Negotiation probes received
+`vn_replies=0` from all 13 member targets while `1.1.1.1:443` and
+`8.8.8.8:443` answered in the same phase, and the same hosts had
+answered ADNL UDP `overlay.getRandomPeers` from the same runner minutes
+earlier on their base ports, so runner egress - including high UDP ports
+to those exact hosts - is ruled out: the `adnl_udp_port + 1000` targets
+are silent before any handshake, either because nothing listens there
+(builds predating the QUIC merge) or because datagrams are dropped
+before TLS, which transport silence cannot distinguish. The live test
+stays in CI to catch nodes that upgrade to listening builds, and the TLS
+handshake itself - ALPN, short-id SNI, and raw public keys in both
+directions - is specified in [QUIC TLS and wire profile](quic.md).
 
 ## Failure modes
 
