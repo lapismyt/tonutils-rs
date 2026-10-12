@@ -3,12 +3,14 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use futures::StreamExt;
+use futures::future::join_all;
 use tonutils_adnl::AdnlUdpSession;
 use tonutils_adnl::{KeyPair, PublicKey};
 use tonutils_mempool::MempoolScannerBuilder;
 use tonutils_mempool::{
-    MempoolConfig, MempoolEvent, OverlayMemberEndpoints, quic_overlay_lookup_with_endpoints,
-    registered_member_count, udp_overlay_lookup, udp_overlay_lookup_with_endpoints,
+    MempoolConfig, MempoolEvent, OverlayMemberEndpoints, known_member_seeds, member_quic_target,
+    quic_overlay_lookup_with_endpoints, registered_member_count, udp_overlay_lookup,
+    udp_overlay_lookup_with_endpoints,
 };
 use tonutils_network_config::extract_dht_addresses;
 use tonutils_overlay::{OverlayId, PeerId, SeedPeer};
@@ -491,6 +493,137 @@ async fn mainnet_overlay_dht_discovery_returns_peers() {
     assert_discovery_peers("udp", peers, allow_unavailable);
 }
 
+// ---------------------------------------------------------------------------
+// Raw QUIC Version Negotiation probes (RFC 9000 ss 5.2.2, 6.1, 17.2.1).
+//
+// A QUIC handshake timeout alone cannot distinguish "nothing answers UDP at
+// this port" from "a QUIC endpoint answers but our handshake is rejected".
+// A Version Negotiation probe elicits an answer from any RFC-compliant QUIC
+// listener regardless of version support, so `vn_replies` separates
+// reachability from handshake failures, and the control targets show whether
+// this runner's UDP egress can reach public QUIC servers at all.
+// ---------------------------------------------------------------------------
+
+/// QUIC port offset: upstream TON full nodes listen on `adnl_udp_port +
+/// NODE_PORT_OFFSET` where `NODE_PORT_OFFSET = 1000` (`quic/quic-sender.h`).
+/// Mirrors `tonutils_mempool`'s private `QUIC_PORT_OFFSET` so the probe
+/// targets exactly what the QUIC lookup dials.
+const QUIC_PORT_OFFSET: u16 = 1000;
+
+/// Connection ids sent by [`version_negotiation_probe`] and echoed back by a
+/// compliant server (RFC 9000 ss 17.2.1), so replies can be matched to the
+/// probe instead of trusting any stray datagram.
+const VN_DCID: [u8; 8] = *b"tonvndc1";
+const VN_SCID: [u8; 8] = *b"tonvnsi1";
+
+/// Builds one raw Version Negotiation probe datagram.
+///
+/// RFC 9000 ss 15 reserves versions of the `0x0a0a0a0a` pattern for "forcing
+/// version negotiation to be exercised", and ss 5.2.2 lets servers drop
+/// unsupported-version packets smaller than the largest minimum datagram
+/// (1200 bytes for QUIC v1 and v2), so the probe is padded to exactly 1200
+/// bytes before any server is obliged to answer.
+fn version_negotiation_probe_packet() -> Vec<u8> {
+    let mut packet = Vec::with_capacity(1200);
+    // Long header form with the fixed bit set; the type bits are
+    // version-specific and ignored for unsupported versions (RFC 9000 ss 17.2).
+    packet.push(0xc0);
+    packet.extend_from_slice(&0x0a0a0a0a_u32.to_be_bytes());
+    packet.push(VN_DCID.len() as u8);
+    packet.extend_from_slice(&VN_DCID);
+    packet.push(VN_SCID.len() as u8);
+    packet.extend_from_slice(&VN_SCID);
+    packet.resize(1200, 0);
+    packet
+}
+
+/// Parses a Version Negotiation reply (RFC 9000 ss 17.2.1), validating that
+/// the server echoed the probe's connection ids and that the payload lists
+/// whole 32-bit versions. Returns the advertised versions on success.
+fn parse_version_negotiation(reply: &[u8]) -> Option<Vec<u32>> {
+    if reply.len() < 7 || reply[0] & 0x80 == 0 {
+        return None;
+    }
+    if reply[1..5] != [0, 0, 0, 0] {
+        return None;
+    }
+    // The server must echo our SCID as the reply's DCID and our DCID as the
+    // reply's SCID.
+    let dcid_len = usize::from(reply[5]);
+    let scid_len_at = 6 + dcid_len;
+    if reply.len() <= scid_len_at || reply[6..scid_len_at] != VN_SCID[..] {
+        return None;
+    }
+    let scid_len = usize::from(reply[scid_len_at]);
+    let versions_at = scid_len_at + 1 + scid_len;
+    if reply.len() < versions_at || reply[scid_len_at + 1..versions_at] != VN_DCID[..] {
+        return None;
+    }
+    let versions = &reply[versions_at..];
+    if versions.is_empty() || !versions.len().is_multiple_of(4) {
+        return None;
+    }
+    Some(
+        versions
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|chunk| u32::from_be_bytes(*chunk))
+            .collect(),
+    )
+}
+
+/// Sends one raw Version Negotiation probe to `target` and returns the
+/// advertised versions, or a short reason string when the target does not
+/// answer within `timeout` with a reply that echoes this probe.
+async fn version_negotiation_probe(
+    target: SocketAddr,
+    timeout: Duration,
+) -> Result<Vec<u32>, String> {
+    let socket = tokio::net::UdpSocket::bind("0.0.0.0:0")
+        .await
+        .map_err(|error| error.to_string())?;
+    socket
+        .send_to(&version_negotiation_probe_packet(), target)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let mut buffer = [0u8; 1500];
+    match tokio::time::timeout(timeout, socket.recv_from(&mut buffer)).await {
+        Err(_) => Err("timeout".into()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Ok(Ok((length, _peer))) => parse_version_negotiation(&buffer[..length])
+            .ok_or_else(|| "reply was not a matching Version Negotiation packet".into()),
+    }
+}
+
+/// Probes every target concurrently and returns `(target, result)` pairs.
+async fn probe_all(
+    targets: Vec<SocketAddr>,
+    timeout: Duration,
+) -> Vec<(SocketAddr, Result<Vec<u32>, String>)> {
+    join_all(targets.into_iter().map(|target| async move {
+        let result = version_negotiation_probe(target, timeout).await;
+        match &result {
+            Ok(versions) => {
+                let versions: Vec<String> = versions
+                    .iter()
+                    .map(|version| format!("{version:08x}"))
+                    .collect();
+                eprintln!(
+                    "live overlay discovery kind=quic vn target={target} reply=versions={}",
+                    versions.join(",")
+                );
+            }
+            Err(error) => eprintln!(
+                "live overlay discovery kind=quic vn target={target} reply=none reason={error}"
+            ),
+        }
+        (target, result)
+    }))
+    .await
+}
+
 /// QUIC overlay discovery against the members the UDP path resolves first.
 ///
 /// The bootstrap seeds are `dht-server` deployments, which run no QUIC
@@ -498,8 +631,11 @@ async fn mainnet_overlay_dht_discovery_returns_peers() {
 /// full nodes bind a `QuicServer` on `adnl_udp_port + 1000`
 /// (`quic/quic-sender.h::NODE_PORT_OFFSET`).  Phase 1 therefore runs the
 /// proven UDP discovery to populate a shared
-/// [`OverlayMemberEndpoints`] registry; phase 2 probes those members over
-/// QUIC and reports the probe counts.
+/// [`OverlayMemberEndpoints`] registry; phase 1.5 sends raw Version
+/// Negotiation probes to the same targets (with `1.1.1.1:443` and
+/// `8.8.8.8:443` as egress controls) to separate missing listeners from
+/// handshake failures; phase 2 probes those members over QUIC and reports
+/// the probe counts.
 ///
 /// Soft-skips - with an explicit `members=`/`quic_peers=` log - when either
 /// phase finds nothing and `TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE` is set.
@@ -540,6 +676,43 @@ async fn mainnet_overlay_quic_discovery_returns_peers() {
         }
         panic!("UDP discovery registered no overlay members to probe over QUIC");
     }
+
+    // Phase 1.5: raw Version Negotiation probes separate "no listener /
+    // firewalled port" from "a QUIC endpoint answers but our handshake
+    // fails": any RFC-compliant QUIC server must answer the probe
+    // (RFC 9000 ss 5.2.2) whatever version it supports. The controls show
+    // whether this runner can reach public QUIC servers over UDP at all.
+    let targets: Vec<SocketAddr> = known_member_seeds(&endpoints)
+        .iter()
+        .map(|(peer, udp)| member_quic_target(&endpoints, *peer, *udp, QUIC_PORT_OFFSET).0)
+        .collect();
+    let controls: Vec<SocketAddr> = ["1.1.1.1:443", "8.8.8.8:443"]
+        .iter()
+        .map(|address| address.parse().expect("control address must parse"))
+        .collect();
+    let (member_results, control_results) = tokio::join!(
+        probe_all(targets, Duration::from_secs(5)),
+        probe_all(controls, Duration::from_secs(5)),
+    );
+    let vn_replies = member_results
+        .iter()
+        .filter(|(_, result)| result.is_ok())
+        .count();
+    let controls_summary: Vec<String> = control_results
+        .iter()
+        .map(|(target, result)| {
+            format!(
+                "{target}:{}",
+                if result.is_ok() { "reply" } else { "no-reply" }
+            )
+        })
+        .collect();
+    eprintln!(
+        "live overlay discovery kind=quic phase=version-negotiation targets={} vn_replies={} controls={}",
+        member_results.len(),
+        vn_replies,
+        controls_summary.join(",")
+    );
 
     // Phase 2: probe the registered members over QUIC.
     let lookup = quic_overlay_lookup_with_endpoints(
@@ -588,6 +761,83 @@ fn configured_seed_parser_accepts_ipv4_and_ipv6() {
     for value in ["127.0.0.1:30303", "[::1]:30303"] {
         assert!(SocketAddr::from_str(value).is_ok());
     }
+}
+
+#[tokio::test]
+async fn version_negotiation_probe_accepts_a_synthetic_reply() {
+    let responder = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let target = responder.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut buffer = [0u8; 2048];
+        let (length, peer) = responder.recv_from(&mut buffer).await.unwrap();
+        let probe = &buffer[..length];
+        assert_eq!(probe.len(), 1200, "probe must satisfy RFC 9000 ss 5.2.2");
+        assert_eq!(&probe[1..5], &0x0a0a0a0a_u32.to_be_bytes());
+
+        // Reply with the id echo mandated by RFC 9000 ss 17.2.1: the
+        // reply's DCID carries the probe's SCID and vice versa.
+        let dcid_len = probe[5] as usize;
+        let scid_len_at = 6 + dcid_len;
+        let scid_len = probe[scid_len_at] as usize;
+        let mut reply = vec![0xc0u8];
+        reply.extend_from_slice(&[0, 0, 0, 0]);
+        reply.push(scid_len as u8);
+        reply.extend_from_slice(&probe[scid_len_at + 1..scid_len_at + 1 + scid_len]);
+        reply.push(dcid_len as u8);
+        reply.extend_from_slice(&probe[6..scid_len_at]);
+        reply.extend_from_slice(&0x00000001_u32.to_be_bytes());
+        reply.extend_from_slice(&0x6b3343cf_u32.to_be_bytes());
+        responder.send_to(&reply, peer).await.unwrap();
+    });
+
+    let versions = version_negotiation_probe(target, Duration::from_secs(5))
+        .await
+        .expect("the synthetic Version Negotiation reply must parse");
+    assert_eq!(versions, vec![0x00000001, 0x6b3343cf]);
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn version_negotiation_probe_times_out_without_a_reply() {
+    let silent = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let target = silent.local_addr().unwrap();
+    let error = version_negotiation_probe(target, Duration::from_millis(200))
+        .await
+        .expect_err("a silent target must not answer the probe");
+    assert_eq!(error, "timeout");
+}
+
+#[test]
+fn version_negotiation_parser_rejects_foreign_replies() {
+    // Too short for a Version Negotiation packet.
+    assert_eq!(parse_version_negotiation(&[0xc0, 0, 0, 0, 0]), None);
+    // Short header form (a normal QUIC packet, not version negotiation).
+    assert_eq!(parse_version_negotiation(&[0x40, 0, 0, 0, 0, 0]), None);
+
+    // A long header packet with a non-zero version is not version
+    // negotiation.
+    let mut wrong_version = vec![0xc0, 0, 0, 0, 1, 8];
+    wrong_version.extend_from_slice(&VN_SCID);
+    wrong_version.push(8);
+    wrong_version.extend_from_slice(&VN_DCID);
+    wrong_version.extend_from_slice(&0x00000001_u32.to_be_bytes());
+    assert_eq!(parse_version_negotiation(&wrong_version), None);
+
+    // Connection ids that do not echo this probe's ids.
+    let mut wrong_ids = vec![0xc0, 0, 0, 0, 0, 8];
+    wrong_ids.extend_from_slice(&[0xab; 8]);
+    wrong_ids.push(8);
+    wrong_ids.extend_from_slice(&[0xcd; 8]);
+    wrong_ids.extend_from_slice(&0x00000001_u32.to_be_bytes());
+    assert_eq!(parse_version_negotiation(&wrong_ids), None);
+
+    // A version list truncated mid-entry.
+    let mut truncated = vec![0xc0, 0, 0, 0, 0, 8];
+    truncated.extend_from_slice(&VN_SCID);
+    truncated.push(8);
+    truncated.extend_from_slice(&VN_DCID);
+    truncated.extend_from_slice(&[0x00, 0x00]);
+    assert_eq!(parse_version_negotiation(&truncated), None);
 }
 
 #[test]

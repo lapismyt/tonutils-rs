@@ -59,8 +59,14 @@ quic probe: member=<hex> target=<ip:port> source=<advertised|udp+1000> result=<c
 Whether mainnet full nodes answer QUIC from a third-party source is still
 open: upstream shows no post-handshake allowlist either way, and validator
 builds predating the QUIC merge do not listen at all. The ignored live test
-`mainnet_overlay_quic_discovery_returns_peers` runs UDP discovery first and
-reports `members=`/`quic_peers=` so a CI run answers the question.
+`mainnet_overlay_quic_discovery_returns_peers` runs UDP discovery first,
+then raw Version Negotiation probes against the same targets (plus
+`1.1.1.1:443` and `8.8.8.8:443` egress controls) so a
+`phase=version-negotiation vn_replies=` line separates firewalled ports
+from rejected handshakes, and reports `members=`/`quic_peers=` so a CI run
+answers the question. The TLS handshake itself - ALPN, short-id SNI, and
+raw public keys in both directions - is specified in
+[QUIC TLS and wire profile](quic.md).
 
 ## Failure modes
 

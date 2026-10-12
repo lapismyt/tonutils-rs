@@ -97,11 +97,12 @@ impl KeyPair {
 
     /// Returns the Ed25519 private key as a PKCS8 DER-encoded structure.
     ///
-    /// This is used by the QUIC TLS layer to present the Ed25519 key as a
-    /// certificate private key for `rustls`.
+    /// The structure embeds the original 32-byte Ed25519 seed, so a key
+    /// provider loading it (for example `rustls` in the QUIC TLS layer)
+    /// derives exactly the public key this pair carries.
     #[cfg(feature = "quic")]
     pub fn private_key_der(&self) -> rustls_pki_types::PrivateKeyDer<'static> {
-        let seed = self.secret_key.key_bytes;
+        let seed = self.secret_key.seed;
         let pkcs8 = build_ed25519_pkcs8(&seed);
         rustls_pki_types::PrivateKeyDer::Pkcs8(rustls_pki_types::PrivatePkcs8KeyDer::from(pkcs8))
     }
@@ -349,11 +350,18 @@ impl<'de> serde::Deserialize<'de> for PublicKey {
     }
 }
 
+/// An Ed25519 signing key in expanded form.
+///
+/// Keeps the original 32-byte seed alongside the clamped scalar and the
+/// signature nonce so a byte-identical PKCS#8 (RFC 8410) encoding of the
+/// same identity can be rebuilt later - [`KeyPair::private_key_der`] feeds
+/// it to `rustls`, which must derive the same public key this pair carries.
 #[derive(Copy, Clone)]
 pub struct ExpandedSecretKey {
     key: Scalar,
     key_bytes: [u8; 32],
     nonce: [u8; 32],
+    seed: [u8; 32],
 }
 
 impl ExpandedSecretKey {
@@ -439,6 +447,7 @@ impl From<&'_ SecretKey> for ExpandedSecretKey {
             key: Scalar::from_bytes_mod_order(key_bytes),
             key_bytes,
             nonce,
+            seed: secret_key.0,
         }
     }
 }

@@ -11,6 +11,9 @@ pub mod udp;
 #[cfg(feature = "quic")]
 pub mod quic;
 
+#[cfg(feature = "quic")]
+mod quic_tls;
+
 #[cfg(test)]
 mod tests;
 
