@@ -157,8 +157,12 @@ sessions without a reportable activity stamp keep the previous hard-deadline
 behavior.
 
 Diagnostics for live runs come from `protocol_stats()` (protocol counters such
-as `queries_received`, `random_peers_queries_sent`, and `membership_answers`)
-and `discovery_stats()` (seed count, discovered peers, session attempts).
+as `queries_received`, `random_peers_queries_sent`, and `membership_answers`,
+plus per-stage distinct-peer admission counters: `address_storing_peers`
+(peers that hold a routable address for this node, folded in from
+`tonutils_adnl::adnl::udp::address_storing_peers`), `unique_pingers`,
+`membership_listing_peers`, and `dht_pings_received`) and
+`discovery_stats()` (seed count, discovered peers, session attempts).
 
 ## Reference comparison
 

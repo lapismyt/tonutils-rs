@@ -4,7 +4,9 @@
 //! here are observable only while a datagram is being processed, and they are
 //! what a live run needs to tell *why* a peer stays silent.
 //!
-//! Two questions are answered, both without changing any behaviour:
+//! Two questions are answered, both without changing any protocol behaviour
+//! (the only side effect is the [`crate::adnl::udp::address_storing_peers`]
+//! counter fed from the address echo):
 //!
 //! * **Which socket did the peer address?**  Upstream keeps one source address
 //!   per ADNL node id and echoes the version it currently holds back in every
@@ -78,6 +80,9 @@ impl SessionInner {
             );
             return;
         };
+        // The echo itself is the evidence, logged or not, so the counter is
+        // updated before any `log::debug!` can be filtered out.
+        note_peer_holds_our_addr(&self.remote_id);
         let (ours, owner) = our_addr_view(&self.remote_id);
         let mine = self.source.local_addr().map_or(0, |address| address.port());
         if theirs == ours && owner == mine {

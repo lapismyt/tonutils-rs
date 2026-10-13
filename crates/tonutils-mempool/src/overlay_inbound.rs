@@ -130,6 +130,7 @@ pub(crate) fn build_overlay_answer(
         Ok(OverlayQuery::Ping) => {
             log::debug!("answering overlay.ping for peer={peer:?}");
             protocol_stats::record_pong_sent();
+            protocol_stats::record_ping_from(peer.as_bytes());
             Some(tl_proto::serialize(OverlayPong))
         }
         Ok(OverlayQuery::GetCapabilities) => {
@@ -175,6 +176,7 @@ pub(crate) fn build_overlay_answer(
             if let Ok(DhtMessage::Ping { random_id }) = DhtMessage::read_from(&mut dht) {
                 log::debug!("answering dht.ping for peer={peer:?}");
                 protocol_stats::record_pong_sent();
+                protocol_stats::record_dht_ping();
                 return Some(tl_proto::serialize(DhtPong { random_id }));
             }
             protocol_stats::record_query_unhandled(effective_id);
@@ -229,7 +231,7 @@ pub(crate) fn trace_membership(
     }
     let ours = session.local_overlay_node(tonutils_tl::Int256(overlay.as_bytes()));
     let listed = nodes.nodes.iter().any(|node| node.id == ours.id);
-    protocol_stats::record_membership_answer(listed);
+    protocol_stats::record_membership_answer(listed, peer.as_bytes());
     log::info!(
         "overlay getRandomPeers answer: peer={peer:?} nodes={} listed_us={listed}",
         nodes.nodes.len()
@@ -436,6 +438,42 @@ mod tests {
         assert_eq!(answer, tl_proto::serialize(OverlayPong));
     }
 
+    /// Distinct pingers and `dht.ping` probes are the two observable admission
+    /// signals: an `overlay.ping` arrives only from a peer that admitted this
+    /// node, and pytoniq-style `dht.ping` probes arrive only from peers that
+    /// keep it in their own peer list.  Repeat queries from one peer may not
+    /// inflate the distinct-pinger figure.
+    #[tokio::test]
+    async fn counts_distinct_pingers_and_dht_ping_probes() {
+        let overlay = OverlayId::from_name(b"tonutils query test");
+        let session = test_session().await;
+        let members = cache();
+        let peer = PeerId::from_bytes([42; 32]);
+        let ping = tl_proto::serialize(OverlayQuery::Ping);
+        let before = protocol_stats::protocol_stats();
+
+        for _ in 0..3 {
+            build_overlay_answer(&peer, &session, Some(overlay), &members, &ping)
+                .expect("repeat ping must be answered");
+        }
+        let dht_ping = tl_proto::serialize(DhtMessage::Ping { random_id: 7 });
+        let wrapped_dht = wrap(overlay, &dht_ping);
+        build_overlay_answer(&peer, &session, Some(overlay), &members, &wrapped_dht)
+            .expect("wrapped dht.ping must be answered");
+
+        let after = protocol_stats::protocol_stats();
+        assert_eq!(
+            after.unique_pingers - before.unique_pingers,
+            1,
+            "three pings from one peer must count one distinct pinger"
+        );
+        assert_eq!(
+            after.dht_pings_received - before.dht_pings_received,
+            1,
+            "the dht.ping probe must be counted"
+        );
+    }
+
     #[tokio::test]
     async fn answers_wrapped_dht_ping_with_pong() {
         let overlay = OverlayId::from_name(b"tonutils query test");
@@ -587,6 +625,10 @@ mod tests {
 
         let after = protocol_stats::protocol_stats();
         assert!(after.membership_listed > before.membership_listed);
+        assert!(
+            after.membership_listing_peers > before.membership_listing_peers,
+            "the listing peer must be tracked distinctly"
+        );
         // A well-formed answer also registers the answerer's session route as
         // a member endpoint for the QUIC probe registry.
         assert_eq!(crate::registered_member_count(&endpoints), 1);

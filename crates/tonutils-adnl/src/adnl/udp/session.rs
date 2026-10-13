@@ -37,8 +37,9 @@ use super::{
     AdnlChannelPacket, MAX_SESSION_CHANNELS, MAX_TRACKED_QUERIES, MAX_UDP_PACKET_SIZE,
     REQUEST_CHANNEL_INTERVAL, channel_id_for_secret, decrypt_direct, encrypt_direct,
     highest_received_seqno, local_reinit_date, message_kind, message_vector, next_outgoing_seqno,
-    note_our_addr_version, note_peer_reinit_date, now_i32, ordered_channel_ciphers, our_addr_view,
-    outgoing_seqno, peer_reinit_date, raw_packet_flags, record_received_seqno,
+    note_our_addr_version, note_peer_holds_our_addr, note_peer_reinit_date, now_i32,
+    ordered_channel_ciphers, our_addr_view, outgoing_seqno, peer_reinit_date, raw_packet_flags,
+    record_received_seqno,
 };
 
 mod control;

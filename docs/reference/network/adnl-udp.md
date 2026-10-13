@@ -113,6 +113,12 @@ lookup socket can win its single exchange against a live session that stamped
 the same second. The receive-side signals for all of this are logged by
 `udp/session/diag.rs`: the echoed `recv_addr_list_version` next to the version
 this process last stamped, and the local port of the socket that stamped it.
+The same echo feeds `tonutils_adnl::adnl::udp::address_storing_peers()`, a
+process-wide count of distinct peers that ever echoed the field - the peers
+that hold a routable address for this node and can therefore originate
+`overlay.ping` and broadcasts. It moves once per peer and is independent of
+the log level, so a live overlay run can separate "the peer cannot reach us"
+from "the peer does not admit us".
 
 ## Implementation Risks
 

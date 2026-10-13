@@ -565,6 +565,33 @@ async fn address_version_is_restamped_on_every_packet() {
     );
 }
 
+/// A peer that echoes `recv_addr_list_version` holds a routable
+/// `adnl.addressList` for this node (`AdnlPeerPairImpl::send_packet` writes
+/// the version it keeps into every packet), and that echo - not the answered
+/// query - is what lets the peer originate `overlay.ping` and broadcasts.
+/// The counter tracks distinct echoing peers so a live overlay run can
+/// separate "the peer cannot reach us" from "the peer does not admit us",
+/// and each peer may move it only once.
+#[test]
+fn address_storing_counter_counts_each_peer_once() {
+    let before = super::address_storing_peers();
+    let peer = [0xab; 32];
+
+    assert!(
+        super::note_peer_holds_our_addr(&peer),
+        "a peer's first echo must count"
+    );
+    assert!(
+        !super::note_peer_holds_our_addr(&peer),
+        "repeat echoes from the same peer must not count again"
+    );
+    assert_eq!(
+        super::address_storing_peers(),
+        before + 1,
+        "the counter must move exactly once per peer"
+    );
+}
+
 /// The raw-flags probe must agree with the decoder, or a live run cannot tell
 /// a missing wire bit from a dropped field mapping.
 #[test]

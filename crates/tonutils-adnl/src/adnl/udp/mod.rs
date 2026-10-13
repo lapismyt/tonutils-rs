@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -119,6 +120,9 @@ struct PeerPairState {
     /// One node id sends from one socket, so this is the port the peer
     /// addresses this node on whenever the recorded version wins.
     our_addr_socket: u16,
+    /// Whether the peer ever echoed a `recv_addr_list_version`, i.e. holds an
+    /// `adnl.addressList` for this node that it can route to.
+    echoed_our_addr: bool,
 }
 
 /// Returns a short name for an `adnl.Message` used in receive traces.
@@ -239,6 +243,40 @@ fn our_addr_view(remote_id: &[u8; 32]) -> (i32, u16) {
         (state.our_addr_version, state.our_addr_socket)
     })
 }
+
+/// Number of distinct peers that ever echoed a `recv_addr_list_version`,
+/// i.e. peers holding an `adnl.addressList` for this node.
+///
+/// Upstream writes the version of the address list it holds for a peer into
+/// every outgoing packet (`AdnlPeerPairImpl::send_packet` in
+/// `adnl/adnl-peer.cpp`), so the first echo is the observable moment the peer
+/// stored a routable address for this node - the precondition for it to
+/// originate `overlay.ping` and broadcasts.  Live overlay runs show the
+/// peers that ping this node are exactly the ones that echo the version, so
+/// this counter separates "the peer cannot reach us" from "the peer does not
+/// implement the pending-drain admission".
+pub fn address_storing_peers() -> u64 {
+    ADDRESS_STORING_PEERS.load(Ordering::Relaxed)
+}
+
+/// Records that `remote_id` echoed a `recv_addr_list_version`.
+///
+/// Returns `true` when the peer echoes for the first time, i.e. when the
+/// process-wide counter moves.
+fn note_peer_holds_our_addr(remote_id: &[u8; 32]) -> bool {
+    let first = with_peer_pair_state(remote_id, |state| {
+        let first = !state.echoed_our_addr;
+        state.echoed_our_addr = true;
+        first
+    });
+    if first {
+        ADDRESS_STORING_PEERS.fetch_add(1, Ordering::Relaxed);
+    }
+    first
+}
+
+/// Distinct peers that ever echoed a `recv_addr_list_version`.
+static ADDRESS_STORING_PEERS: AtomicU64 = AtomicU64::new(0);
 
 /// An encrypted ADNL datagram peer bound to one remote endpoint.
 pub struct AdnlUdpPeer {

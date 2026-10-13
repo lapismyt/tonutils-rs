@@ -12,11 +12,31 @@
 //!   (`OverlayManager::send_query` in `overlay/overlay-manager.cpp`);
 //! * [`ProtocolStats::membership_listed`] counts `overlay.getRandomPeers`
 //!   answers that contain this node, i.e. peers that treat it as a verified
-//!   member and therefore broadcast to it.
+//!   member and therefore broadcast to it;
+//! * [`ProtocolStats::address_storing_peers`] /
+//!   [`ProtocolStats::unique_pingers`] /
+//!   [`ProtocolStats::membership_listing_peers`] separate the admission
+//!   stages per distinct peer: a peer that stored a routable address for this
+//!   node can originate `overlay.ping`, a peer that pinged answered our pong,
+//!   and a peer that listed us treats us as a verified member;
+//! * [`ProtocolStats::dht_pings_received`] counts pytoniq-style liveness
+//!   probes (`dht.ping` wrapped in `overlay.query`), which a peer sends only
+//!   for nodes it keeps in its own peer list.
 //!
 //! All getters return a point-in-time [`ProtocolStats`] snapshot.
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{LazyLock, Mutex};
+
+/// Cap on the distinct-peer dedup sets behind
+/// [`ProtocolStats::unique_pingers`] and
+/// [`ProtocolStats::membership_listing_peers`].
+///
+/// The mainnet mempool overlay holds a few hundred members, so the sets
+/// saturate only in pathological churn and a saturated set keeps counting
+/// totals while the distinct-peer figure pins at the cap.
+const MAX_TRACKED_PEERS: usize = 4096;
 
 /// Snapshot of the overlay protocol counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -49,6 +69,21 @@ pub struct ProtocolStats {
     pub membership_answers: u64,
     /// Received answers that listed this node among the members.
     pub membership_listed: u64,
+    /// Distinct peers whose answers listed this node (a bounded dedup of
+    /// [`ProtocolStats::membership_listed`]).
+    pub membership_listing_peers: u64,
+    /// Distinct peers that echoed a `recv_addr_list_version`, i.e. peers that
+    /// hold a routable `adnl.addressList` for this node and can originate
+    /// `overlay.ping` and broadcasts to it (ADNL-level, folded in from
+    /// `tonutils_adnl::adnl::udp::address_storing_peers`).
+    pub address_storing_peers: u64,
+    /// Distinct peers whose `overlay.ping` this node answered.
+    pub unique_pingers: u64,
+    /// `dht.ping` queries answered.  pytoniq keeps its peer lists with
+    /// `Node.ping`, which sends `dht.ping` wrapped in `overlay.query` every
+    /// 60 s to nodes the peer keeps in its own peer list, so this counter is
+    /// the observable signal of admission by pytoniq-style peers.
+    pub dht_pings_received: u64,
     /// Custom overlay payloads handed to the scanner (broadcast candidates).
     pub custom_messages: u64,
 }
@@ -66,7 +101,37 @@ struct Counters {
     query_answers_failed: AtomicU64,
     membership_answers: AtomicU64,
     membership_listed: AtomicU64,
+    membership_listing_peers: AtomicU64,
+    unique_pingers: AtomicU64,
+    dht_pings_received: AtomicU64,
     custom_messages: AtomicU64,
+    pingers_seen: DistinctPeers,
+    listing_peers_seen: DistinctPeers,
+}
+
+/// Bounded set of distinct peer ids behind one counter.
+struct DistinctPeers {
+    seen: LazyLock<Mutex<HashSet<[u8; 32]>>>,
+}
+
+impl DistinctPeers {
+    const fn new() -> Self {
+        Self {
+            seen: LazyLock::new(|| Mutex::new(HashSet::new())),
+        }
+    }
+
+    /// Returns `true` when `peer` was not seen before.
+    fn record(&self, peer: [u8; 32]) -> bool {
+        let mut seen = self
+            .seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if seen.len() >= MAX_TRACKED_PEERS {
+            return false;
+        }
+        seen.insert(peer)
+    }
 }
 
 static COUNTERS: Counters = Counters {
@@ -82,7 +147,12 @@ static COUNTERS: Counters = Counters {
     query_answers_failed: AtomicU64::new(0),
     membership_answers: AtomicU64::new(0),
     membership_listed: AtomicU64::new(0),
+    membership_listing_peers: AtomicU64::new(0),
+    unique_pingers: AtomicU64::new(0),
+    dht_pings_received: AtomicU64::new(0),
     custom_messages: AtomicU64::new(0),
+    pingers_seen: DistinctPeers::new(),
+    listing_peers_seen: DistinctPeers::new(),
 };
 
 fn inc(counter: &AtomicU64) {
@@ -128,11 +198,24 @@ pub(crate) fn record_query_answer_failed() {
     inc(&COUNTERS.query_answers_failed);
 }
 
-pub(crate) fn record_membership_answer(listed: bool) {
+pub(crate) fn record_membership_answer(listed: bool, peer: [u8; 32]) {
     inc(&COUNTERS.membership_answers);
     if listed {
         inc(&COUNTERS.membership_listed);
+        if COUNTERS.listing_peers_seen.record(peer) {
+            inc(&COUNTERS.membership_listing_peers);
+        }
     }
+}
+
+pub(crate) fn record_ping_from(peer: [u8; 32]) {
+    if COUNTERS.pingers_seen.record(peer) {
+        inc(&COUNTERS.unique_pingers);
+    }
+}
+
+pub(crate) fn record_dht_ping() {
+    inc(&COUNTERS.dht_pings_received);
 }
 
 pub(crate) fn record_custom_message() {
@@ -154,6 +237,37 @@ pub fn protocol_stats() -> ProtocolStats {
         query_answers_failed: COUNTERS.query_answers_failed.load(Ordering::Relaxed),
         membership_answers: COUNTERS.membership_answers.load(Ordering::Relaxed),
         membership_listed: COUNTERS.membership_listed.load(Ordering::Relaxed),
+        membership_listing_peers: COUNTERS.membership_listing_peers.load(Ordering::Relaxed),
+        address_storing_peers: tonutils_adnl::adnl::udp::address_storing_peers(),
+        unique_pingers: COUNTERS.unique_pingers.load(Ordering::Relaxed),
+        dht_pings_received: COUNTERS.dht_pings_received.load(Ordering::Relaxed),
         custom_messages: COUNTERS.custom_messages.load(Ordering::Relaxed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DistinctPeers, MAX_TRACKED_PEERS};
+
+    #[test]
+    fn distinct_peers_dedup_and_saturate() {
+        let peers = DistinctPeers::new();
+        assert!(peers.record([1; 32]), "a new peer must count");
+        assert!(!peers.record([1; 32]), "the same peer must dedup");
+        assert!(peers.record([2; 32]), "a second peer must count");
+
+        let saturating = DistinctPeers::new();
+        for index in 0..MAX_TRACKED_PEERS {
+            let mut id = [0u8; 32];
+            id[..8].copy_from_slice(&u64::try_from(index).expect("index fits").to_le_bytes());
+            assert!(
+                saturating.record(id),
+                "peer {index} must count while below the cap"
+            );
+        }
+        assert!(
+            !saturating.record([255; 32]),
+            "a saturated set must stop counting distinct peers"
+        );
     }
 }

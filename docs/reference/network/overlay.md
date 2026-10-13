@@ -228,6 +228,70 @@ broadcasts to us".
   outbound `send_random_peers` to a random neighbour and a random peer is
   guarded by `has_valid_membership_certificate()`.
 
+### The two-tier overlay ecosystem
+
+Mainnet mempool overlays are not one uniform population. Live scanner runs
+show two classes of peers with different admission behaviour, and the split
+lines up with the implementation each peer runs:
+
+- **Upstream full nodes** (`ton-blockchain/ton`) follow the admission chain
+  above end to end. They call `add_peers(query.peers_)` on inbound
+  `overlay.getRandomPeers`, drain the pending set, originate `overlay.ping`,
+  and after the pong mark the node verified. Every live peer that pinged this
+  scanner was of this class, and every such peer also echoed
+  `recv_addr_list_version` - the marker that it stores a routable
+  `adnl.addressList` for us (`AdnlPeerPairImpl::send_packet`).
+- **pytoniq-based bots** (the mempool processer fleet, e.g.
+  `yungwine/ton-mempool` with `pytoniq.adnl.OverlayManager`) answer queries
+  but never echo `recv_addr_list_version` and never originate `overlay.ping`.
+  Their membership code (`OverlayManager`, `ShardOverlay`) is a private
+  pytoniq extension absent from every public pytoniq release, so its inbound
+  `query.peers` handling is not observable; live evidence shows the bots do
+  not admit a fresh identity from queries. Bots bootstrap their member lists
+  from the DHT instead: `DhtClient.get_overlay_nodes` reads the
+  `overlay.<id>.nodes` value (`pytoniq/adnl/dht.py`), and the bot processer
+  wires that client into `OverlayManager`.
+
+The DHT announce path is therefore the bot fleet's root of trust, and it is
+closed to an ed25519 scanner identity: upstream `dht.updateRule.overlayNodes`
+`check_value` (`dht/dht-types.cpp`) requires the value's keyDescription id to
+be a `pub.overlay` key, and `pub.overlay` keys are named blobs without
+signing material (`keys/keys.hpp` `pubkeys::Overlay`, `EncryptorOverlay`) -
+only full nodes hold the paired private form. pytoniq itself cannot store
+such values either (`DhtClient.store_value` rejects the `overlayNodes` rule
+with `DhtError('currently overlay is not supported')`). This scanner reads
+the value for discovery (`lookup.rs`) but cannot and must not write it.
+
+The practical consequence is a bimodal delivery distribution. Admission by
+the few full nodes in the overlay works through the query path; a bot learns
+this node only when a full node samples it into a `getRandomPeers` answer
+(`4 / |peers_|` per answer) and the bot then resolves its DHT `address` value
+(`DhtClient.get_overlay_node`). One such listing typically cascades through
+the small bot sets within minutes, which matches the observed 129-192 s
+delivery runs - and its absence in a 300-600 s window proves nothing about
+this node's reachability.
+
+### Address routing: channels versus stored lists
+
+A peer needs a routable address for this node only when it has no established
+ADNL channel: once a channel is up, pings and broadcasts flow back over the
+observed UDP path regardless of what the peer stored. Peers that know this
+node only from a record (DHT value or gossip sample) must resolve its DHT
+`address` value before they can ping or push. Outbound packets carry an
+`adnl.addressList` with an empty `addrs` vector and a `version` stamped at
+send time, which upstream accepts as an implicit source address
+(`AdnlPeerPairImpl::receive_packet_checked`: an empty list plus a valid
+remote address adds the datagram source), so channel peers additionally learn
+the address without any DHT lookup.
+
+The observable per-peer signal is the `recv_addr_list_version` echo. The
+`tonutils_adnl::adnl::udp::address_storing_peers` counter tracks distinct
+peers that ever echoed it, and `ProtocolStats::unique_pingers` /
+`ProtocolStats::membership_listing_peers` / `ProtocolStats::dht_pings_received`
+split the later admission stages per distinct peer, so a live run can tell
+"the peer cannot reach us" from "the peer does not admit us" from "the peer
+keeps us in its own list".
+
 ## Reference and unfinished work
 
 The pending-message behavior is compared conceptually with
