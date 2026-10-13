@@ -17,7 +17,9 @@ use tonutils_tl::tl::network::{Address, DhtNode, PublicKey as TlPublicKey};
 #[cfg(feature = "runtime")]
 use futures::future::BoxFuture;
 #[cfg(feature = "runtime")]
-use tokio::sync::{RwLock, broadcast, mpsc, watch};
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(feature = "runtime")]
+use tokio::sync::{RwLock, broadcast, mpsc, oneshot, watch};
 
 /// A 256-bit overlay identifier.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -461,9 +463,38 @@ pub struct PeerManager {
     pool: Arc<OverlayPeerPool>,
     sessions: Arc<RwLock<HashMap<PeerId, SharedSession>>>,
     scores: Arc<RwLock<HashMap<PeerId, i32>>>,
+    cancellations: Arc<RwLock<HashMap<PeerId, CancelRegistration>>>,
+    cancel_seq: Arc<AtomicU64>,
     shutdown: watch::Sender<bool>,
     overlay: OverlayId,
     tasks: Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+}
+
+/// Per-peer cancellation slot for the receive or reconnect task.
+///
+/// The generation identifies the registration that created it, so a session
+/// task exiting later removes only its own slot: a newer registration for the
+/// same peer is kept, and dropping a superseded sender stops the older task.
+#[cfg(feature = "runtime")]
+struct CancelRegistration {
+    generation: u64,
+    tx: oneshot::Sender<()>,
+}
+
+/// Drops the cancellation slot only when it still belongs to `generation`.
+#[cfg(feature = "runtime")]
+async fn release_cancel(
+    cancellations: &Arc<RwLock<HashMap<PeerId, CancelRegistration>>>,
+    peer: PeerId,
+    generation: u64,
+) {
+    let mut guard = cancellations.write().await;
+    if guard
+        .get(&peer)
+        .is_some_and(|entry| entry.generation == generation)
+    {
+        guard.remove(&peer);
+    }
 }
 
 #[cfg(feature = "runtime")]
@@ -478,6 +509,8 @@ impl PeerManager {
             pool: Arc::new(OverlayPeerPool::new(config)?),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             scores: Arc::new(RwLock::new(HashMap::new())),
+            cancellations: Arc::new(RwLock::new(HashMap::new())),
+            cancel_seq: Arc::new(AtomicU64::new(0)),
             shutdown,
             overlay,
             tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
@@ -505,6 +538,7 @@ impl PeerManager {
                 .report_status(PeerStatus::Reconnecting { peer, attempt: 0 });
             return;
         }
+        let (generation, mut cancel_rx) = self.register_cancel(peer).await;
         let session = Arc::new(tokio::sync::Mutex::new(session));
         self.sessions.write().await.insert(peer, session.clone());
         self.scores.write().await.entry(peer).or_insert(0);
@@ -515,10 +549,12 @@ impl PeerManager {
         let mut shutdown = self.shutdown.subscribe();
         let sessions = self.sessions.clone();
         let scores = self.scores.clone();
+        let cancellations = self.cancellations.clone();
         let task = tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = shutdown.changed() => break,
+                    _ = &mut cancel_rx => break,
                     packet = async {
                         tokio::time::timeout(idle_timeout, async {
                             session.lock().await.receive().await
@@ -556,15 +592,70 @@ impl PeerManager {
                     }
                 }
             }
-            sessions.write().await.remove(&peer);
-            pool.unregister_peer(peer).await;
-            scores
-                .write()
-                .await
-                .entry(peer)
-                .and_modify(|score| *score -= 1);
+            // Unregister only while this task still owns the registered
+            // session: `remove_session` may already have replaced or removed
+            // it, and a re-added session must keep its own registration.
+            let owned = {
+                let mut guard = sessions.write().await;
+                let owned = guard
+                    .get(&peer)
+                    .is_some_and(|stored| Arc::ptr_eq(stored, &session));
+                if owned {
+                    guard.remove(&peer);
+                }
+                owned
+            };
+            if owned {
+                pool.unregister_peer(peer).await;
+                scores
+                    .write()
+                    .await
+                    .entry(peer)
+                    .and_modify(|score| *score -= 1);
+            }
+            release_cancel(&cancellations, peer, generation).await;
         });
         self.tasks.lock().await.push(task);
+    }
+
+    /// Registers this manager's cancellation slot for `peer`.
+    ///
+    /// Replacing a live registration drops the previous sender, which stops a
+    /// superseded receive or reconnect task that has not observed its slot yet.
+    async fn register_cancel(&self, peer: PeerId) -> (u64, oneshot::Receiver<()>) {
+        let generation = self.cancel_seq.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = oneshot::channel();
+        self.cancellations
+            .write()
+            .await
+            .insert(peer, CancelRegistration { generation, tx });
+        (generation, rx)
+    }
+
+    /// Removes a peer's session and stops its receive or reconnect task.
+    ///
+    /// Returns `true` when a live session was removed.  Fixed seed sets
+    /// (validators, configured ADNL addresses) must never go through this
+    /// path: quality-based eviction only considers non-pinned peers.
+    pub async fn remove_session(&self, peer: PeerId) -> bool {
+        let cancel = self.cancellations.write().await.remove(&peer);
+        let removed = self.sessions.write().await.remove(&peer).is_some();
+        self.scores.write().await.remove(&peer);
+        if removed {
+            // The session task wakes on its cancellation slot and skips its
+            // own cleanup (`Arc::ptr_eq` no longer matches), so `Disconnected`
+            // is reported exactly once, here.
+            self.pool.unregister_peer(peer).await;
+        }
+        if let Some(entry) = cancel {
+            let _ = entry.tx.send(());
+        }
+        removed
+    }
+
+    /// Returns the peer IDs of every currently registered session.
+    pub async fn peers(&self) -> Vec<PeerId> {
+        self.sessions.read().await.keys().copied().collect()
     }
 
     pub async fn add_session_with_reconnect(
@@ -578,23 +669,28 @@ impl PeerManager {
         if self.sessions.read().await.contains_key(&peer) {
             return;
         }
+        let (generation, mut cancel_rx) = self.register_cancel(peer).await;
         let sessions = self.sessions.clone();
         let scores = self.scores.clone();
+        let cancellations = self.cancellations.clone();
         let pool = self.pool.clone();
         let overlay = self.overlay;
         let idle_timeout = pool.config.peer_idle_timeout;
         let mut shutdown = self.shutdown.subscribe();
         let task = tokio::spawn(async move {
             let mut current = session;
-            loop {
+            let mut cancelled = false;
+            'reconnect: loop {
                 let shared = Arc::new(tokio::sync::Mutex::new(current));
                 sessions.write().await.insert(peer, shared.clone());
                 pool.register_peer(peer).await;
                 let _ = pool.report_status(PeerStatus::Connected { peer });
                 log::debug!("overlay peer session active: peer={peer:?}");
+                let mut stopped = false;
                 loop {
                     tokio::select! {
                         _ = shutdown.changed() => break,
+                        _ = &mut cancel_rx => { cancelled = true; break; }
                         packet = async {
                             tokio::time::timeout(idle_timeout, async {
                                 shared.lock().await.receive().await
@@ -603,7 +699,10 @@ impl PeerManager {
                             match packet {
                                 Ok(Ok(payload)) => {
                                     let packet = OverlayPacket { payload, routing: RoutingMetadata::new(overlay, peer) };
-                                    if pool.ingest(packet).await.is_err() { return; }
+                                    if pool.ingest(packet).await.is_err() {
+                                        stopped = true;
+                                        break;
+                                    }
                                     scores.write().await.entry(peer).and_modify(|score| *score += 1);
                                 }
                                 Ok(Err(_)) => {
@@ -629,15 +728,37 @@ impl PeerManager {
                         }
                     }
                 }
-                sessions.write().await.remove(&peer);
-                pool.unregister_peer(peer).await;
+                // Unregister only while this task still owns the registered
+                // session: `remove_session` or a superseding re-add must keep
+                // its own registration intact.
+                let owned = {
+                    let mut guard = sessions.write().await;
+                    let owned = guard
+                        .get(&peer)
+                        .is_some_and(|stored| Arc::ptr_eq(stored, &shared));
+                    if owned {
+                        guard.remove(&peer);
+                    }
+                    owned
+                };
+                if owned {
+                    pool.unregister_peer(peer).await;
+                }
+                if cancelled {
+                    // `remove_session` already reported `Disconnected`.
+                    break 'reconnect;
+                }
+                if stopped {
+                    // The pool is closed; the caller is shutting down.
+                    break 'reconnect;
+                }
                 if *shutdown.borrow() {
                     let _ = pool.report_status(PeerStatus::Disconnected { peer });
-                    return;
+                    break 'reconnect;
                 }
                 if max_attempts == 0 {
                     let _ = pool.report_status(PeerStatus::Failed { peer });
-                    return;
+                    break 'reconnect;
                 }
                 let _ = pool.report_status(PeerStatus::Failed { peer });
                 let mut replacement = None;
@@ -653,8 +774,12 @@ impl PeerManager {
                         .saturating_mul(multiplier)
                         .min(Duration::from_secs(30));
                     tokio::select! {
-                        _ = shutdown.changed() => return,
+                        _ = shutdown.changed() => break 'reconnect,
+                        _ = &mut cancel_rx => { cancelled = true; break; }
                         () = tokio::time::sleep(delay) => {}
+                    }
+                    if cancelled {
+                        break 'reconnect;
                     }
                     match reconnect(peer).await {
                         Ok(session) => {
@@ -664,10 +789,31 @@ impl PeerManager {
                         Err(error) => log::warn!("overlay reconnect for {peer:?} failed: {error}"),
                     }
                 }
+                if cancelled {
+                    break 'reconnect;
+                }
+                // A cancellation observed while `reconnect()` was in flight
+                // still wins: drop the replacement instead of reviving the
+                // session for an evicted peer.
+                match cancel_rx.try_recv() {
+                    Ok(()) | Err(oneshot::error::TryRecvError::Closed) => {
+                        cancelled = true;
+                        break 'reconnect;
+                    }
+                    Err(oneshot::error::TryRecvError::Empty) => {}
+                }
+                if *shutdown.borrow() {
+                    let _ = pool.report_status(PeerStatus::Disconnected { peer });
+                    break 'reconnect;
+                }
                 let Some(session) = replacement else {
-                    return;
+                    // Reconnect attempts are exhausted.
+                    break 'reconnect;
                 };
                 current = session;
+            }
+            if !cancelled {
+                release_cancel(&cancellations, peer, generation).await;
             }
         });
         self.tasks.lock().await.push(task);
@@ -705,6 +851,38 @@ impl PeerManager {
             .cloned()
             .collect::<Vec<_>>();
         let results = futures::future::join_all(sessions.into_iter().map(|session| {
+            let object = object.clone();
+            async move { session.lock().await.send_object(object).await }
+        }))
+        .await;
+        results.into_iter().flatten().count()
+    }
+
+    /// Broadcasts a raw overlay object, starting sends to `ranked` peers first.
+    ///
+    /// `join_all` polls its futures in submission order, so the sends toward
+    /// the highest-ranked (best delivery quality) peers are issued before the
+    /// rest.  Sessions absent from `ranked` still receive the object in the
+    /// same call - ordering adds no latency for them.  Returns the number of
+    /// sessions the object was handed to.
+    pub async fn broadcast_object_in_order(&self, object: Arc<[u8]>, ranked: &[PeerId]) -> usize {
+        let sessions = self.sessions.read().await;
+        let mut ordered: Vec<SharedSession> = Vec::with_capacity(sessions.len());
+        let mut seen = HashSet::with_capacity(sessions.len());
+        for peer in ranked {
+            if let Some(session) = sessions.get(peer)
+                && seen.insert(*peer)
+            {
+                ordered.push(session.clone());
+            }
+        }
+        for (peer, session) in sessions.iter() {
+            if seen.insert(*peer) {
+                ordered.push(session.clone());
+            }
+        }
+        drop(sessions);
+        let results = futures::future::join_all(ordered.into_iter().map(|session| {
             let object = object.clone();
             async move { session.lock().await.send_object(object).await }
         }))

@@ -254,6 +254,7 @@ pub struct OverlayBroadcastPeer {
     manager: Arc<PeerManager>,
     keypair: KeyPair,
     flags: i32,
+    quality: Option<Arc<crate::PeerQualityRegistry>>,
 }
 
 impl OverlayBroadcastPeer {
@@ -264,6 +265,7 @@ impl OverlayBroadcastPeer {
             manager,
             keypair,
             flags: 0,
+            quality: None,
         }
     }
 
@@ -275,6 +277,18 @@ impl OverlayBroadcastPeer {
         self.flags = flags;
         self
     }
+
+    /// Fans every send out to sessions ordered by delivery quality: the
+    /// highest-scoring peers are polled first, so a high-quality neighbour
+    /// starts relaying the message while slower sessions are still being
+    /// written. Without a registry the fan-out keeps insertion order.
+    ///
+    /// The builder wires this with the scanner's
+    /// [`quality`](crate::MempoolScanner::quality) registry.
+    pub fn with_quality(mut self, quality: Arc<crate::PeerQualityRegistry>) -> Self {
+        self.quality = Some(quality);
+        self
+    }
 }
 
 impl BroadcastPeer for OverlayBroadcastPeer {
@@ -282,11 +296,20 @@ impl BroadcastPeer for OverlayBroadcastPeer {
         let manager = self.manager.clone();
         let keypair = self.keypair;
         let flags = self.flags;
+        let quality = self.quality.clone();
         Box::pin(async move {
+            // Ranked once per send and reused for every FEC part, so all
+            // symbols of one broadcast leave in the same peer order.
+            let ranked = match &quality {
+                Some(registry) => registry.rank(&manager.peers().await),
+                None => Vec::new(),
+            };
             let date = now_i32();
             match external_message_broadcast(&keypair, &raw_boc, flags, date) {
                 ExternalMessageBroadcast::Simple(object) => {
-                    let sent = manager.broadcast_object(Arc::from(object)).await;
+                    let sent = manager
+                        .broadcast_object_in_order(Arc::from(object), &ranked)
+                        .await;
                     if sent == 0 {
                         return Err("no overlay sessions connected".to_owned());
                     }
@@ -297,8 +320,9 @@ impl BroadcastPeer for OverlayBroadcastPeer {
                     let total = parts.len();
                     let results = join_all(parts.into_iter().map(|part| {
                         let manager = manager.clone();
+                        let ranked = ranked.clone();
                         let object = Arc::from(part.object);
-                        async move { manager.broadcast_object(object).await }
+                        async move { manager.broadcast_object_in_order(object, &ranked).await }
                     }))
                     .await;
                     let delivered = results.into_iter().filter(|sent| *sent > 0).count();
@@ -479,5 +503,72 @@ mod tests {
             }
         }
         panic!("source symbols must reconstruct the object");
+    }
+
+    struct RecordingSession {
+        peer: tonutils_overlay::PeerId,
+        log: Arc<tokio::sync::Mutex<Vec<tonutils_overlay::PeerId>>>,
+    }
+
+    impl tonutils_overlay::OverlaySession for RecordingSession {
+        fn peer_id(&self) -> tonutils_overlay::PeerId {
+            self.peer
+        }
+
+        fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+            Box::pin(std::future::pending())
+        }
+
+        fn send(&mut self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn send_object(&mut self, _object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            let peer = self.peer;
+            let log = Arc::clone(&self.log);
+            Box::pin(async move {
+                log.lock().await.push(peer);
+                Ok(())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn quality_ranked_send_starts_best_peer_first() {
+        use tonutils_overlay::{OverlayConfig, PeerId};
+
+        let manager = Arc::new(
+            PeerManager::new(OverlayConfig::default()).expect("peer manager must be created"),
+        );
+        let log = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let best = PeerId::from_bytes([1; 32]);
+        let rest = PeerId::from_bytes([2; 32]);
+        for peer in [best, rest] {
+            manager
+                .add_session(Box::new(RecordingSession {
+                    peer,
+                    log: Arc::clone(&log),
+                }))
+                .await;
+        }
+        let registry = crate::PeerQualityRegistry::new(crate::PeerQualityConfig::default());
+        registry.set_connected(vec![best, rest]);
+        registry.record_first_delivery([7; 32], best, std::time::Instant::now());
+        let broadcast = OverlayBroadcastPeer::new(
+            Arc::clone(&manager),
+            KeyPair::generate(&mut rand::rngs::OsRng),
+        )
+        .with_quality(Arc::new(registry));
+        let raw = test_boc(64);
+        broadcast
+            .send_external(Arc::from(raw.as_slice()))
+            .await
+            .expect("a connected peer set must accept the broadcast");
+        assert_eq!(
+            *log.lock().await,
+            vec![best, rest],
+            "the best-scoring peer must start its send first"
+        );
+        manager.shutdown_wait().await;
     }
 }

@@ -27,6 +27,8 @@ mod broadcast;
 mod builder;
 mod endpoints;
 mod overlay_inbound;
+mod peer_growth;
+mod peer_quality;
 mod protocol_stats;
 mod quic_session;
 mod udp_session;
@@ -41,6 +43,7 @@ pub use endpoints::{
     MemberEndpoint, OverlayMemberEndpoints, QuicEndpointSource, known_member_seeds,
     member_quic_target, record_member, record_member_quic, registered_member_count,
 };
+pub use peer_quality::{PeerQualityConfig, PeerQualityRegistry, PeerQualitySnapshot};
 pub use protocol_stats::{ProtocolStats, protocol_stats};
 pub use quic_session::{
     QuicOverlaySession, quic_overlay_factory, quic_overlay_factory_with_endpoints,
@@ -260,10 +263,24 @@ pub struct MempoolScanner {
     discovery_seeds: AtomicU64,
     discovery_results: AtomicU64,
     discovery_peers: AtomicU64,
+    quality: Arc<PeerQualityRegistry>,
 }
 
 impl MempoolScanner {
     pub fn new(config: MempoolConfig) -> Result<Self, MempoolError> {
+        Self::with_quality(config, PeerQualityConfig::default())
+    }
+
+    /// Creates a scanner with a custom delivery-quality configuration.
+    ///
+    /// [`PeerQualityConfig::default`] thresholds match [`Self::new`]; prefer
+    /// [`peer_quality`](crate::MempoolScannerBuilder::peer_quality) on the
+    /// builder when starting a live scanner, and this constructor when
+    /// wiring a standalone scanner by hand.
+    pub fn with_quality(
+        config: MempoolConfig,
+        quality: PeerQualityConfig,
+    ) -> Result<Self, MempoolError> {
         if config.event_queue_capacity == 0 {
             return Err(MempoolError::InvalidQueueCapacity);
         }
@@ -294,7 +311,14 @@ impl MempoolScanner {
             discovery_seeds: AtomicU64::new(0),
             discovery_results: AtomicU64::new(0),
             discovery_peers: AtomicU64::new(0),
+            quality: Arc::new(PeerQualityRegistry::new(quality)),
         })
+    }
+
+    /// Returns the delivery-quality registry feeding send prioritization and
+    /// quality-based eviction.
+    pub fn quality(&self) -> Arc<PeerQualityRegistry> {
+        Arc::clone(&self.quality)
     }
 
     /// Returns the scanner's Rust stream. The receiver is shared so ingest and
@@ -522,6 +546,8 @@ impl MempoolScanner {
             }
             if dedup.contains_key(&hash) {
                 self.duplicates.fetch_add(1, Ordering::Relaxed);
+                self.quality
+                    .record_duplicate_delivery(hash, routing.peer, now);
                 return Ok(None);
             }
             if self.dedup_entries.load(Ordering::Relaxed) >= self.config.max_dedup_entries as u64
@@ -532,11 +558,17 @@ impl MempoolScanner {
                 dedup = self.dedup[shard].lock().await;
                 if dedup.contains_key(&hash) {
                     self.duplicates.fetch_add(1, Ordering::Relaxed);
+                    self.quality
+                        .record_duplicate_delivery(hash, routing.peer, now);
                     return Ok(None);
                 }
             }
             dedup.insert(hash, now);
             self.dedup_entries.fetch_add(1, Ordering::Relaxed);
+            // Recorded before the shard lock is released so a concurrent
+            // duplicate of the same hash always finds an open window and is
+            // never charged a miss for a delivery it just made.
+            self.quality.record_first_delivery(hash, routing.peer, now);
         }
         self.accepted.fetch_add(1, Ordering::Relaxed);
         self.event_tx

@@ -289,3 +289,146 @@ async fn drops_session_after_idle_deadline_without_activity() {
     assert_eq!(manager.peer_count().await, 0);
     manager.shutdown_wait().await;
 }
+
+struct RecordingSession {
+    peer: PeerId,
+    log: Arc<tokio::sync::Mutex<Vec<PeerId>>>,
+}
+
+impl OverlaySession for RecordingSession {
+    fn peer_id(&self) -> PeerId {
+        self.peer
+    }
+
+    fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+        Box::pin(std::future::pending())
+    }
+
+    fn send(&mut self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn send_object(&mut self, _object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+        let peer = self.peer;
+        let log = Arc::clone(&self.log);
+        Box::pin(async move {
+            log.lock().await.push(peer);
+            Ok(())
+        })
+    }
+}
+
+#[tokio::test]
+async fn ranked_broadcast_starts_high_quality_sends_first() {
+    let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+    let log = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let first = PeerId::from_bytes([1; 32]);
+    let second = PeerId::from_bytes([2; 32]);
+    let third = PeerId::from_bytes([3; 32]);
+    for peer in [first, second, third] {
+        manager
+            .add_session(Box::new(RecordingSession {
+                peer,
+                log: Arc::clone(&log),
+            }))
+            .await;
+    }
+    let sent = manager
+        .broadcast_object_in_order(Arc::from([9u8; 4].as_slice()), &[third, first])
+        .await;
+    assert_eq!(sent, 3, "every session must receive the object");
+    assert_eq!(
+        *log.lock().await,
+        vec![third, first, second],
+        "ranked peers must be polled first, the rest keep registry order"
+    );
+    manager.shutdown_wait().await;
+}
+
+#[tokio::test]
+async fn remove_session_reports_disconnected_exactly_once() {
+    let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+    let peer = PeerId::from_bytes([4; 32]);
+    let mut statuses = manager.subscribe_statuses();
+    manager
+        .add_session(Box::new(FlakySession { peer, fail: false }))
+        .await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        manager.remove_session(peer).await,
+        "a live session must be reported removed"
+    );
+    assert_eq!(manager.peer_count().await, 0);
+    assert!(!manager.remove_session(peer).await);
+    // The cancelled receive task exits without a second unregister.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut disconnected = 0usize;
+    while let Ok(status) = statuses.try_recv() {
+        if matches!(status, PeerStatus::Disconnected { peer: id } if id == peer) {
+            disconnected += 1;
+        }
+    }
+    assert_eq!(
+        disconnected, 1,
+        "Disconnected must be reported exactly once"
+    );
+    manager.shutdown_wait().await;
+}
+
+#[tokio::test]
+async fn remove_session_stops_reconnect_redial() {
+    let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+    let peer = PeerId::from_bytes([9; 32]);
+    let dials = Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let dial_count = Arc::clone(&dials);
+    let reconnect: ReconnectFactory = Arc::new(move |_candidate| {
+        dial_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Box::pin(async move {
+            Ok(Box::new(FlakySession { peer, fail: false }) as Box<dyn OverlaySession>)
+        })
+    });
+    // The first session fails at once, so the reconnect task is already in
+    // its backoff when `remove_session` cancels it.
+    manager
+        .add_session_with_reconnect(
+            Box::new(FlakySession { peer, fail: true }),
+            reconnect,
+            5,
+            Duration::from_millis(40),
+        )
+        .await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let _ = manager.remove_session(peer).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        dials.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "a cancelled peer must not be redialled"
+    );
+    assert_eq!(manager.peer_count().await, 0);
+    manager.shutdown_wait().await;
+}
+
+#[tokio::test]
+async fn cancelled_task_keeps_reregistered_session() {
+    let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+    let peer = PeerId::from_bytes([5; 32]);
+    manager
+        .add_session(Box::new(FlakySession { peer, fail: false }))
+        .await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(manager.remove_session(peer).await);
+    manager
+        .add_session(Box::new(FlakySession { peer, fail: false }))
+        .await;
+    // The superseded task wakes on cancellation; its cleanup must not drop
+    // the session registered after it.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        manager.peer_count().await,
+        1,
+        "the re-registered session must survive the old task's cleanup"
+    );
+    manager.shutdown_wait().await;
+    assert_eq!(manager.peer_count().await, 0);
+}

@@ -57,9 +57,10 @@ Both paths propagate: upstream receivers verify the signature and re-send
 the broadcast to their neighbours, so a published message spreads without
 sender-side retry. The signed object is serialized once and the identical
 bytes are fanned out to all UDP and QUIC sessions in parallel
-(`PeerManager::broadcast_object`), which sends the raw object after the
-`overlay.message` header. Overlay broadcasts must ride as raw objects:
-upstream's `OverlayImpl::receive_message` dispatches on the object
+(`PeerManager::broadcast_object_in_order`), which sends the raw object
+after the `overlay.message` header - sessions ranked by delivery quality
+first, the rest right behind them. Overlay broadcasts must ride as raw
+objects: upstream's `OverlayImpl::receive_message` dispatches on the object
 constructor, so the `overlay.unicast` wrapper that `OverlaySession::send`
 adds would deliver broadcast bytes to the plain-message callback instead
 of the broadcast machinery.
@@ -69,6 +70,53 @@ implementation returns every source symbol at once, so the whole fan-out
 leaves the node in a single round of datagrams. Receivers reconstruct the
 object from any `symbols_count` symbols, so the source set alone is
 sufficient and repair symbols are not sent.
+
+## Peer delivery quality and eviction
+
+`MempoolScanner` records how each session behaves on the external-message
+flood in a `PeerQualityRegistry` (`peer_quality.rs`):
+
+- the peer that delivers a hash first earns first-delivery credit;
+- a duplicate delivered within `late_threshold` (default 500 ms) of the
+  first sighting is an on-time delivery; at or after the threshold it
+  earns a late penalty - but only for peers that were connected at the
+  first sighting, since a peer that joined afterwards could not have
+  relayed the message earlier;
+- a peer connected at the first sighting that delivers nothing within
+  `miss_window` (default 3 s) earns a miss penalty.
+
+Scores decay exponentially with `score_halflife` (default 60 s) on every
+sweep, so stale behavior fades. Local sends (`send_external`, the zero
+`PeerId`) are never attributed: opening a window for this node's own
+broadcast would charge misses to peers for not echoing it back, which
+upstream flooding does not guarantee. Attribution runs inside the dedup
+shard section, so a concurrent duplicate of a hash always finds an open
+window and is never charged a miss for a delivery it just made.
+
+Two background tasks ride on the registry:
+
+- the sweep task (every `sweep_interval`, default 1 s) refreshes the
+  connected snapshot used for miss attribution and closes expired windows;
+- the eviction task (`quality_eviction(true)`, `churn_interval` default
+  60 s) evicts the worst non-pinned peers while the managed connection
+  count exceeds `overlay_max_peers`. Only peers with at least
+  `min_observations` (default 10) observations are candidates - on thin
+  evidence the scan stays over the limit rather than dropping a peer on a
+  noisy score. Eviction is opt-in; quality metrics and ranked sends are
+  always collected.
+
+Pinned peers (`pinned_peers`, e.g. configured seeds or validators) are
+merged into the bootstrap set with reconnect support, excluded from
+`overlay_max_peers` (they are a separate, guaranteed set), and never
+evicted - even with a terrible score. `pinned_max_peers(Option<u32>)`
+caps the pinned set itself, independently of `overlay_max_peers`.
+
+Every send ranks the connected sessions once per call
+(`PeerQualityRegistry::rank`, score descending, reused for all FEC parts)
+and `PeerManager::broadcast_object_in_order` polls the ranked sessions
+first, so the best relays start their datagrams while slower sessions are
+still being written. Background peer growth runs only while the scanner is
+idle: a round is skipped when the event queue is below 25 % free capacity.
 
 ## QUIC member discovery
 

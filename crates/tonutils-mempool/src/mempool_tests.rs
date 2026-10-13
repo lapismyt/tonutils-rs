@@ -277,3 +277,118 @@ async fn overlay_receiver_stops_with_manager_shutdown() {
     manager.shutdown_wait().await;
     receiver.await.unwrap();
 }
+
+#[tokio::test]
+async fn pinned_peers_honor_the_isolated_connection_limit() {
+    let kept = PeerId::from_bytes([3; 32]);
+    let dropped = PeerId::from_bytes([4; 32]);
+    let seed_peer = PeerId::from_bytes([6; 32]);
+    let factory: OverlaySessionFactory = Arc::new(move |candidate| {
+        Box::pin(async move {
+            Ok(Box::new(PendingSession {
+                peer: candidate.peer,
+            }) as Box<dyn OverlaySession>)
+        })
+    });
+    let (_scanner, manager, _events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .seed(SeedPeer {
+            peer: seed_peer,
+            address: "127.0.0.1:30303".into(),
+        })
+        .pinned_peers([
+            SeedPeer {
+                peer: kept,
+                address: "127.0.0.1:30301".into(),
+            },
+            SeedPeer {
+                peer: dropped,
+                address: "127.0.0.1:30302".into(),
+            },
+        ])
+        .pinned_max_peers(Some(1))
+        .session_factory(factory)
+        .start()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let peers = manager.peers().await;
+    assert_eq!(peers.len(), 2, "one pinned plus one seed session connects");
+    assert!(peers.contains(&kept) && peers.contains(&seed_peer));
+    assert!(
+        !peers.contains(&dropped),
+        "pinned entries above the isolated limit must be dropped"
+    );
+    manager.shutdown_wait().await;
+}
+
+#[tokio::test]
+async fn quality_eviction_drops_silent_peers_and_keeps_pinned() {
+    let pinned = PeerId::from_bytes([1; 32]);
+    let silent = PeerId::from_bytes([2; 32]);
+    let factory: OverlaySessionFactory = Arc::new(move |candidate| {
+        Box::pin(async move {
+            Ok(Box::new(PendingSession {
+                peer: candidate.peer,
+            }) as Box<dyn OverlaySession>)
+        })
+    });
+    let quality = PeerQualityConfig {
+        late_threshold: Duration::from_millis(10),
+        miss_window: Duration::from_millis(10),
+        min_observations: 1,
+        sweep_interval: Duration::from_millis(10),
+        churn_interval: Duration::from_millis(20),
+        ..PeerQualityConfig::default()
+    };
+    let (scanner, manager, _events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .pinned_peers([SeedPeer {
+            peer: pinned,
+            address: "127.0.0.1:30301".into(),
+        }])
+        .seed(SeedPeer {
+            peer: silent,
+            address: "127.0.0.1:30302".into(),
+        })
+        .overlay_max_peers(0)
+        .quality_eviction(true)
+        .peer_quality(quality)
+        .session_factory(factory)
+        .start()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        manager.peer_count().await,
+        2,
+        "pinned and seed sessions must bootstrap"
+    );
+    // The first-seen delivery credits the pinned peer; the silent peer sits
+    // in the connected snapshot, misses the window, and becomes the only
+    // eviction candidate over the zero managed cap.
+    scanner
+        .ingest(
+            boc(3),
+            RoutingMetadata::new(OverlayId::MAINNET_BASECHAIN_OVERLAY_ID, pinned),
+        )
+        .await
+        .unwrap();
+    let mut evicted = false;
+    for _ in 0..100 {
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        if manager.peer_count().await == 1 {
+            evicted = true;
+            break;
+        }
+    }
+    assert!(evicted, "the silent managed peer must be evicted");
+    assert_eq!(
+        manager.peers().await,
+        vec![pinned],
+        "the pinned peer must survive quality churn"
+    );
+    manager.shutdown_wait().await;
+}

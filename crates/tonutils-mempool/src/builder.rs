@@ -4,6 +4,7 @@
 //! limit; `lib.rs` re-exports [`MempoolScannerBuilder`].
 
 use super::*;
+use crate::peer_growth::PeerGrowthTask;
 
 /// Builder for a live scanner startup.
 pub type OverlaySessionFactory = Arc<
@@ -53,6 +54,21 @@ pub struct MempoolScannerBuilder {
     /// Local ADNL key, remembered by the transport configurators
     /// so `start` can sign overlay broadcasts with it.
     local_keypair: Option<KeyPair>,
+    /// Fixed ADNL address lists (seeds, validators) that bootstrap with
+    /// reconnect support, are never evicted, and never count against
+    /// [`overlay_max_peers`](Self::overlay_max_peers).
+    ///
+    /// See [`pinned_peers`](Self::pinned_peers).
+    pinned_peers: Vec<SeedPeer>,
+    /// Isolated cap on connected pinned peers; `None` connects the whole
+    /// pinned list.
+    pinned_max_peers: Option<u32>,
+    /// Delivery-quality thresholds for attribution, eviction, and send
+    /// ranking.
+    peer_quality: PeerQualityConfig,
+    /// Whether the background churn task evicts the worst non-pinned peers
+    /// over [`overlay_max_peers`](Self::overlay_max_peers).
+    quality_eviction: bool,
 }
 
 impl fmt::Debug for MempoolScannerBuilder {
@@ -94,6 +110,10 @@ impl fmt::Debug for MempoolScannerBuilder {
             .field("external_address", &self.external_address)
             .field("address_publisher", &self.address_publisher.is_some())
             .field("local_keypair", &self.local_keypair.is_some())
+            .field("pinned_peers", &self.pinned_peers)
+            .field("pinned_max_peers", &self.pinned_max_peers)
+            .field("peer_quality", &self.peer_quality)
+            .field("quality_eviction", &self.quality_eviction)
             .finish()
     }
 }
@@ -127,6 +147,10 @@ impl Default for MempoolScannerBuilder {
             external_address: None,
             address_publisher: None,
             local_keypair: None,
+            pinned_peers: Vec::new(),
+            pinned_max_peers: None,
+            peer_quality: PeerQualityConfig::default(),
+            quality_eviction: false,
         }
     }
 }
@@ -394,9 +418,53 @@ impl MempoolScannerBuilder {
     /// minute, so the odds of being pinged - and therefore of ever receiving a
     /// broadcast - grow roughly linearly with this number.
     ///
-    /// A value of `0` disables periodic peer growth entirely.
+    /// A value of `0` disables periodic peer growth entirely; with
+    /// [`quality_eviction`](Self::quality_eviction) enabled it still caps the
+    /// managed set at zero, evicting every non-pinned session.
     pub fn overlay_max_peers(mut self, max_peers: u32) -> Self {
         self.overlay_max_peers = max_peers;
+        self
+    }
+
+    /// Pins a fixed ADNL address list (seeds, validators) to this scanner.
+    ///
+    /// Pinned peers bootstrap like explicit seeds - with reconnect support -
+    /// but are additionally excluded from [`overlay_max_peers`](Self::overlay_max_peers)
+    /// (they are a separate, guaranteed set), are never re-added or evicted by
+    /// the background peer tasks, and survive quality churn even with a
+    /// terrible delivery score.
+    pub fn pinned_peers(mut self, peers: impl IntoIterator<Item = SeedPeer>) -> Self {
+        self.pinned_peers.extend(peers);
+        self
+    }
+
+    /// Caps how many pinned peers are connected at once - an isolated limit,
+    /// separate from [`overlay_max_peers`](Self::overlay_max_peers).
+    ///
+    /// The first `limit` entries of [`pinned_peers`](Self::pinned_peers) are
+    /// connected; the rest are dropped at `start`. `None` (the default)
+    /// connects the whole pinned list.
+    pub fn pinned_max_peers(mut self, limit: Option<u32>) -> Self {
+        self.pinned_max_peers = limit;
+        self
+    }
+
+    /// Overrides the delivery-quality configuration: late threshold, miss
+    /// window, eviction protection, sweep and churn cadence, score decay.
+    pub fn peer_quality(mut self, config: PeerQualityConfig) -> Self {
+        self.peer_quality = config;
+        self
+    }
+
+    /// Enables background eviction of the worst non-pinned peers whenever the
+    /// managed connection count exceeds [`overlay_max_peers`](Self::overlay_max_peers).
+    ///
+    /// Disabled by default so existing setups keep their connection set;
+    /// quality metrics and send ranking are always collected, and only peers
+    /// with at least [`PeerQualityConfig::min_observations`] observations are
+    /// ever evicted.
+    pub fn quality_eviction(mut self, enabled: bool) -> Self {
+        self.quality_eviction = enabled;
         self
     }
 
@@ -455,6 +523,18 @@ impl MempoolScannerBuilder {
         let _ = self.queue_policy;
         let seeds = self.resolve_bootstrap().await?;
         let seed_count = seeds.len();
+        // Pinned peers are validated up front and merged into the bootstrap
+        // set below; they must not be silently dropped by a failed lookup.
+        let mut pinned = self.pinned_peers.clone();
+        if let Some(limit) = self.pinned_max_peers {
+            pinned.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        }
+        for peer in &pinned {
+            if !peer.is_valid() {
+                return Err(MempoolError::InvalidBootstrapAddress(peer.address.clone()));
+            }
+        }
+        let pinned_ids = pinned.iter().map(|peer| peer.peer).collect::<HashSet<_>>();
         // Hand the bootstrap seed set to the peer-growth lookup: explicit
         // seeds and the config's DHT static nodes are DHT nodes, so growth
         // resolves member `address` values through nodes that answer
@@ -507,6 +587,17 @@ impl MempoolScannerBuilder {
             discovery.discover(|| async { Vec::new() }).await
         };
         let discovered_count = peers.len().saturating_sub(seed_count);
+        // Merge the pinned set first: pinned sessions are attempted (and
+        // remembered) ahead of discovery results, deduplicated by peer id so a
+        // pinned address wins over a discovered one.
+        let mut merged = Vec::with_capacity(pinned.len() + peers.len());
+        let mut seen = HashSet::with_capacity(pinned.len() + peers.len());
+        for peer in pinned.iter().chain(peers.iter()) {
+            if seen.insert(peer.peer) {
+                merged.push(peer.clone());
+            }
+        }
+        let peers = merged;
         if peers.is_empty() {
             return Err(MempoolError::NoBootstrapPeers);
         }
@@ -519,16 +610,28 @@ impl MempoolScannerBuilder {
         );
         let manager = PeerManager::with_overlay(self.overlay, self.overlay_id)
             .map_err(|error| MempoolError::Overlay(error.to_string()))?;
-        let scanner = Arc::new(MempoolScanner::new(self.config)?);
+        let scanner = Arc::new(MempoolScanner::with_quality(
+            self.config,
+            self.peer_quality.clone(),
+        )?);
         if let Some(keypair) = self.local_keypair {
             scanner
-                .add_broadcast_peer(Arc::new(OverlayBroadcastPeer::new(
-                    Arc::new(manager.clone()),
-                    keypair,
-                )))
+                .add_broadcast_peer(Arc::new(
+                    OverlayBroadcastPeer::new(Arc::new(manager.clone()), keypair)
+                        .with_quality(scanner.quality()),
+                ))
                 .await;
             log::debug!("mempool broadcast: overlay-direct send path armed");
         }
+        // Quality metrics run in every scanner; the churn task only starts
+        // when eviction is explicitly enabled.
+        crate::peer_quality::spawn_quality_tasks(
+            scanner.quality(),
+            manager.clone(),
+            pinned_ids.clone(),
+            self.quality_eviction
+                .then_some(usize::try_from(self.overlay_max_peers).unwrap_or(usize::MAX)),
+        );
         scanner.record_discovery(DiscoveryStats {
             seeds: seed_count as u64,
             discovered: discovered_count as u64,
@@ -645,85 +748,20 @@ impl MempoolScannerBuilder {
                     manager.peer_count().await
                 );
             }
-            if let Some(growth) = self.peer_growth_lookup.clone()
-                && self.overlay_max_peers > 0
-            {
-                let manager = manager.clone();
-                let known = known_peers.clone();
-                let factory = factory.clone();
-                let reconnect = reconnect_factory.clone();
-                let attempts = self.reconnect_attempts;
-                let backoff = self.reconnect_backoff;
-                let max_peers = usize::try_from(self.overlay_max_peers).unwrap_or(usize::MAX);
-                let mut shutdown = manager.subscribe_shutdown();
-                tokio::spawn(async move {
-                    loop {
-                        tokio::select! {
-                            _ = shutdown.changed() => return,
-                            () = tokio::time::sleep(PEER_GROWTH_INTERVAL) => {}
-                        }
-                        if manager.peer_count().await >= max_peers {
-                            continue;
-                        }
-                        let seeds = known.read().await.clone();
-                        if seeds.is_empty() {
-                            continue;
-                        }
-                        // pytoniq parity: every round announces to as
-                        // many members as are needed to fill the pool
-                        // (`dif = max_peers - registered`), not to one.
-                        // Each lookup asks the next member in round-robin
-                        // order, so `dif` concurrent lookups announce to
-                        // `dif` distinct members - the fan-out that makes
-                        // transitive discovery compound.
-                        let dif = max_peers.saturating_sub(manager.peer_count().await).max(1);
-                        let rounds = dif.min(seeds.len());
-                        let results = join_all((0..rounds).map(|_| growth(seeds.clone()))).await;
-                        let candidates = results.into_iter().flatten().collect::<Vec<_>>();
-                        let mut added = 0usize;
-                        let mut discovered = Vec::new();
-                        for candidate in candidates {
-                            if manager.peer_count().await >= max_peers {
-                                break;
-                            }
-                            if known
-                                .read()
-                                .await
-                                .iter()
-                                .any(|seed| seed.peer == candidate.peer)
-                            {
-                                continue;
-                            }
-                            match factory(candidate.clone()).await {
-                                Ok(session) => {
-                                    manager
-                                        .add_session_with_reconnect(
-                                            session,
-                                            reconnect.clone(),
-                                            attempts,
-                                            backoff,
-                                        )
-                                        .await;
-                                    discovered.push(candidate);
-                                    added += 1;
-                                }
-                                Err(error) => log::debug!(
-                                    "peer growth: session to {} failed: {error}",
-                                    candidate.address
-                                ),
-                            }
-                        }
-                        if !discovered.is_empty() {
-                            known.write().await.extend(discovered);
-                        }
-                        if added > 0 {
-                            log::info!(
-                                "peer growth: added {added} session(s), registered_peers={}",
-                                manager.peer_count().await
-                            );
-                        }
-                    }
-                });
+            if let Some(growth) = self.peer_growth_lookup.clone() {
+                PeerGrowthTask {
+                    manager: manager.clone(),
+                    growth,
+                    known: known_peers.clone(),
+                    factory: factory.clone(),
+                    reconnect: reconnect_factory.clone(),
+                    attempts: self.reconnect_attempts,
+                    backoff: self.reconnect_backoff,
+                    max_peers: usize::try_from(self.overlay_max_peers).unwrap_or(usize::MAX),
+                    pinned: pinned_ids.clone(),
+                    event_tx: scanner.event_tx.clone(),
+                }
+                .spawn();
             }
             if let Some(publish) = self.address_publisher.clone() {
                 let manager = manager.clone();
