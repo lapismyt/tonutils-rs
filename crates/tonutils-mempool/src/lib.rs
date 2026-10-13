@@ -1,9 +1,11 @@
 //! Low-latency pending external-message scanner primitives.
 //!
-//! The fast path validates the outer BoC envelope, hashes the shared raw
-//! bytes, performs bounded deduplication, and publishes an event. Full TL-B
-//! decoding, storage, and LiteServer inclusion queries are intentionally left
-//! to consumers or a future slow-path worker.
+//! The fast path checks the outer BoC envelope bounds, hashes the shared raw
+//! bytes, and short-circuits already-seen messages through age-aware
+//! deduplication *before* any full TL-B decode: a flood repeats the same
+//! broadcast from every peer, so only genuinely new messages pay the parse.
+//! Storage and LiteServer inclusion queries are intentionally left to
+//! consumers or a future slow-path worker.
 
 use futures::future::{BoxFuture, join_all};
 use futures::stream::{self, Stream};
@@ -245,12 +247,45 @@ pub struct ScannerIdentity {
     pub public_key: [u8; 32],
 }
 
+/// One dedup shard: seen timestamps plus the purge clock, guarded by a
+/// single lock so an amortized purge can never race a lookup.
+struct DedupShard {
+    entries: HashMap<MessageHash, Instant>,
+    last_purge: Instant,
+}
+
+impl DedupShard {
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            last_purge: Instant::now(),
+        }
+    }
+
+    /// Drops entries older than `ttl` and returns how many went stale,
+    /// scanning at most once per TTL window.
+    ///
+    /// The scan is amortized across messages: a hot shard otherwise walks
+    /// its whole map on every ingest. Lookups stay age-aware, so an entry
+    /// lingering between purges never suppresses a re-accept.
+    fn purge(&mut self, now: Instant, ttl: Duration) -> u64 {
+        if now.duration_since(self.last_purge) < ttl {
+            return 0;
+        }
+        self.last_purge = now;
+        let before = self.entries.len();
+        self.entries
+            .retain(|_, seen| now.duration_since(*seen) < ttl);
+        (before - self.entries.len()) as u64
+    }
+}
+
 /// A bounded, deduplicating scanner.
 pub struct MempoolScanner {
     config: MempoolConfig,
     event_tx: mpsc::Sender<MempoolEvent>,
     event_rx: Arc<Mutex<mpsc::Receiver<MempoolEvent>>>,
-    dedup: Arc<Vec<Mutex<HashMap<MessageHash, Instant>>>>,
+    dedup: Arc<Vec<Mutex<DedupShard>>>,
     dedup_capacity: Mutex<()>,
     dedup_entries: AtomicU64,
     broadcast_peers: Arc<Mutex<Vec<Arc<dyn BroadcastPeer>>>>,
@@ -292,7 +327,7 @@ impl MempoolScanner {
         }
         let (event_tx, event_rx) = mpsc::channel(config.event_queue_capacity);
         let dedup = (0..config.dedup_shards)
-            .map(|_| Mutex::new(HashMap::new()))
+            .map(|_| Mutex::new(DedupShard::new()))
             .collect();
         Ok(Self {
             config,
@@ -472,13 +507,18 @@ impl MempoolScanner {
             while let Some(OverlayPacket { payload, routing }) = pool.next_packet().await {
                 self.overlay_packets.fetch_add(1, Ordering::Relaxed);
                 let pkt_size = payload.len();
-                let pkt_prefix = hex::encode(&payload[..pkt_size.min(8)]);
+                // Stack-only prefix: no per-packet allocation, hex only if
+                // the packet is actually rejected.
+                let prefix_len = pkt_size.min(8);
+                let mut pkt_prefix = [0u8; 8];
+                pkt_prefix[..prefix_len].copy_from_slice(&payload[..prefix_len]);
                 match self.ingest(payload, routing).await {
                     Ok(_) => {}
                     Err(MempoolError::QueueClosed) => break,
                     Err(error) => {
                         log::warn!(
-                            "dropping invalid overlay packet: size={pkt_size} first_bytes={pkt_prefix} error={error}",
+                            "dropping invalid overlay packet: size={pkt_size} first_bytes={} error={error}",
+                            hex::encode(&pkt_prefix[..prefix_len]),
                         );
                         self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
                     }
@@ -500,13 +540,18 @@ impl MempoolScanner {
                         let Some(OverlayPacket { payload, routing }) = packet else { break; };
                         self.overlay_packets.fetch_add(1, Ordering::Relaxed);
                         let pkt_size = payload.len();
-                        let pkt_prefix = hex::encode(&payload[..pkt_size.min(8)]);
+                        // Stack-only prefix: no per-packet allocation, hex
+                        // only if the packet is actually rejected.
+                        let prefix_len = pkt_size.min(8);
+                        let mut pkt_prefix = [0u8; 8];
+                        pkt_prefix[..prefix_len].copy_from_slice(&payload[..prefix_len]);
                         match self.ingest(payload, routing).await {
                             Ok(_) => {}
                             Err(MempoolError::QueueClosed) => break,
                             Err(error) => {
                                 log::warn!(
-                                    "dropping invalid overlay packet: size={pkt_size} first_bytes={pkt_prefix} error={error}",
+                                    "dropping invalid overlay packet: size={pkt_size} first_bytes={} error={error}",
+                                    hex::encode(&pkt_prefix[..prefix_len]),
                                 );
                                 self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
                             }
@@ -522,6 +567,24 @@ impl MempoolScanner {
         raw_boc: Arc<[u8]>,
         routing: RoutingMetadata,
     ) -> Result<Option<MessageHash>, MempoolError> {
+        if let Err(error) = check_envelope_header(&raw_boc, &self.config) {
+            self.rejected.fetch_add(1, Ordering::Relaxed);
+            return Err(error);
+        }
+        let hash: MessageHash = Sha256::digest(&raw_boc).into();
+        let shard_index = usize::from(hash[0]) % self.dedup.len();
+        let now = Instant::now();
+        // Fast path: a flood repeats the same broadcast from every peer, so
+        // an age-aware lookup returns duplicates before the BoC parse they
+        // used to pay for.
+        {
+            let mut shard = self.dedup[shard_index].lock().await;
+            if self.dedup_duplicate(&mut shard, &hash, routing.peer, now) {
+                return Ok(None);
+            }
+        }
+        // Full validation only for genuinely new messages, outside the
+        // dedup locks so the parse never serializes concurrent ingest.
         let destination = match validate_envelope(&raw_boc, &self.config) {
             Ok(destination) => destination,
             Err(error) => {
@@ -529,41 +592,29 @@ impl MempoolScanner {
                 return Err(error);
             }
         };
-        let hash: MessageHash = Sha256::digest(&raw_boc).into();
-        let shard = usize::from(hash[0]) % self.dedup.len();
-        let now = Instant::now();
         {
             let _capacity_guard = self.dedup_capacity.lock().await;
-            let mut dedup = self.dedup[shard].lock().await;
-            let expired = dedup
-                .iter()
-                .filter(|(_, seen)| now.duration_since(**seen) >= self.config.dedup_ttl)
-                .count();
-            dedup.retain(|_, seen| now.duration_since(*seen) < self.config.dedup_ttl);
-            if expired != 0 {
-                self.dedup_entries
-                    .fetch_sub(expired as u64, Ordering::Relaxed);
+            let mut shard = self.dedup[shard_index].lock().await;
+            let expired = shard.purge(now, self.config.dedup_ttl);
+            if expired > 0 {
+                self.dedup_entries.fetch_sub(expired, Ordering::Relaxed);
             }
-            if dedup.contains_key(&hash) {
-                self.duplicates.fetch_add(1, Ordering::Relaxed);
-                self.quality
-                    .record_duplicate_delivery(hash, routing.peer, now);
+            // Re-check: a concurrent ingest of the same hash may have won
+            // while this copy was being validated.
+            if self.dedup_duplicate(&mut shard, &hash, routing.peer, now) {
                 return Ok(None);
             }
             if self.dedup_entries.load(Ordering::Relaxed) >= self.config.max_dedup_entries as u64
-                && dedup.is_empty()
+                && shard.entries.is_empty()
             {
-                drop(dedup);
+                drop(shard);
                 self.evict_oldest().await;
-                dedup = self.dedup[shard].lock().await;
-                if dedup.contains_key(&hash) {
-                    self.duplicates.fetch_add(1, Ordering::Relaxed);
-                    self.quality
-                        .record_duplicate_delivery(hash, routing.peer, now);
+                shard = self.dedup[shard_index].lock().await;
+                if self.dedup_duplicate(&mut shard, &hash, routing.peer, now) {
                     return Ok(None);
                 }
             }
-            dedup.insert(hash, now);
+            shard.entries.insert(hash, now);
             self.dedup_entries.fetch_add(1, Ordering::Relaxed);
             // Recorded before the shard lock is released so a concurrent
             // duplicate of the same hash always finds an open window and is
@@ -584,11 +635,38 @@ impl MempoolScanner {
         Ok(Some(hash))
     }
 
+    /// Returns `true` when `hash` is already deduplicated at `now`.
+    ///
+    /// A fresh entry counts as a duplicate. A stale one - lingering inside
+    /// the purge window between amortized scans - is removed here so the
+    /// caller treats the copy as a genuinely new message again, which keeps
+    /// `dedup_ttl` semantics independent of purge frequency.
+    fn dedup_duplicate(
+        &self,
+        shard: &mut DedupShard,
+        hash: &MessageHash,
+        peer: PeerId,
+        now: Instant,
+    ) -> bool {
+        let Some(seen) = shard.entries.get(hash).copied() else {
+            return false;
+        };
+        if now.duration_since(seen) < self.config.dedup_ttl {
+            self.duplicates.fetch_add(1, Ordering::Relaxed);
+            self.quality.record_duplicate_delivery(*hash, peer, now);
+            return true;
+        }
+        if shard.entries.remove(hash).is_some() {
+            self.dedup_entries.fetch_sub(1, Ordering::Relaxed);
+        }
+        false
+    }
+
     async fn evict_oldest(&self) {
         let mut candidates: Vec<([u8; 32], usize, Instant)> = Vec::new();
         for (index, shard) in self.dedup.iter().enumerate() {
             let dedup = shard.lock().await;
-            for (hash, seen) in dedup.iter() {
+            for (hash, seen) in &dedup.entries {
                 candidates.push((*hash, index, *seen));
             }
         }
@@ -596,7 +674,13 @@ impl MempoolScanner {
         candidates.sort_by_key(|(_, _, seen)| *seen);
         let mut removed = 0u64;
         for (hash, index, _) in candidates.into_iter().take(evict_count) {
-            if self.dedup[index].lock().await.remove(&hash).is_some() {
+            if self.dedup[index]
+                .lock()
+                .await
+                .entries
+                .remove(&hash)
+                .is_some()
+            {
                 removed += 1;
             }
         }
@@ -628,10 +712,11 @@ pub(crate) fn unwrap_external_message_payload(payload: Vec<u8>) -> Vec<u8> {
     }
 }
 
-fn validate_envelope(
-    raw_boc: &[u8],
-    config: &MempoolConfig,
-) -> Result<Option<[u8; 32]>, MempoolError> {
+/// Cheap outer envelope checks: size bounds and the BoC magic.
+///
+/// Runs before hashing so truncated, oversized, or non-BoC datagrams never
+/// reach the SHA-256 or dedup work.
+fn check_envelope_header(raw_boc: &[u8], config: &MempoolConfig) -> Result<(), MempoolError> {
     if raw_boc.len() < 4 {
         return Err(MempoolError::InvalidEnvelope);
     }
@@ -641,6 +726,20 @@ fn validate_envelope(
     if config.require_boc_magic && raw_boc[..4] != [0xb5, 0xee, 0x9c, 0x72] {
         return Err(MempoolError::InvalidBoc);
     }
+    Ok(())
+}
+
+/// Full accept/reject validation: the envelope header checks plus, when
+/// [`MempoolConfig::validate_message`] is enabled, the TL-B decode that
+/// extracts the destination address.
+///
+/// [`MempoolScanner::accept_fast`] calls this only for messages the dedup
+/// fast path has not seen; duplicates return before paying the BoC parse.
+fn validate_envelope(
+    raw_boc: &[u8],
+    config: &MempoolConfig,
+) -> Result<Option<[u8; 32]>, MempoolError> {
+    check_envelope_header(raw_boc, config)?;
     if config.validate_message {
         let cell = tonutils_tvm::deserialize_boc(raw_boc).map_err(|_| MempoolError::InvalidBoc)?;
         let message: tonutils_tlb::Message = tonutils_tlb::TlbDeserialize::from_cell(cell)

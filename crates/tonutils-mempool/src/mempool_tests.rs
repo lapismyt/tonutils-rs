@@ -269,6 +269,39 @@ async fn concurrent_ingest_publishes_one_copy() {
 }
 
 #[tokio::test]
+async fn amortized_purge_expires_stale_entries_exactly() {
+    let scanner = MempoolScanner::new(MempoolConfig {
+        dedup_shards: 1,
+        dedup_ttl: Duration::from_millis(5),
+        validate_message: false,
+        ..MempoolConfig::default()
+    })
+    .unwrap();
+    let routing = RoutingMetadata::new(OverlayId::from_name(b"test"), PeerId::from_bytes([1; 32]));
+    assert!(
+        scanner
+            .ingest(boc(1), routing.clone())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        scanner
+            .ingest(boc(2), routing.clone())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(scanner.dedup_entries.load(Ordering::Relaxed), 2);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    // The next new message runs the amortized purge before inserting, so
+    // both stale entries drop while the fresh one stays accounted exactly.
+    assert!(scanner.ingest(boc(3), routing).await.unwrap().is_some());
+    assert_eq!(scanner.dedup_entries.load(Ordering::Relaxed), 1);
+    assert_eq!(scanner.metrics().duplicates, 0);
+}
+
+#[tokio::test]
 async fn overlay_receiver_stops_with_manager_shutdown() {
     let scanner = Arc::new(MempoolScanner::new(config()).unwrap());
     let manager = PeerManager::new(OverlayConfig::default()).unwrap();

@@ -563,6 +563,13 @@ postponed work moves to `# BACKLOG`.
 - [ ] Add storage daemon protocol support #storage
 - [ ] Add validator engine control API support #validator
 - [ ] Revisit pure Rust emulator and local LiteServer capabilities as an independent backlog item when their scope and protocol evidence are clear #emulator #liteserver #network #docs
+- [ ] Drop raw datagrams instead of awaiting a full session queue in the ADNL UDP demultiplexer, removing head-of-line blocking of the shared socket #perf #network
+- [ ] Raise UDP socket send and receive buffer sizes for high packet rates #perf #network
+- [ ] Shard mempool ingest across parallel workers for very high message rates #perf
+- [ ] Replace linear replay and sequence deque scans in the ADNL UDP receive path with set lookups #perf #network
+- [ ] Move FEC reassembly decode off the overlay session receive loop #perf #network
+- [ ] Warm-start mempool bootstrap from a cached global config and pinned peers #perf #network
+- [ ] Wait for a small connected-peer quorum before the first broadcast in the send example #perf
 
 # DONE
 

@@ -5,7 +5,7 @@
 //! out to every session in parallel, ranked by delivery quality.
 //!
 //! ```text
-//! cargo run --example mempool_send_v5r1 -- \
+//! cargo run --release --example mempool_send_v5r1 -- \
 //!     "<24-word mnemonic phrase>" 0:<dest_address_hex> 1000000 0
 //! ```
 //!

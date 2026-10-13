@@ -7,7 +7,7 @@ LiteServer block/indexing queries.
 ## Events and lifetime
 
 - `ExternalMessage` means **Seen**: the envelope passed the configured fast
-  checks and its SHA-256 hash was not observed in the scanner lifetime.
+  checks and its SHA-256 hash was not observed within `dedup_ttl`.
 - `Included` remains a compatibility helper for callers that already perform
   correlation; inclusion tracking is not part of the scanner startup path.
 - `PeerStatus` reports transport lifecycle only.
@@ -16,20 +16,37 @@ LiteServer block/indexing queries.
 
 The raw BoC is held in `Arc<[u8]>`, so event consumers and broadcast peers can
 share ownership without copying the payload. The bounded event queue provides
-backpressure. Deduplication is sharded by the first hash byte and evicted by
-the configured TTL and bounded shard capacity. `MempoolMetrics` exposes
-accepted, duplicate, rejected, broadcast-failure, and rate-limited
-invalid-warning counters.
+backpressure. Deduplication is sharded by the first hash byte, purged by the
+configured TTL (amortized to at most one scan per TTL per shard), and bounded
+by shard capacity. `MempoolMetrics` exposes accepted, duplicate, rejected,
+broadcast-failure, and rate-limited invalid-warning counters.
 
 ## Fast and slow paths
 
-The fast path checks size, minimum envelope length, and (by default) the BoC
-magic `b5ee9c72`, validates an external `Message` by default, hashes the raw
-bytes, inserts the hash into a shard, and publishes immediately.
-`MempoolConfig::validate_message` can be disabled only for structural/raw
-transport tests. `LazyExternalMessage` decodes the stored BoC through
-`tonutils-tvm` and `tonutils-tlb` on demand. Consumers can persist
-observations, query LiteServer, and call `mark_included` independently.
+The fast path runs in three steps:
+
+1. Cheap envelope checks - size, minimum length, and (by default) the BoC
+   magic `b5ee9c72` - reject garbage before any hashing.
+2. The raw bytes are hashed and looked up in the age-aware dedup shard
+   (sharded by the first hash byte). A hash seen within `dedup_ttl` is a
+   duplicate and returns immediately - the common case in a flood, where
+   every peer relays the same broadcast - without the TL-B parse it used
+   to pay for.
+3. Only genuinely new messages are fully validated. With the default
+   `MempoolConfig::validate_message`, the external `Message` decode runs
+   outside the dedup locks, so a parse never serializes concurrent ingest;
+   a re-check under the lock resolves races between concurrent copies of
+   the same hash.
+
+Purging expired shard entries is amortized: each shard scans at most once
+per `dedup_ttl` instead of on every message, while the age-aware lookup
+guarantees an entry lingering between purges never suppresses a re-accept.
+Garbage never reaches the dedup map, so invalid payloads are re-rejected on
+every arrival. `MempoolConfig::validate_message` can be disabled only for
+structural/raw transport tests. `LazyExternalMessage` decodes the stored
+BoC through `tonutils-tvm` and `tonutils-tlb` on demand. Consumers can
+persist observations, query LiteServer, and call `mark_included`
+independently.
 
 ## Bootstrap and startup
 

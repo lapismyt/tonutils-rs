@@ -95,3 +95,54 @@ async fn rejects_a_valid_boc_that_is_not_an_external_message() {
         Err(MempoolError::InvalidMessage)
     );
 }
+
+#[tokio::test]
+async fn rejects_invalid_boc_without_caching_it() {
+    let scanner = MempoolScanner::new(MempoolConfig::default()).unwrap();
+    let bad = vec![1, 2, 3, 4];
+    assert_eq!(
+        scanner.ingest(bad.clone(), routing()).await,
+        Err(MempoolError::InvalidBoc)
+    );
+    assert_eq!(
+        scanner.ingest(bad, routing()).await,
+        Err(MempoolError::InvalidBoc)
+    );
+    // Garbage never reaches the dedup map, so every copy is re-rejected
+    // instead of being remembered as a duplicate.
+    assert_eq!(scanner.metrics().rejected, 2);
+    assert_eq!(scanner.metrics().duplicates, 0);
+    assert_eq!(scanner.metrics().accepted, 0);
+}
+
+#[tokio::test]
+async fn reaccepts_the_same_boc_after_dedup_ttl() {
+    let scanner = MempoolScanner::new(MempoolConfig {
+        dedup_ttl: Duration::from_millis(5),
+        ..MempoolConfig::default()
+    })
+    .unwrap();
+    let raw = external_boc(0xfeed_beef);
+    assert!(
+        scanner
+            .ingest(raw.clone(), routing())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    // A fresh duplicate returns before the full TL-B decode.
+    assert!(
+        scanner
+            .ingest(raw.clone(), routing())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    // Past the TTL the copy is accepted again: the dedup lookup is
+    // age-aware, independent of when the amortized purge last ran.
+    assert!(scanner.ingest(raw, routing()).await.unwrap().is_some());
+    assert_eq!(scanner.metrics().accepted, 2);
+    assert_eq!(scanner.metrics().duplicates, 1);
+    assert_eq!(scanner.metrics().rejected, 0);
+}
