@@ -23,6 +23,7 @@ use tonutils_overlay::{
     SeedPeer,
 };
 use tonutils_overlay::{DiscoveryLookup, TypedDiscoveryLookup};
+mod broadcast;
 mod builder;
 mod endpoints;
 mod overlay_inbound;
@@ -30,6 +31,11 @@ mod protocol_stats;
 mod quic_session;
 mod udp_session;
 
+pub use broadcast::{
+    ExternalMessageBroadcast, FEC_SYMBOL_SIZE, FecBroadcastPart, OverlayBroadcastPeer,
+    SIMPLE_BROADCAST_MAX, external_message_broadcast, external_message_wrapper,
+    fec_broadcast_parts, signed_simple_broadcast,
+};
 pub use builder::{MempoolScannerBuilder, OverlaySessionFactory};
 pub use endpoints::{
     MemberEndpoint, OverlayMemberEndpoints, QuicEndpointSource, known_member_seeds,

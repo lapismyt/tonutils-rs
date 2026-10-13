@@ -50,6 +50,9 @@ pub struct MempoolScannerBuilder {
     overlay_max_peers: u32,
     external_address: Option<std::net::SocketAddr>,
     address_publisher: Option<DhtAddressPublisher>,
+    /// Local ADNL key, remembered by the transport configurators
+    /// so `start` can sign overlay broadcasts with it.
+    local_keypair: Option<KeyPair>,
 }
 
 impl fmt::Debug for MempoolScannerBuilder {
@@ -90,6 +93,7 @@ impl fmt::Debug for MempoolScannerBuilder {
             .field("overlay_max_peers", &self.overlay_max_peers)
             .field("external_address", &self.external_address)
             .field("address_publisher", &self.address_publisher.is_some())
+            .field("local_keypair", &self.local_keypair.is_some())
             .finish()
     }
 }
@@ -122,6 +126,7 @@ impl Default for MempoolScannerBuilder {
             overlay_max_peers: 30,
             external_address: None,
             address_publisher: None,
+            local_keypair: None,
         }
     }
 }
@@ -232,6 +237,9 @@ impl MempoolScannerBuilder {
             self.member_endpoints.clone(),
         );
         let mut builder = self.session_factory(session_factory);
+        // The transport configurators remember the local key so
+        // `start` can sign overlay broadcasts with it.
+        builder.local_keypair = Some(local_keypair);
         // Cloned before the call below moves `builder` into its receiver.
         let member_endpoints = builder.member_endpoints.clone();
         builder = match builder.dht_overlay_key {
@@ -299,7 +307,8 @@ impl MempoolScannerBuilder {
             overlay,
             endpoints.clone(),
         );
-        let builder = self.session_factory(session_factory);
+        let mut builder = self.session_factory(session_factory);
+        builder.local_keypair = Some(local_keypair);
         match builder.dht_overlay_key {
             Some(overlay_key) => builder.seed_discovery_lookup(quic_overlay_lookup_with_endpoints(
                 local_addr,
@@ -337,6 +346,7 @@ impl MempoolScannerBuilder {
             self.member_endpoints.clone(),
         );
         let mut builder = self.session_factory(session_factory);
+        builder.local_keypair = Some(local_keypair);
         // Explicit seeds are still DHT nodes, so publishing here lets the
         // seeds resolve this node's address back, same as on the full
         // native UDP path.
@@ -510,6 +520,15 @@ impl MempoolScannerBuilder {
         let manager = PeerManager::with_overlay(self.overlay, self.overlay_id)
             .map_err(|error| MempoolError::Overlay(error.to_string()))?;
         let scanner = Arc::new(MempoolScanner::new(self.config)?);
+        if let Some(keypair) = self.local_keypair {
+            scanner
+                .add_broadcast_peer(Arc::new(OverlayBroadcastPeer::new(
+                    Arc::new(manager.clone()),
+                    keypair,
+                )))
+                .await;
+            log::debug!("mempool broadcast: overlay-direct send path armed");
+        }
         scanner.record_discovery(DiscoveryStats {
             seeds: seed_count as u64,
             discovered: discovered_count as u64,

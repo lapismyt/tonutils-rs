@@ -1,10 +1,8 @@
 use super::*;
+use crate::broadcast::{external_message_wrapper, fec_broadcast_parts, signed_simple_broadcast};
 use raptorq::Encoder;
 use tonutils_adnl::KeyPair;
-use tonutils_tl::tl::network::{
-    OverlayBroadcastToSign, TonNodeExternalMessage, TonNodeExternalMessageBroadcast,
-};
-use tonutils_tl::tl::overlay::OverlayBroadcastId;
+use tonutils_tl::tl::network::{TonNodeExternalMessage, TonNodeExternalMessageBroadcast};
 
 #[tokio::test]
 async fn reassembles_single_source_raptorq_external_message() {
@@ -330,56 +328,6 @@ async fn broadcast_test_adapter() -> AdnlUdpOverlaySession {
     }
 }
 
-/// Wraps a raw external message BoC the way upstream
-/// `FullNodeShardImpl::send_external_message` does before it hands the bytes
-/// to `BroadcastSimple` (`validator/full-node-shard.cpp`).
-fn external_message_wrapper(raw_boc: &[u8]) -> Vec<u8> {
-    tl_proto::serialize(TonNodeExternalMessageBroadcast {
-        message: TonNodeExternalMessage {
-            data: raw_boc.to_vec(),
-        },
-    })
-}
-
-/// Signs `data` as a simple broadcast the way `BroadcastSimple::create` does:
-/// the signature covers `overlay.broadcast.toSign{sha256(overlay.broadcast.id{
-/// src, sha256(data), flags}), date}` with `src` zeroed under AnySender
-/// (`overlay/broadcast-simple.cpp`).
-fn upstream_signed_broadcast(
-    signing_key: &KeyPair,
-    data: Vec<u8>,
-    flags: i32,
-    date: i32,
-) -> Vec<u8> {
-    let public_key = signing_key.public_key.to_bytes();
-    let src = if flags & 1 != 0 {
-        tonutils_tl::Int256([0u8; 32])
-    } else {
-        let mut boxed = 0x4813b4c6u32.to_le_bytes().to_vec();
-        boxed.extend_from_slice(&public_key);
-        tonutils_tl::Int256(Sha256::digest(boxed).into())
-    };
-    let broadcast_id = tl_proto::serialize(OverlayBroadcastId {
-        src,
-        data_hash: tonutils_tl::Int256(Sha256::digest(&data).into()),
-        flags,
-    });
-    let signature = signing_key.sign_raw(&tl_proto::serialize(OverlayBroadcastToSign {
-        hash: tonutils_tl::Int256(Sha256::digest(broadcast_id).into()),
-        date,
-    }));
-    tl_proto::serialize(OverlayBroadcast::Broadcast {
-        src: TlPublicKey::Ed25519 {
-            key: tonutils_tl::Int256(public_key),
-        },
-        certificate: tonutils_tl::tl::network::OverlayCertificate::Empty,
-        flags,
-        data,
-        date,
-        signature: signature.to_vec(),
-    })
-}
-
 /// A signed simple broadcast delivers the raw BoC nested inside the
 /// `tonNode.externalMessageBroadcast` wrapper, which is the only shape
 /// upstream and pytoniq broadcast externals in.
@@ -387,7 +335,7 @@ fn upstream_signed_broadcast(
 async fn unwraps_external_message_broadcast_from_signed_simple_broadcast() {
     let mut adapter = broadcast_test_adapter().await;
     let raw_boc = vec![0xb5, 0xee, 0x9c, 0x72, 4, 4, 4];
-    let payload = upstream_signed_broadcast(
+    let payload = signed_simple_broadcast(
         &KeyPair::generate(&mut rand::rngs::OsRng),
         external_message_wrapper(&raw_boc),
         0,
@@ -406,11 +354,105 @@ async fn unwraps_external_message_broadcast_from_signed_simple_broadcast() {
 async fn passes_through_signed_broadcast_payload_that_is_already_a_boc() {
     let mut adapter = broadcast_test_adapter().await;
     let raw_boc = vec![0xb5, 0xee, 0x9c, 0x72, 5, 5, 5];
-    let payload = upstream_signed_broadcast(
+    let payload = signed_simple_broadcast(
         &KeyPair::generate(&mut rand::rngs::OsRng),
         raw_boc.clone(),
         1,
         now_i32(),
     );
     assert_eq!(adapter.unwrap_overlay_payload(&payload).unwrap(), raw_boc);
+}
+
+/// The signed FEC parts `fec_broadcast_parts` produces - raw RaptorQ
+/// symbol bytes in `data` and the symbol id in `seqno`, the wire format
+/// upstream's `BroadcastsFec::process_broadcast` decodes - reassemble
+/// through the session's FEC receive path back to the bare external
+/// message BoC.
+#[tokio::test]
+async fn reassembles_upstream_format_fec_external_message() {
+    let mut adapter = broadcast_test_adapter().await;
+    let keypair = KeyPair::generate(&mut rand::rngs::OsRng);
+    let mut raw_boc = vec![0xb5, 0xee, 0x9c, 0x72];
+    raw_boc.resize(1000, 0x0a);
+    let wrapper = external_message_wrapper(&raw_boc);
+    let parts = fec_broadcast_parts(&keypair, &wrapper, 0, now_i32());
+    let total = parts.len();
+    assert!(total > 1, "the wrapper must span several symbols");
+    for part in parts {
+        let payload = adapter.unwrap_overlay_payload(&part.object);
+        if part.seqno + 1 == total as i32 {
+            assert_eq!(payload.unwrap(), raw_boc);
+        } else {
+            assert!(
+                payload.is_err(),
+                "an incomplete FEC payload must not unwrap"
+            );
+        }
+    }
+}
+
+/// A raw-object send reaches the peer's overlay receive path and unwraps
+/// to the bare external message BoC - the framing `OverlayBroadcastPeer`
+/// relies on for mempool publication.
+#[tokio::test]
+async fn send_object_delivers_signed_broadcast_to_peer() {
+    let sender_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let receiver_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let sender_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let receiver_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let overlay = OverlayId::from_name(b"loopback-overlay");
+    let sender_session = AdnlUdpSession::connect(
+        sender_addr,
+        receiver_addr,
+        sender_key,
+        receiver_key.public_key,
+    )
+    .await
+    .unwrap();
+    let receiver_session = AdnlUdpSession::connect(
+        receiver_addr,
+        sender_addr,
+        receiver_key,
+        sender_key.public_key,
+    )
+    .await
+    .unwrap();
+    let session = |peer_key, session| AdnlUdpOverlaySession {
+        peer: PeerId::from_bytes(peer_key),
+        session,
+        overlay: Some(overlay),
+        fec: HashMap::new(),
+        last_keepalive: Instant::now(),
+        last_activity: Instant::now(),
+        members: OverlayMemberCache::default(),
+        endpoints: crate::OverlayMemberEndpoints::default(),
+    };
+    let mut sender = session(receiver_key.public_key.to_bytes(), sender_session);
+    let mut receiver = session(sender_key.public_key.to_bytes(), receiver_session);
+
+    let raw_boc = vec![0xb5, 0xee, 0x9c, 0x72, 9, 9, 9];
+    let broadcast = signed_simple_broadcast(
+        &sender_key,
+        external_message_wrapper(&raw_boc),
+        0,
+        now_i32(),
+    );
+    sender.send_object(Arc::from(broadcast)).await.unwrap();
+    let delivered = tokio::time::timeout(Duration::from_secs(5), receiver.receive())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        delivered.as_ref(),
+        raw_boc.as_slice(),
+        "the peer must receive the bare external message BoC"
+    );
 }

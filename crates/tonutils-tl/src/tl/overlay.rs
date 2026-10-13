@@ -284,6 +284,57 @@ pub struct OverlayBroadcastToSign {
     pub date: i32,
 }
 
+/// overlay.broadcastFec.id src:int256 type:int256 data_hash:int256 size:int flags:int = overlay.broadcastFec.Id;
+///
+/// Identity hash of a FEC broadcast.  Unlike the simple
+/// broadcast id, the FEC id folds in the hash of the serialized
+/// `fec.Type` and the full data size, so the same payload
+/// encoded with different FEC parameters produces different
+/// broadcast ids (`compute_broadcast_id` in
+/// `overlay/broadcast-fec.cpp`).
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(
+    boxed,
+    id = 0xfb3155a6,
+    scheme_inline = r##"overlay.broadcastFec.id src:int256 type:int256 data_hash:int256 size:int flags:int = overlay.broadcastFec.Id;"##
+)]
+pub struct OverlayBroadcastFecId {
+    /// `src` in the schema; the sender's public key hash,
+    /// zeroed under the AnySender flag.
+    pub src: Int256,
+    /// `type` in the schema; `sha256` of the serialized
+    /// boxed `fec.Type`.
+    pub fec_type_hash: Int256,
+    pub data_hash: Int256,
+    pub size: i32,
+    pub flags: i32,
+}
+
+/// overlay.broadcastFec.partId broadcast_hash:int256 data_hash:int256 seqno:int = overlay.broadcastFec.PartId;
+///
+/// Identity hash of one FEC part.  `data_hash` here is the
+/// hash of the part's own symbol bytes, and `broadcast_hash`
+/// is a serialized [`OverlayBroadcastFecId`].  Upstream signs
+/// the `overlay.broadcast.toSign` object built from this part
+/// id, so every symbol of a FEC broadcast carries its own
+/// signature (`compute_broadcast_part_id` and
+/// `BroadcastFecPart::to_sign` in `overlay/broadcast-fec.cpp`).
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+#[tl(
+    boxed,
+    id = 0xa46962d0,
+    scheme_inline = r##"overlay.broadcastFec.partId broadcast_hash:int256 data_hash:int256 seqno:int = overlay.broadcastFec.PartId;"##
+)]
+pub struct OverlayBroadcastFecPartId {
+    pub broadcast_hash: Int256,
+    /// `data_hash` in the schema; `sha256` of this part's
+    /// symbol bytes.
+    pub part_data_hash: Int256,
+    pub seqno: i32,
+}
+
 /// overlay.pong = overlay.Pong;
 ///
 /// The empty answer to [`OverlayQuery::Ping`]; peers that reach this node

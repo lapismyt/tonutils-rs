@@ -222,6 +222,16 @@ impl QuicServer {
         })
     }
 
+    /// Returns the address the server is listening on.
+    ///
+    /// Required to discover the bound port when `bind` was
+    /// given a zero port.
+    pub fn local_addr(&self) -> Result<SocketAddr, AdnlError> {
+        self.endpoint
+            .local_addr()
+            .map_err(|e| AdnlError::TlsConfig(e.to_string()))
+    }
+
     /// Accepts the next incoming QUIC connection.
     ///
     /// Returns the connection and the SNI the peer sent, if any. A peer

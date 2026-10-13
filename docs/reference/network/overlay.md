@@ -25,6 +25,51 @@ multi-producer channel. Consumers can keep a persistent receive loop separate
 from application callbacks. `RoutingMetadata` records overlay, peer, receive
 time, and hop count without decoding the payload.
 
+## Publishing external messages
+
+`MempoolScanner::send_external` publishes a raw external message BoC
+straight onto the overlay every session is connected to.
+`MempoolScannerBuilder::start` wires an `OverlayBroadcastPeer` signed with
+the builder's local ADNL key, so `native_udp`/`native_quic` is all the
+setup the send path needs.
+
+The wire construction matches upstream
+`FullNodeShardImpl::send_external_message`
+(`validator/full-node-shard.cpp`): the BoC is wrapped in a serialized
+`tonNode.externalMessageBroadcast` (`0x3d1b1867`), and the wrapper is
+broadcast as
+
+- a signed simple broadcast (`overlay.broadcast`, `0xb15a2b6b`) when the
+  wrapper fits `Overlays::max_simple_broadcast_size()` (768 bytes) - one
+  datagram per peer, signature over
+  `overlay.broadcast.toSign{sha256(overlay.broadcast.id{src, sha256(data),
+  flags}), date}` (`BroadcastSimple::create`), or
+- signed RaptorQ source symbols (`overlay.broadcastFec`, `0xbad7c36a`) for
+  everything larger: 768-byte symbols (upstream
+  `BroadcastFecActor::symbol_size_`), the raw symbol bytes in `data` and
+  the symbol id in `seqno` - the wire format `BroadcastsFec::process_broadcast`
+  (`overlay/broadcast-fec.cpp`) decodes - each part signed over
+  `overlay.broadcast.toSign{sha256(overlay.broadcastFec.partId{sha256(
+  overlay.broadcastFec.id{src, sha256(fec.Type), data_hash, size, flags}),
+  sha256(symbol), seqno}), date}` (`BroadcastsFec::send_part`).
+
+Both paths propagate: upstream receivers verify the signature and re-send
+the broadcast to their neighbours, so a published message spreads without
+sender-side retry. The signed object is serialized once and the identical
+bytes are fanned out to all UDP and QUIC sessions in parallel
+(`PeerManager::broadcast_object`), which sends the raw object after the
+`overlay.message` header. Overlay broadcasts must ride as raw objects:
+upstream's `OverlayImpl::receive_message` dispatches on the object
+constructor, so the `overlay.unicast` wrapper that `OverlaySession::send`
+adds would deliver broadcast bytes to the plain-message callback instead
+of the broadcast machinery.
+
+Upstream paces FEC symbol emission (four symbols per 10 ms tick); this
+implementation returns every source symbol at once, so the whole fan-out
+leaves the node in a single round of datagrams. Receivers reconstruct the
+object from any `symbols_count` symbols, so the source set alone is
+sufficient and repair symbols are not sent.
+
 ## QUIC member discovery
 
 QUIC discovery does not dial the bootstrap seeds. Upstream runs QUIC only in
@@ -189,6 +234,25 @@ counts as a rejected packet. `unwrap_external_message_payload` performs the
 same unwrap on the simple-broadcast and `overlay.unicast` paths, matching
 what this crate's FEC path already did; payloads that are not that wrapper
 pass through so `validate_envelope` stays the single accept/reject point.
+
+A FEC broadcast part carries its *own* signature over the part id, not the
+broadcast id. Upstream computes
+`broadcast_hash = sha256(overlay.broadcastFec.id{src, sha256(fec.Type),
+data_hash, size, flags})` (`compute_broadcast_id` in
+`overlay/broadcast-fec.cpp` - the FEC id folds in the serialized
+`fec.Type` hash and the full data size, unlike the simple broadcast id),
+then `part_hash = sha256(overlay.broadcastFec.partId{broadcast_hash,
+sha256(symbol), seqno})` (`compute_broadcast_part_id`), and the signature
+covers `overlay.broadcast.toSign{part_hash, date}`
+(`BroadcastFecPart::to_sign`). `BroadcastFecPart::run_checks` verifies it
+before the symbol is fed to the decoder, so every symbol of a FEC broadcast
+is individually signed. The `overlay.broadcastFec.id` (`0xfb3155a6`) and
+`overlay.broadcastFec.partId` (`0xa46962d0`) constructors are pinned by
+`schemas/ton_api.tl`. On receive, the symbol rides either as upstream's
+raw RaptorQ symbol bytes (with the symbol id in `seqno`) or as a
+serialized RaptorQ `EncodingPacket` (payload id plus symbol bytes); both
+forms reassemble through the same decoder, which is what lets this crate's
+own FEC sends interoperate with upstream receivers and vice versa.
 
 Verification is necessary but not sufficient for a push. Upstream
 `BroadcastSimple::send` and the Plumtree path both choose

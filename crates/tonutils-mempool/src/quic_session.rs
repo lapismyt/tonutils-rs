@@ -81,10 +81,27 @@ impl QuicOverlaySession {
             if fec.data.len() < 4 {
                 return Err("overlay FEC packet is truncated".to_owned());
             }
-            let packet = EncodingPacket::deserialize(&fec.data);
-            if packet.data().len() != symbol_size as usize {
-                return Err("overlay FEC symbol has invalid length".to_owned());
-            }
+            // Upstream's `BroadcastsFec::process_broadcast`
+            // (`overlay/broadcast-fec.cpp`) carries the raw RaptorQ
+            // symbol bytes in `data` and the symbol id in `seqno`;
+            // this crate's own FEC senders used the raptorq crate's
+            // serialized `EncodingPacket` (payload id plus symbol
+            // bytes).  Both are accepted: a `data` field exactly
+            // `symbol_size` bytes long is the raw upstream symbol,
+            // anything longer must be a serialized packet whose
+            // payload decodes to `symbol_size` bytes.
+            let packet = if fec.data.len() == symbol_size as usize {
+                EncodingPacket::new(
+                    raptorq::PayloadId::new(0, fec.seqno as u32),
+                    fec.data.clone(),
+                )
+            } else {
+                let packet = EncodingPacket::deserialize(&fec.data);
+                if packet.data().len() != symbol_size as usize {
+                    return Err("overlay FEC symbol has invalid length".to_owned());
+                }
+                packet
+            };
             let state = self
                 .fec
                 .entry(fec.data_hash.0)
@@ -234,18 +251,25 @@ impl OverlaySession for QuicOverlaySession {
 
     fn send(&mut self, payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
-            let mut data = tl_proto::serialize(OverlayBroadcast::Unicast {
-                data: payload.to_vec(),
-            });
-            let mut wrapped = Vec::with_capacity(4 + 32 + 4 + data.len());
+            let mut wrapped = Vec::with_capacity(36 + 4 + payload.len());
             wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
             wrapped.extend_from_slice(&self.overlay);
-            let message = OverlayMessage::Message {
-                overlay: tonutils_tl::Int256(self.overlay),
-            };
-            let mut message_bytes = tl_proto::serialize(message);
-            message_bytes.append(&mut data);
-            wrapped.extend_from_slice(&message_bytes);
+            wrapped.extend_from_slice(&tl_proto::serialize(OverlayBroadcast::Unicast {
+                data: payload.to_vec(),
+            }));
+            self.session
+                .send_message(wrapped)
+                .await
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn send_object(&mut self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            let mut wrapped = Vec::with_capacity(36 + object.len());
+            wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
+            wrapped.extend_from_slice(&self.overlay);
+            wrapped.extend_from_slice(&object);
             self.session
                 .send_message(wrapped)
                 .await
@@ -748,4 +772,86 @@ pub fn quic_overlay_lookup_with_endpoints(
             result
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonutils_adnl::adnl::quic::QuicServer;
+
+    /// Spawns a client `QuicSession` towards a loopback QUIC
+    /// server.  The test accepts the connection - which completes
+    /// the handshake - and then reads the streams the session
+    /// sends through it.
+    async fn quic_loopback_client(
+        overlay: OverlayId,
+    ) -> (tokio::task::JoinHandle<QuicSession>, QuicServer, OverlayId) {
+        let server_keypair = KeyPair::generate(&mut rand::rngs::OsRng);
+        let client_keypair = KeyPair::generate(&mut rand::rngs::OsRng);
+        let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair).unwrap();
+        let server_addr = server.local_addr().unwrap();
+        let client = tokio::spawn(async move {
+            QuicSession::connect(
+                "127.0.0.1:0".parse().unwrap(),
+                server_addr,
+                client_keypair,
+                server_keypair.public_key,
+            )
+            .await
+            .unwrap()
+        });
+        (client, server, overlay)
+    }
+
+    #[tokio::test]
+    async fn send_frames_one_unicast_after_the_overlay_header() {
+        let overlay = OverlayId::from_name(b"quic-framing");
+        let (client, server, overlay) = quic_loopback_client(overlay).await;
+        let (connection, _sni) = server.accept().await.unwrap();
+        let mut session =
+            QuicOverlaySession::new(Arc::new(client.await.unwrap()), overlay.as_bytes());
+        let reader = tokio::spawn(async move {
+            let (_send, mut recv) = connection.accept_bi().await.unwrap();
+            let buf = recv.read_to_end(1024 * 1024).await.unwrap();
+            tl_proto::deserialize::<QuicMessage>(&buf).unwrap().data
+        });
+        let payload: Arc<[u8]> = Arc::from(vec![1u8, 2, 3]);
+        session.send(payload.clone()).await.unwrap();
+        let data = reader.await.unwrap();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&0x75252420u32.to_le_bytes());
+        expected.extend_from_slice(&overlay.as_bytes());
+        expected.extend_from_slice(&tl_proto::serialize(OverlayBroadcast::Unicast {
+            data: payload.to_vec(),
+        }));
+        assert_eq!(
+            data, expected,
+            "send must frame exactly one overlay.unicast after the overlay header"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_object_frames_the_raw_object_after_the_overlay_header() {
+        let overlay = OverlayId::from_name(b"quic-framing");
+        let (client, server, overlay) = quic_loopback_client(overlay).await;
+        let (connection, _sni) = server.accept().await.unwrap();
+        let mut session =
+            QuicOverlaySession::new(Arc::new(client.await.unwrap()), overlay.as_bytes());
+        let reader = tokio::spawn(async move {
+            let (_send, mut recv) = connection.accept_bi().await.unwrap();
+            let buf = recv.read_to_end(1024 * 1024).await.unwrap();
+            tl_proto::deserialize::<QuicMessage>(&buf).unwrap().data
+        });
+        let object: Arc<[u8]> = Arc::from(vec![7u8, 8, 9]);
+        session.send_object(object.clone()).await.unwrap();
+        let data = reader.await.unwrap();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&0x75252420u32.to_le_bytes());
+        expected.extend_from_slice(&overlay.as_bytes());
+        expected.extend_from_slice(&object);
+        assert_eq!(
+            data, expected,
+            "send_object must frame the raw object after the overlay header"
+        );
+    }
 }

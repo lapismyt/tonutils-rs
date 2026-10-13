@@ -134,6 +134,22 @@ pub trait OverlaySession: Send {
     fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>>;
     fn send(&mut self, payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>>;
 
+    /// Sends a raw overlay object: `overlay.message{overlay_id}`
+    /// followed by `object`, with no `overlay.unicast` wrapper.
+    ///
+    /// Overlay broadcasts (`overlay.broadcast`,
+    /// `overlay.broadcastFec`) must ride as raw objects:
+    /// upstream's `OverlayImpl::receive_message` dispatches on
+    /// the object's constructor, so a broadcast wrapped in
+    /// `overlay.unicast` would reach the overlay callback's
+    /// plain-message handler instead of the broadcast machinery
+    /// and never propagate to neighbours.  The default
+    /// rejection keeps sessions that only implement the wrapped
+    /// [`Self::send`] from silently mis-framing broadcasts.
+    fn send_object(&mut self, _object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async { Err("session does not support raw overlay objects".to_owned()) })
+    }
+
     /// Last instant at which the session observed inbound transport traffic.
     ///
     /// [`OverlayConfig::peer_idle_timeout`] bounds a single `receive()` call,
@@ -668,6 +684,29 @@ impl PeerManager {
         let results = futures::future::join_all(sessions.into_iter().map(|session| {
             let payload = payload.clone();
             async move { session.lock().await.send(payload).await }
+        }))
+        .await;
+        results.into_iter().flatten().count()
+    }
+
+    /// Broadcasts a raw overlay object to every connected session.
+    ///
+    /// Unlike [`Self::broadcast`], which wraps the payload in
+    /// `overlay.unicast`, the object rides after the
+    /// `overlay.message` header as-is - the framing overlay
+    /// broadcasts require.  Returns the number of sessions the
+    /// object was handed to.
+    pub async fn broadcast_object(&self, object: Arc<[u8]>) -> usize {
+        let sessions = self
+            .sessions
+            .read()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let results = futures::future::join_all(sessions.into_iter().map(|session| {
+            let object = object.clone();
+            async move { session.lock().await.send_object(object).await }
         }))
         .await;
         results.into_iter().flatten().count()

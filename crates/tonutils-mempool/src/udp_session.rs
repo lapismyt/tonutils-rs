@@ -429,6 +429,41 @@ impl OverlaySession for AdnlUdpOverlaySession {
                 .map_err(|error| error.to_string())
         })
     }
+
+    fn send_object(&mut self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            let mut data = object.to_vec();
+            if let Some(overlay) = self.overlay {
+                let mut wrapped = Vec::with_capacity(36 + data.len());
+                wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
+                wrapped.extend_from_slice(&overlay.as_bytes());
+                wrapped.append(&mut data);
+                data = wrapped;
+            }
+            self.session
+                .send_contents(PacketContents {
+                    rand1: vec![0; 7],
+                    flags: (),
+                    from: None,
+                    from_short: None,
+                    message: Some(AdnlMessage::Custom { data }),
+                    messages: None,
+                    address: None,
+                    priority_address: None,
+                    seqno: None,
+                    confirm_seqno: None,
+                    recv_addr_list_version: None,
+                    recv_priority_addr_list_version: None,
+                    reinit_date: None,
+                    dst_reinit_date: None,
+                    signature: None,
+                    rand2: vec![0; 7],
+                })
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+    }
 }
 
 impl AdnlUdpOverlaySession {
@@ -490,10 +525,27 @@ impl AdnlUdpOverlaySession {
             if fec.data.len() < 4 {
                 return Err("overlay FEC packet is truncated".to_owned());
             }
-            let packet = EncodingPacket::deserialize(&fec.data);
-            if packet.data().len() != symbol_size as usize {
-                return Err("overlay FEC symbol has invalid length".to_owned());
-            }
+            // Upstream's `BroadcastsFec::process_broadcast`
+            // (`overlay/broadcast-fec.cpp`) carries the raw RaptorQ
+            // symbol bytes in `data` and the symbol id in `seqno`;
+            // this crate's own FEC senders used the raptorq crate's
+            // serialized `EncodingPacket` (payload id plus symbol
+            // bytes).  Both are accepted: a `data` field exactly
+            // `symbol_size` bytes long is the raw upstream symbol,
+            // anything longer must be a serialized packet whose
+            // payload decodes to `symbol_size` bytes.
+            let packet = if fec.data.len() == symbol_size as usize {
+                EncodingPacket::new(
+                    raptorq::PayloadId::new(0, fec.seqno as u32),
+                    fec.data.clone(),
+                )
+            } else {
+                let packet = EncodingPacket::deserialize(&fec.data);
+                if packet.data().len() != symbol_size as usize {
+                    return Err("overlay FEC symbol has invalid length".to_owned());
+                }
+                packet
+            };
             let state = self
                 .fec
                 .entry(fec.data_hash.0)

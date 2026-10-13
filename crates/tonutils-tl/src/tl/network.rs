@@ -8,7 +8,8 @@ use super::adnl::Message as AdnlMessage;
 use super::common::Int256;
 
 pub use super::overlay::{
-    FecType, OverlayBroadcast, OverlayBroadcastFec, OverlayBroadcastToSign, OverlayCertificate,
+    FecType, OverlayBroadcast, OverlayBroadcastFec, OverlayBroadcastFecId,
+    OverlayBroadcastFecPartId, OverlayBroadcastId, OverlayBroadcastToSign, OverlayCertificate,
     OverlayMemberCertificate, OverlayMessage, OverlayMessageExtra, OverlayNode, OverlayNodeToSign,
     OverlayNodeV2, OverlayNodes, OverlayNodesBoxed, OverlayNodesV2, OverlayNodesV2Boxed,
     OverlayPong, OverlayQuery,
