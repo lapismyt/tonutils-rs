@@ -456,14 +456,18 @@ impl OverlaySession for AdnlUdpOverlaySession {
 
     fn send_object(&mut self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async move {
-            let mut data = object.to_vec();
-            if let Some(overlay) = self.overlay {
-                let mut wrapped = Vec::with_capacity(36 + data.len());
+            // Build the wrapped frame in one allocation: the old path made
+            // an intermediate Vec from `object` and then appended it into
+            // the frame, paying a second allocation per object.
+            let data = if let Some(overlay) = self.overlay {
+                let mut wrapped = Vec::with_capacity(36 + object.len());
                 wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
                 wrapped.extend_from_slice(&overlay.as_bytes());
-                wrapped.append(&mut data);
-                data = wrapped;
-            }
+                wrapped.extend_from_slice(&object);
+                wrapped
+            } else {
+                object.to_vec()
+            };
             self.session
                 .send_contents(PacketContents {
                     rand1: vec![0; 7],

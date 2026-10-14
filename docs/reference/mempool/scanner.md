@@ -16,7 +16,11 @@ LiteServer block/indexing queries.
 
 The raw BoC is held in `Arc<[u8]>`, so event consumers and broadcast peers can
 share ownership without copying the payload. The bounded event queue provides
-backpressure. Deduplication is sharded by the first hash byte, purged by the
+backpressure for peer-ingested messages; a local echo from `send_external` is
+the exception - it uses a non-blocking `try_send` and is dropped with a
+warning when the queue is full, because the dedup entry and the broadcast are
+already recorded and a stalled consumer must never block the submitter.
+Deduplication is sharded by the first hash byte, purged by the
 configured TTL (amortized to at most one scan per TTL per shard), and bounded
 by shard capacity. `MempoolMetrics` exposes accepted, duplicate, rejected,
 broadcast-failure, and rate-limited invalid-warning counters.
@@ -113,7 +117,12 @@ member, asks it for `overlay.getRandomPeers`, validates the returned
 `overlay.node` records, resolves their DHT `address` values, and opens sessions
 for the candidates until `overlay_max_peers` (default 30, pytoniq's
 `max_peers`) is reached. Growth also re-announces this node, refreshing the
-`version` of its signed record in that peer's queue.
+`version` of its signed record in that peer's queue. A disconnect (`PeerStatus`
+`Disconnected` or `Failed`) starts a round immediately instead of waiting out
+the interval - the pool just lost a member - with a `PEER_GROWTH_MIN_INTERVAL`
+of one second collapsing a burst of disconnects into a single round, and the
+rounds keep one fixed tick schedule so early rounds never delay the periodic
+cadence.
 
 An `overlay.node` record carries no address, so a member reached only
 transitively becomes connectable only through its DHT `address` value. Growth

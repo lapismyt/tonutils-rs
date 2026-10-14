@@ -456,6 +456,7 @@ impl MempoolScanner {
             .accept_fast(
                 raw_boc.clone(),
                 RoutingMetadata::new(OverlayId::from_name(b"local"), PeerId::from_bytes([0; 32])),
+                true,
             )
             .await?;
         if accepted.is_some() {
@@ -487,7 +488,7 @@ impl MempoolScanner {
         routing: RoutingMetadata,
     ) -> Result<Option<MessageHash>, MempoolError> {
         let raw_boc = raw_boc.into();
-        let hash = self.accept_fast(raw_boc, routing).await?;
+        let hash = self.accept_fast(raw_boc, routing, false).await?;
         Ok(hash)
     }
 
@@ -609,10 +610,18 @@ impl MempoolScanner {
         })
     }
 
+    /// Fast shared accept path for both entry points.
+    ///
+    /// `local` marks a self-submitted message (`send_external`): its echo
+    /// event uses `try_send`, so a consumer that stopped draining can never
+    /// back-pressure the submitter - the dedup entry and broadcast still
+    /// happen, only the local receipt notice is dropped.  Packets from
+    /// peers keep the blocking send, which is the ingest backpressure.
     async fn accept_fast(
         &self,
         raw_boc: Arc<[u8]>,
         routing: RoutingMetadata,
+        local: bool,
     ) -> Result<Option<MessageHash>, MempoolError> {
         if let Err(error) = check_envelope_header(&raw_boc, &self.config) {
             self.rejected.fetch_add(1, Ordering::Relaxed);
@@ -669,16 +678,33 @@ impl MempoolScanner {
             self.quality.record_first_delivery(hash, routing.peer, now);
         }
         self.accepted.fetch_add(1, Ordering::Relaxed);
-        self.event_tx
-            .send(MempoolEvent::ExternalMessage {
-                hash,
-                raw_boc,
-                destination,
-                routing,
-                timestamp: SystemTime::now(),
-            })
-            .await
-            .map_err(|_| MempoolError::QueueClosed)?;
+        let event = MempoolEvent::ExternalMessage {
+            hash,
+            raw_boc,
+            destination,
+            routing,
+            timestamp: SystemTime::now(),
+        };
+        if local {
+            // A local echo must not back-pressure the submitter into a
+            // consumer that stopped draining: the dedup entry and the
+            // broadcast are already recorded, so only the local receipt
+            // notice is lost when the queue is full.
+            match self.event_tx.try_send(event) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    log::warn!("mempool event queue full, dropping local echo: hash={hash:02x?}");
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    return Err(MempoolError::QueueClosed);
+                }
+            }
+        } else {
+            self.event_tx
+                .send(event)
+                .await
+                .map_err(|_| MempoolError::QueueClosed)?;
+        }
         Ok(Some(hash))
     }
 

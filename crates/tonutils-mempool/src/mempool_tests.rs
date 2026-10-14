@@ -359,6 +359,120 @@ async fn receiver_drains_pool_packets_across_workers() {
     receiver.await.unwrap();
 }
 
+/// A self-submitted message must not block on a full event queue: the
+/// local echo is dropped with a warning while the dedup entry and the
+/// broadcast stay intact.
+#[tokio::test]
+async fn local_echo_drops_rather_than_backing_up_a_full_event_queue() {
+    let scanner = Arc::new(
+        MempoolScanner::new(MempoolConfig {
+            event_queue_capacity: 1,
+            validate_message: false,
+            ..Default::default()
+        })
+        .unwrap(),
+    );
+    // Fill the one-slot event queue with an event the scanner produced
+    // itself, and leave it undrained.
+    scanner
+        .peer_status(PeerStatus::Disconnected {
+            peer: PeerId::from_bytes([3; 32]),
+        })
+        .await
+        .unwrap();
+    let hash = tokio::time::timeout(Duration::from_secs(2), scanner.send_external(boc(1)))
+        .await
+        .expect("a local send must not block on a full event queue")
+        .unwrap();
+    let metrics = scanner.metrics();
+    assert_eq!(metrics.accepted, 1, "the message itself is accepted");
+    assert_eq!(scanner.dedup_entries.load(Ordering::Relaxed), 1);
+    // The dedup entry survived the dropped echo: the repeat is rejected
+    // instead of re-broadcast.
+    assert_eq!(scanner.send_external(boc(1)).await.unwrap(), hash);
+    assert_eq!(scanner.metrics().accepted, 1);
+    // Only the foreign event was ever queued; the echo never surfaced.
+    let mut events = std::pin::pin!(scanner.events());
+    assert!(matches!(
+        events.next().await,
+        Some(MempoolEvent::PeerStatus(_))
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), events.next())
+            .await
+            .is_err(),
+        "the dropped local echo must not surface as an event"
+    );
+}
+
+/// A disconnect starts a growth round right away instead of waiting out
+/// the periodic interval, and a burst of disconnects collapses into the
+/// round that already ran.
+#[tokio::test]
+async fn disconnect_triggers_an_immediate_growth_round() {
+    let scanner = Arc::new(MempoolScanner::new(config()).unwrap());
+    let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+    let rounds = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let growth_rounds = Arc::clone(&rounds);
+    let growth: SeedDiscoveryLookup = Arc::new(move |_seeds| {
+        growth_rounds.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async { Vec::new() })
+    });
+    let known = Arc::new(tokio::sync::RwLock::new(vec![SeedPeer {
+        peer: PeerId::from_bytes([9; 32]),
+        address: "127.0.0.1:30303".into(),
+    }]));
+    let factory: OverlaySessionFactory = Arc::new(move |candidate| {
+        Box::pin(async move {
+            Ok(Box::new(PendingSession {
+                peer: candidate.peer,
+            }) as Box<dyn OverlaySession>)
+        })
+    });
+    let reconnect: ReconnectFactory =
+        Arc::new(move |_peer| Box::pin(async { Err("no reconnect in this test".to_owned()) }));
+    crate::peer_growth::PeerGrowthTask {
+        manager: manager.clone(),
+        growth,
+        known,
+        factory,
+        reconnect,
+        attempts: 0,
+        backoff: Duration::ZERO,
+        max_peers: 8,
+        pinned: HashSet::new(),
+        event_tx: scanner.event_tx.clone(),
+    }
+    .spawn();
+
+    // Losing a member must start discovery without waiting out the
+    // periodic interval (10 s), which no test would sit through.
+    let member = PeerId::from_bytes([1; 32]);
+    manager.pool().register_peer(member).await;
+    manager.pool().unregister_peer(member).await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while rounds.load(Ordering::SeqCst) == 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no growth round after a disconnect"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    // A second disconnect inside the guard window collapses into the
+    // round that already ran instead of starting another one.
+    let other = PeerId::from_bytes([2; 32]);
+    manager.pool().register_peer(other).await;
+    manager.pool().unregister_peer(other).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        rounds.load(Ordering::SeqCst),
+        1,
+        "a burst of disconnects must not storm discovery rounds"
+    );
+    manager.shutdown();
+}
+
 #[tokio::test]
 async fn pinned_peers_honor_the_isolated_connection_limit() {
     let kept = PeerId::from_bytes([3; 32]);

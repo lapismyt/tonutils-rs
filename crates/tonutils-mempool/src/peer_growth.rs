@@ -11,6 +11,14 @@ use super::*;
 /// ingest path never competes with DHT lookups.
 const EVENT_IDLE_FREE_RATIO: f64 = 0.25;
 
+/// Minimum spacing between growth rounds, whichever triggers them.
+///
+/// A disconnect triggers a round immediately - the pool just lost a
+/// member and discovery can replace it now instead of up to an interval
+/// later - but a burst of disconnects must collapse into one round
+/// instead of a discovery storm.
+const PEER_GROWTH_MIN_INTERVAL: Duration = Duration::from_secs(1);
+
 /// Parameters for the background peer-growth task.
 pub(crate) struct PeerGrowthTask {
     pub(crate) manager: PeerManager,
@@ -48,12 +56,54 @@ impl PeerGrowthTask {
             return;
         }
         let mut shutdown = manager.subscribe_shutdown();
+        let mut statuses = manager.subscribe_statuses();
+        // No round yet, so the first disconnect triggers one immediately
+        // instead of waiting out the guard against bursts.
+        let mut last_round: Option<tokio::time::Instant> = None;
         tokio::spawn(async move {
+            // One fixed schedule for periodic rounds: a
+            // disconnect-triggered round must not push the next
+            // periodic tick further away, and a round that outlives
+            // the interval must not turn the cadence into a tight
+            // loop.
+            let mut ticker = tokio::time::interval(PEER_GROWTH_INTERVAL);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            // The first tick fires immediately; consume it so the first
+            // round still happens one full interval after bootstrap.
+            ticker.tick().await;
             loop {
                 tokio::select! {
                     _ = shutdown.changed() => return,
-                    () = tokio::time::sleep(PEER_GROWTH_INTERVAL) => {}
+                    status = statuses.recv() => {
+                        let disconnect = match status {
+                            Ok(status) => matches!(
+                                status,
+                                PeerStatus::Disconnected { .. } | PeerStatus::Failed { .. }
+                            ),
+                            // A lagged receiver missed status changes; keep
+                            // the loop for the periodic rounds.  A closed
+                            // status stream means the pool is gone.
+                            Err(error) => {
+                                if matches!(
+                                    error,
+                                    tokio::sync::broadcast::error::RecvError::Closed
+                                ) {
+                                    return;
+                                }
+                                continue;
+                            }
+                        };
+                        if !disconnect
+                            || last_round.is_some_and(|last| {
+                                last.elapsed() < PEER_GROWTH_MIN_INTERVAL
+                            })
+                        {
+                            continue;
+                        }
+                    }
+                    _ = ticker.tick() => {}
                 }
+                last_round = Some(tokio::time::Instant::now());
                 if !event_queue_idle(&event_tx) {
                     log::debug!("peer growth: skipped, the event queue is congested");
                     continue;
