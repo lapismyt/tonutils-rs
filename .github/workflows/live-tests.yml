@@ -134,9 +134,6 @@ jobs:
             echo 'TON_TESTNET_GLOBAL_CONFIG_JSON_EOF'
           } >> "$GITHUB_ENV"
 
-      - name: Run live workflow smoke tests
-        run: cargo test -p tonutils-liteclient --test live_workflows -- --ignored --nocapture
-
       - name: Run mempool bootstrap smoke test
         run: cargo test -p tonutils-mempool --test live configured_global_config_can_start_scanner -- --ignored --nocapture
 
@@ -197,6 +194,15 @@ jobs:
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
         run: cargo test -p tonutils-mempool --test live mainnet_overlay_quic_discovery_returns_peers -- --ignored --nocapture
+
+      - name: Run live workflow smoke tests
+        # Last and unconditional so the two flaky live-test classes cannot
+        # skip each other's coverage: a transient liteserver failure here
+        # used to fail-fast past every mempool smoke step (run 38579887480
+        # lost them all to the notready-651 block race), while a mempool
+        # failure would in turn hide these workflows.
+        if: ${{ !cancelled() }}
+        run: cargo test -p tonutils-liteclient --test live_workflows -- --ignored --nocapture
 
   live-delivery:
     name: Live mempool delivery acceptance
