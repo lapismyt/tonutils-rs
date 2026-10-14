@@ -65,6 +65,23 @@ constructor, so the `overlay.unicast` wrapper that `OverlaySession::send`
 adds would deliver broadcast bytes to the plain-message callback instead
 of the broadcast machinery.
 
+On the inbound side, the two receive paths consult a shared
+raw-payload pre-dedup cache (`PacketPreDedup`) before the TL parse and
+ed25519 verification: relayed copies of one broadcast are
+byte-identical (relays forward the origin's signed object verbatim),
+so the first sighting of a `sha256(payload)` hash records it and every
+later copy is dropped for the cost of one hash. The cache is shared by
+every session of one factory (flood copies arrive from different
+peers), bounded at 4096 entries with a 300 s TTL that mirrors
+`MempoolConfig::dedup_ttl`, and evicts expired entries first, then the
+oldest survivor by a monotonic insertion sequence. Suppressed copies
+count into `ProtocolStats::payload_duplicates`. This mirrors upstream's
+early dedup (`BroadcastFecPart::run` rejects duplicate part ids before
+`run_checks`; `BroadcastSimple` caches a broadcast id with its checked
+state) and stops a flood from scaling signature verifications linearly
+in the number of copies; the scanner's own `accept_fast` dedup still
+runs last for anything that gets past the cache.
+
 Upstream paces FEC symbol emission at four symbols per 10 ms tick
 (`BroadcastFecActor::alarm`) and emits `(size / 768 + 1) * 2` symbols
 per broadcast - the `symbols_count` source symbols plus one repair

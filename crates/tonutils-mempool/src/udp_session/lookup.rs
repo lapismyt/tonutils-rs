@@ -751,10 +751,15 @@ pub fn overlay_factory_with_endpoints(
     // through one peer becomes gossip for all of them, which is what keeps
     // answers to `overlay.getRandomPeers` from collapsing to this node alone.
     let shared = OverlayMemberCache::default();
+    // One pre-dedup per factory as well: flood copies of one broadcast
+    // arrive from different peers, and the first sighting of a payload
+    // hash suppresses the rest.
+    let pre_dedup = PacketPreDedup::default();
     Arc::new(move |seed: SeedPeer| {
         let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes());
         let shared = shared.clone();
         let endpoints = Arc::clone(&endpoints);
+        let pre_dedup = pre_dedup.clone();
         Box::pin(async move {
             let remote = remote.ok_or_else(|| "seed peer is not a valid Ed25519 key".to_owned())?;
             let mut session = match channel_timeout {
@@ -788,6 +793,7 @@ pub fn overlay_factory_with_endpoints(
             };
             session.members = shared;
             session.endpoints = endpoints;
+            session.pre_dedup = pre_dedup;
             Ok(Box::new(session) as Box<dyn OverlaySession>)
         })
     })

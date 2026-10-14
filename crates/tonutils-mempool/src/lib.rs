@@ -29,6 +29,7 @@ mod broadcast;
 mod builder;
 mod endpoints;
 mod overlay_inbound;
+mod packet_dedup;
 mod peer_growth;
 mod peer_quality;
 mod protocol_stats;

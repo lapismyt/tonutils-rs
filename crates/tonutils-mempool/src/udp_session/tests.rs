@@ -43,6 +43,7 @@ async fn reassembles_single_source_raptorq_external_message() {
         last_activity: Instant::now(),
         members: OverlayMemberCache::default(),
         endpoints: crate::OverlayMemberEndpoints::default(),
+        pre_dedup: PacketPreDedup::default(),
     };
     let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
     let fec = OverlayBroadcastFec {
@@ -101,6 +102,7 @@ async fn waits_for_all_source_symbols_before_publishing_fec_payload() {
         last_activity: Instant::now(),
         members: OverlayMemberCache::default(),
         endpoints: crate::OverlayMemberEndpoints::default(),
+        pre_dedup: PacketPreDedup::default(),
     };
     let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
     for (index, packet) in packets.into_iter().enumerate() {
@@ -155,6 +157,7 @@ async fn rejects_truncated_serialized_fec_packet() {
         last_activity: Instant::now(),
         members: OverlayMemberCache::default(),
         endpoints: crate::OverlayMemberEndpoints::default(),
+        pre_dedup: PacketPreDedup::default(),
     };
     let payload = tl_proto::serialize(OverlayBroadcastFec {
         src: tonutils_tl::tl::network::PublicKey::Overlay { name: vec![3] },
@@ -325,6 +328,7 @@ async fn broadcast_test_adapter() -> AdnlUdpOverlaySession {
         last_activity: Instant::now(),
         members: OverlayMemberCache::default(),
         endpoints: crate::OverlayMemberEndpoints::default(),
+        pre_dedup: PacketPreDedup::default(),
     }
 }
 
@@ -453,6 +457,7 @@ async fn send_object_delivers_signed_broadcast_to_peer() {
         last_activity: Instant::now(),
         members: OverlayMemberCache::default(),
         endpoints: crate::OverlayMemberEndpoints::default(),
+        pre_dedup: PacketPreDedup::default(),
     };
     let mut sender = session(receiver_key.public_key.to_bytes(), sender_session);
     let mut receiver = session(sender_key.public_key.to_bytes(), receiver_session);
@@ -473,5 +478,77 @@ async fn send_object_delivers_signed_broadcast_to_peer() {
         delivered.as_ref(),
         raw_boc.as_slice(),
         "the peer must receive the bare external message BoC"
+    );
+}
+
+/// A byte-identical copy of an already accepted broadcast is stopped by
+/// the raw-payload pre-dedup before the TL parse and signature
+/// verification every flood copy would otherwise pay for.
+#[tokio::test]
+async fn duplicate_broadcast_copies_are_suppressed_before_unwrap() {
+    let sender_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let receiver_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let sender_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let receiver_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let overlay = OverlayId::from_name(b"loopback-overlay");
+    let sender_session = AdnlUdpSession::connect(
+        sender_addr,
+        receiver_addr,
+        sender_key,
+        receiver_key.public_key,
+    )
+    .await
+    .unwrap();
+    let receiver_session = AdnlUdpSession::connect(
+        receiver_addr,
+        sender_addr,
+        receiver_key,
+        sender_key.public_key,
+    )
+    .await
+    .unwrap();
+    let session = |peer_key, session| AdnlUdpOverlaySession {
+        peer: PeerId::from_bytes(peer_key),
+        session,
+        overlay: Some(overlay),
+        fec: HashMap::new(),
+        last_keepalive: Instant::now(),
+        last_activity: Instant::now(),
+        members: OverlayMemberCache::default(),
+        endpoints: crate::OverlayMemberEndpoints::default(),
+        pre_dedup: PacketPreDedup::default(),
+    };
+    let mut sender = session(receiver_key.public_key.to_bytes(), sender_session);
+    let mut receiver = session(sender_key.public_key.to_bytes(), receiver_session);
+
+    let raw_boc = vec![0xb5, 0xee, 0x9c, 0x72, 7, 7, 7];
+    let broadcast: Arc<[u8]> = Arc::from(signed_simple_broadcast(
+        &sender_key,
+        external_message_wrapper(&raw_boc),
+        0,
+        now_i32(),
+    ));
+    sender.send_object(Arc::clone(&broadcast)).await.unwrap();
+    let delivered = tokio::time::timeout(Duration::from_secs(5), receiver.receive())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(delivered.as_ref(), raw_boc.as_slice());
+
+    // The relay-style flood copy is byte-identical, so the pre-dedup
+    // must swallow it: no second delivery can surface.
+    sender.send_object(broadcast).await.unwrap();
+    let duplicate = tokio::time::timeout(Duration::from_secs(2), receiver.receive()).await;
+    assert!(
+        duplicate.is_err(),
+        "a byte-identical copy must not surface as a second delivery"
     );
 }

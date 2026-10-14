@@ -13,6 +13,8 @@ use tonutils_adnl::adnl::quic::QuicSession;
 use tonutils_adnl::{AdnlAddress, KeyPair, PublicKey as AdnlPublicKey, now_i32};
 use tonutils_overlay::{OverlayId, OverlaySession, PeerId, SeedDiscoveryLookup, SeedPeer};
 
+use crate::packet_dedup::PacketPreDedup;
+
 /// QUIC port offset: upstream TON nodes listen for QUIC on `adnl_udp_port + 1000`.
 const QUIC_PORT_OFFSET: u16 = 1000;
 use tonutils_tl::tl::network::{
@@ -35,6 +37,10 @@ pub struct QuicOverlaySession {
     overlay: [u8; 32],
     fec: std::collections::HashMap<[u8; 32], FecAssembly>,
     last_keepalive: Instant,
+    /// Raw-payload pre-dedup shared with every session of one factory,
+    /// so byte-identical flood copies stop before the TL parse and
+    /// signature verification.
+    pre_dedup: PacketPreDedup,
 }
 
 impl QuicOverlaySession {
@@ -46,6 +52,7 @@ impl QuicOverlaySession {
             overlay,
             fec: std::collections::HashMap::new(),
             last_keepalive: Instant::now(),
+            pre_dedup: PacketPreDedup::default(),
         }
     }
 
@@ -256,6 +263,10 @@ impl OverlaySession for QuicOverlaySession {
                         if message_overlay.0 != self.overlay {
                             continue;
                         }
+                        if self.pre_dedup.is_duplicate(data_slice) {
+                            crate::protocol_stats::record_payload_duplicate();
+                            continue;
+                        }
                         if let Ok(data) = self.unwrap_overlay_payload(data_slice) {
                             return Ok(Arc::from(data));
                         }
@@ -268,6 +279,10 @@ impl OverlaySession for QuicOverlaySession {
                     _ => continue,
                 };
                 if message_overlay.0 != self.overlay {
+                    continue;
+                }
+                if self.pre_dedup.is_duplicate(data_slice) {
+                    crate::protocol_stats::record_payload_duplicate();
                     continue;
                 }
                 if let Ok(data) = self.unwrap_overlay_payload(data_slice) {
@@ -334,11 +349,16 @@ pub fn quic_overlay_factory_with_endpoints(
     overlay: OverlayId,
     endpoints: crate::OverlayMemberEndpoints,
 ) -> crate::OverlaySessionFactory {
+    // One pre-dedup for every session this factory spawns: flood copies
+    // of one broadcast arrive from different peers, and the first
+    // sighting of a payload hash suppresses the rest.
+    let pre_dedup = PacketPreDedup::default();
     Arc::new(move |seed: SeedPeer| {
         let local_addr = local_addr;
         let local_keypair = local_keypair;
         let overlay = overlay;
         let endpoints = Arc::clone(&endpoints);
+        let pre_dedup = pre_dedup.clone();
         Box::pin(async move {
             let remote_key = tonutils_adnl::PublicKey::from_bytes(seed.peer.as_bytes())
                 .ok_or_else(|| format!("invalid peer public key for {:?}", seed.peer))?;
@@ -362,10 +382,9 @@ pub fn quic_overlay_factory_with_endpoints(
                     Duration::from_secs(3),
                 )
                 .await;
-            Ok(
-                Box::new(QuicOverlaySession::new(session, overlay.as_bytes()))
-                    as Box<dyn OverlaySession>,
-            )
+            let mut overlay_session = QuicOverlaySession::new(session, overlay.as_bytes());
+            overlay_session.pre_dedup = pre_dedup;
+            Ok(Box::new(overlay_session) as Box<dyn OverlaySession>)
         })
     })
 }

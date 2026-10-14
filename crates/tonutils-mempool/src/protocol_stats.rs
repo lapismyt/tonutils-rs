@@ -86,6 +86,11 @@ pub struct ProtocolStats {
     pub dht_pings_received: u64,
     /// Custom overlay payloads handed to the scanner (broadcast candidates).
     pub custom_messages: u64,
+    /// Custom overlay payloads suppressed by the raw-payload pre-dedup:
+    /// byte-identical copies of a payload this node already accepted
+    /// within the cache window, which never paid a TL parse or
+    /// signature verification.
+    pub payload_duplicates: u64,
 }
 
 struct Counters {
@@ -105,6 +110,7 @@ struct Counters {
     unique_pingers: AtomicU64,
     dht_pings_received: AtomicU64,
     custom_messages: AtomicU64,
+    payload_duplicates: AtomicU64,
     pingers_seen: DistinctPeers,
     listing_peers_seen: DistinctPeers,
 }
@@ -151,6 +157,7 @@ static COUNTERS: Counters = Counters {
     unique_pingers: AtomicU64::new(0),
     dht_pings_received: AtomicU64::new(0),
     custom_messages: AtomicU64::new(0),
+    payload_duplicates: AtomicU64::new(0),
     pingers_seen: DistinctPeers::new(),
     listing_peers_seen: DistinctPeers::new(),
 };
@@ -222,6 +229,10 @@ pub(crate) fn record_custom_message() {
     inc(&COUNTERS.custom_messages);
 }
 
+pub(crate) fn record_payload_duplicate() {
+    inc(&COUNTERS.payload_duplicates);
+}
+
 /// Returns the current overlay protocol counters.
 pub fn protocol_stats() -> ProtocolStats {
     ProtocolStats {
@@ -242,6 +253,7 @@ pub fn protocol_stats() -> ProtocolStats {
         unique_pingers: COUNTERS.unique_pingers.load(Ordering::Relaxed),
         dht_pings_received: COUNTERS.dht_pings_received.load(Ordering::Relaxed),
         custom_messages: COUNTERS.custom_messages.load(Ordering::Relaxed),
+        payload_duplicates: COUNTERS.payload_duplicates.load(Ordering::Relaxed),
     }
 }
 

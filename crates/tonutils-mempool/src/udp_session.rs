@@ -22,6 +22,7 @@ use tonutils_tl::tl::network::{
 };
 
 use crate::overlay_inbound::OverlayMemberCache;
+use crate::packet_dedup::PacketPreDedup;
 use crate::{overlay_inbound, protocol_stats};
 
 /// Interval between `overlay.getRandomPeers` keepalives on a live session.
@@ -52,6 +53,10 @@ pub struct AdnlUdpOverlaySession {
     /// peer answers `overlay.getRandomPeers`, see
     /// [`overlay_factory_with_endpoints`](crate::overlay_factory_with_endpoints).
     endpoints: crate::OverlayMemberEndpoints,
+    /// Raw-payload pre-dedup shared with every session of one factory,
+    /// so byte-identical flood copies stop before the TL parse and
+    /// signature verification.
+    pre_dedup: PacketPreDedup,
 }
 
 mod growth;
@@ -148,6 +153,7 @@ impl AdnlUdpOverlaySession {
             last_activity: Instant::now(),
             members: OverlayMemberCache::default(),
             endpoints: crate::OverlayMemberEndpoints::default(),
+            pre_dedup: PacketPreDedup::default(),
         })
     }
 
@@ -175,6 +181,7 @@ impl AdnlUdpOverlaySession {
             last_activity: Instant::now(),
             members: OverlayMemberCache::default(),
             endpoints: crate::OverlayMemberEndpoints::default(),
+            pre_dedup: PacketPreDedup::default(),
         })
     }
 
@@ -227,6 +234,7 @@ impl AdnlUdpOverlaySession {
             last_activity: Instant::now(),
             members: OverlayMemberCache::default(),
             endpoints: crate::OverlayMemberEndpoints::default(),
+            pre_dedup: PacketPreDedup::default(),
         };
         if let Err(error) = session
             .session
@@ -352,6 +360,14 @@ impl OverlaySession for AdnlUdpOverlaySession {
                                 );
                                 continue;
                             }
+                            if self.pre_dedup.is_duplicate(data) {
+                                protocol_stats::record_payload_duplicate();
+                                log::debug!(
+                                    "overlay UDP custom payload is a duplicate: peer={:?}",
+                                    self.peer
+                                );
+                                continue;
+                            }
                             match self.unwrap_overlay_payload(data) {
                                 Ok(data) => data,
                                 Err(error) => {
@@ -363,6 +379,14 @@ impl OverlaySession for AdnlUdpOverlaySession {
                                 }
                             }
                         } else {
+                            if self.pre_dedup.is_duplicate(&data) {
+                                protocol_stats::record_payload_duplicate();
+                                log::debug!(
+                                    "direct UDP payload is a duplicate: peer={:?}",
+                                    self.peer
+                                );
+                                continue;
+                            }
                             match self.unwrap_overlay_payload(&data) {
                                 Ok(data) => data,
                                 Err(error) => {
