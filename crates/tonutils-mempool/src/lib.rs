@@ -66,6 +66,16 @@ pub use udp_session::{
 /// through `overlay.getRandomPeers`.
 const PEER_GROWTH_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Ingest workers draining the overlay pool queue.
+///
+/// Dequeueing stays serialized by the pool's receiver lock, but the
+/// envelope validation, hashing and dedup run in parallel, so one slow
+/// parse no longer delays every later packet.  Ordering between pool
+/// packets is not observable: broadcasts are idempotent under dedup and
+/// overlay queries never ride this queue - they are answered inline
+/// inside the session receive loop.
+const INGEST_WORKERS: usize = 4;
+
 /// Hash of a serialized external message.
 pub type MessageHash = [u8; 32];
 
@@ -187,6 +197,11 @@ pub struct MempoolMetrics {
     pub broadcast_failures: u64,
     pub invalid_warnings: u64,
     pub overlay_packets: u64,
+    /// Overlay pool packets dropped by session receive loops because
+    /// the bounded ingest wait expired with the queue still full -
+    /// backpressure from the event consumer or a slow parse, mirrored
+    /// from [`OverlayPeerPool::ingest_drops`].
+    pub queue_full_drops: u64,
 }
 
 /// Outcome of the bootstrap discovery performed by
@@ -296,6 +311,7 @@ pub struct MempoolScanner {
     broadcast_failures: AtomicU64,
     invalid_warnings: AtomicU64,
     overlay_packets: AtomicU64,
+    queue_full_drops: AtomicU64,
     discovery_seeds: AtomicU64,
     discovery_results: AtomicU64,
     discovery_peers: AtomicU64,
@@ -344,6 +360,7 @@ impl MempoolScanner {
             broadcast_failures: AtomicU64::new(0),
             invalid_warnings: AtomicU64::new(0),
             overlay_packets: AtomicU64::new(0),
+            queue_full_drops: AtomicU64::new(0),
             discovery_seeds: AtomicU64::new(0),
             discovery_results: AtomicU64::new(0),
             discovery_peers: AtomicU64::new(0),
@@ -390,6 +407,7 @@ impl MempoolScanner {
             broadcast_failures: self.broadcast_failures.load(Ordering::Relaxed),
             invalid_warnings: self.invalid_warnings.load(Ordering::Relaxed),
             overlay_packets: self.overlay_packets.load(Ordering::Relaxed),
+            queue_full_drops: self.queue_full_drops.load(Ordering::Relaxed),
         }
     }
 
@@ -528,37 +546,65 @@ impl MempoolScanner {
         })
     }
 
+    /// Spawns the pool consumer that validates and dedups inbound overlay
+    /// packets into [`MempoolEvent::ExternalMessage`] events.
+    ///
+    /// [`INGEST_WORKERS`] tasks drain the pool concurrently: each one
+    /// runs the full validate-hash-dedup pipeline on whatever it
+    /// dequeues, so a slow parse no longer delays every later packet.
+    /// The workers stop together on `shutdown` or a closed pool queue.
     pub fn spawn_overlay_receiver_with_shutdown(
         self: Arc<Self>,
         pool: Arc<OverlayPeerPool>,
-        mut shutdown: tokio::sync::watch::Receiver<bool>,
+        shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = shutdown.changed() => break,
-                    packet = pool.next_packet() => {
-                        let Some(OverlayPacket { payload, routing }) = packet else { break; };
-                        self.overlay_packets.fetch_add(1, Ordering::Relaxed);
-                        let pkt_size = payload.len();
-                        // Stack-only prefix: no per-packet allocation, hex
-                        // only if the packet is actually rejected.
-                        let prefix_len = pkt_size.min(8);
-                        let mut pkt_prefix = [0u8; 8];
-                        pkt_prefix[..prefix_len].copy_from_slice(&payload[..prefix_len]);
-                        match self.ingest(payload, routing).await {
-                            Ok(_) => {}
-                            Err(MempoolError::QueueClosed) => break,
-                            Err(error) => {
-                                log::warn!(
-                                    "dropping invalid overlay packet: size={pkt_size} first_bytes={} error={error}",
-                                    hex::encode(&pkt_prefix[..prefix_len]),
-                                );
-                                self.invalid_warnings.fetch_add(1, Ordering::Relaxed);
+            let workers: Vec<_> = (0..INGEST_WORKERS)
+                .map(|_| {
+                    let this = Arc::clone(&self);
+                    let pool = Arc::clone(&pool);
+                    let mut shutdown = shutdown.clone();
+                    tokio::spawn(async move {
+                        loop {
+                            tokio::select! {
+                                _ = shutdown.changed() => break,
+                                packet = pool.next_packet() => {
+                                    let Some(OverlayPacket { payload, routing }) = packet else { break; };
+                                    this.overlay_packets.fetch_add(1, Ordering::Relaxed);
+                                    // Mirror the session-side bounded-wait
+                                    // drops recorded on the pool into this
+                                    // scanner's metrics; saturation keeps
+                                    // packets flowing, so every iteration
+                                    // re-reads a monotonic value.
+                                    this.queue_full_drops.fetch_max(
+                                        pool.ingest_drops(),
+                                        Ordering::Relaxed,
+                                    );
+                                    let pkt_size = payload.len();
+                                    // Stack-only prefix: no per-packet allocation, hex
+                                    // only if the packet is actually rejected.
+                                    let prefix_len = pkt_size.min(8);
+                                    let mut pkt_prefix = [0u8; 8];
+                                    pkt_prefix[..prefix_len].copy_from_slice(&payload[..prefix_len]);
+                                    match this.ingest(payload, routing).await {
+                                        Ok(_) => {}
+                                        Err(MempoolError::QueueClosed) => break,
+                                        Err(error) => {
+                                            log::warn!(
+                                                "dropping invalid overlay packet: size={pkt_size} first_bytes={} error={error}",
+                                                hex::encode(&pkt_prefix[..prefix_len]),
+                                            );
+                                            this.invalid_warnings.fetch_add(1, Ordering::Relaxed);
+                                        }
+                                    }
+                                }
                             }
                         }
-                    }
-                }
+                    })
+                })
+                .collect();
+            for worker in workers {
+                let _ = worker.await;
             }
         })
     }

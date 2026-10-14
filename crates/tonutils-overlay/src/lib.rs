@@ -441,6 +441,19 @@ pub enum OverlayError {
     QueueClosed,
 }
 
+/// Bounded wait on [`OverlayPeerPool::ingest`] from a session receive
+/// loop.
+///
+/// The queue between the sessions and the consumer is bounded, and a
+/// consumer stall must never freeze the loop that answers inline
+/// overlay queries: peers keep a member in `overlay.getRandomPeers`
+/// only while its pings are answered (pytoniq drops a peer after four
+/// unanswered pings).  Once the wait expires the packet is dropped -
+/// floods carry redundant copies anyway - and the loop goes straight
+/// back to polling `receive()`.
+#[cfg(feature = "runtime")]
+const INGEST_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
+
 /// Bounded peer pool used by scanners and broadcasters.
 #[cfg(feature = "runtime")]
 pub struct OverlayPeerPool {
@@ -449,6 +462,9 @@ pub struct OverlayPeerPool {
     packet_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<OverlayPacket>>>,
     statuses: broadcast::Sender<PeerStatus>,
     peers: Arc<RwLock<HashSet<PeerId>>>,
+    /// Packets dropped by session receive loops after the bounded
+    /// [`INGEST_WAIT_TIMEOUT`] elapsed with the queue still full.
+    ingest_drops: AtomicU64,
 }
 
 /// Persistent peer lifecycle manager with parallel receive loops and bounded
@@ -563,7 +579,35 @@ impl PeerManager {
                         match packet {
                             Ok(Ok(payload)) => {
                                 let packet = OverlayPacket { payload, routing: RoutingMetadata::new(overlay, peer) };
-                                if pool.ingest(packet).await.is_err() { break; }
+                                // Bounded wait: a stalled consumer must
+                                // never freeze this loop, because the
+                                // inline query answers it serves are what
+                                // keeps peers listing this node as a
+                                // verified member.
+                                match tokio::time::timeout(
+                                    INGEST_WAIT_TIMEOUT,
+                                    pool.ingest(packet),
+                                )
+                                .await
+                                {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(_)) => break,
+                                    Err(_) => {
+                                        let drops = pool.record_ingest_drop();
+                                        if drops == 1 || drops.is_multiple_of(100) {
+                                            log::warn!(
+                                                "overlay ingest queue saturated, dropping packet: peer={peer:?} drops={drops}"
+                                            );
+                                        } else {
+                                            log::debug!(
+                                                "overlay ingest queue saturated: peer={peer:?} drops={drops}"
+                                            );
+                                        }
+                                    }
+                                }
+                                // The peer delivered the packet; whether
+                                // our queue could take it is not peer
+                                // quality.
                                 scores.write().await.entry(peer).and_modify(|score| *score += 1);
                             }
                             Ok(Err(_)) => {
@@ -930,6 +974,7 @@ impl OverlayPeerPool {
             packet_rx: Arc::new(tokio::sync::Mutex::new(packet_rx)),
             statuses,
             peers: Arc::new(RwLock::new(HashSet::new())),
+            ingest_drops: AtomicU64::new(0),
         })
     }
 
@@ -958,6 +1003,27 @@ impl OverlayPeerPool {
 
     pub async fn next_packet(&self) -> Option<OverlayPacket> {
         self.packet_rx.lock().await.recv().await
+    }
+
+    /// Counts one packet a session loop had to drop because the queue
+    /// stayed full past [`INGEST_WAIT_TIMEOUT`], returning the new
+    /// total.
+    ///
+    /// Called only from the session receive loops under that bounded
+    /// wait; see [`Self::ingest_drops`] for the exposed counter.
+    pub fn record_ingest_drop(&self) -> u64 {
+        self.ingest_drops.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Packets dropped so far by session receive loops whose bounded
+    /// wait on [`Self::ingest`] expired with the queue still full.
+    ///
+    /// A non-zero value means the pool consumer stalled long enough to
+    /// fill the bounded queue; the drops themselves are the intended
+    /// trade-off, since the loop keeps answering overlay queries
+    /// instead of freezing.
+    pub fn ingest_drops(&self) -> u64 {
+        self.ingest_drops.load(Ordering::Relaxed)
     }
 
     pub fn subscribe_statuses(&self) -> broadcast::Receiver<PeerStatus> {

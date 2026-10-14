@@ -214,6 +214,23 @@ the pool consults `OverlaySession::last_activity` when the deadline expires
 and keeps a session whose inbound traffic is newer than the timeout; the
 default implementation returns `None` and preserves the hard deadline.
 
+A session's hand-off to the bounded pool queue
+(`OverlayPeerPool::ingest`) carries its own bound: after
+`INGEST_WAIT_TIMEOUT` (200 ms) the packet is dropped, the drop is counted
+in `OverlayPeerPool::ingest_drops` (surfaced as `MempoolMetrics::queue_full_drops`
+by the scanner's receiver workers), and the loop goes straight back to
+polling `receive()`. Without that bound a stalled consumer - a full
+event queue, one slow BoC parse - would freeze the loop that answers
+inline `overlay.ping` and `overlay.getRandomPeers` queries, and peers
+drop a member after four unanswered pings, so a receive-loop stall
+erodes membership in both directions. Drops are the intended trade-off:
+the flood a saturated queue implies carries redundant copies. The
+consumer side runs `INGEST_WORKERS` (4) drain workers: dequeueing stays
+serialized by the pool's receiver lock while validation, hashing and
+dedup run in parallel; packet ordering across workers is not observable
+because broadcasts are idempotent under dedup and queries never ride
+this queue.
+
 ## Upstream peer admission rules verified from source
 
 All of the following come from `overlay/overlay.cpp`, `overlay/overlay-peers.cpp`,

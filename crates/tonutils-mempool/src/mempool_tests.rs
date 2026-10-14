@@ -311,6 +311,54 @@ async fn overlay_receiver_stops_with_manager_shutdown() {
     receiver.await.unwrap();
 }
 
+/// The N receiver workers drain the pool queue exactly once each: every
+/// injected packet is counted and processed a single time, with no loss
+/// and no double-ingest across workers.
+#[tokio::test]
+async fn receiver_drains_pool_packets_across_workers() {
+    const PACKETS: u8 = 32;
+
+    let scanner = Arc::new(MempoolScanner::new(config()).unwrap());
+    let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+    let pool = manager.pool();
+    let receiver = scanner
+        .clone()
+        .spawn_overlay_receiver_with_shutdown(pool.clone(), manager.subscribe_shutdown());
+
+    let peer = PeerId::from_bytes([1; 32]);
+    pool.register_peer(peer).await;
+    let routing = RoutingMetadata::new(OverlayId::from_name(b"test"), peer);
+    for byte in 0..PACKETS {
+        pool.ingest(OverlayPacket {
+            payload: Arc::from([byte; 4].as_slice()),
+            routing: routing.clone(),
+        })
+        .await
+        .unwrap();
+    }
+
+    // The injected payloads are not BoCs, so each one must land in the
+    // invalid-packet path exactly once - processed twice would show up
+    // as more warnings than packets.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let metrics = scanner.metrics();
+        if metrics.invalid_warnings >= PACKETS as u64 {
+            assert_eq!(metrics.overlay_packets, PACKETS as u64);
+            assert_eq!(metrics.invalid_warnings, PACKETS as u64);
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "workers did not drain the queue in time: {metrics:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    manager.shutdown_wait().await;
+    receiver.await.unwrap();
+}
+
 #[tokio::test]
 async fn pinned_peers_honor_the_isolated_connection_limit() {
     let kept = PeerId::from_bytes([3; 32]);

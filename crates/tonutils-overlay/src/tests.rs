@@ -50,6 +50,71 @@ async fn rejects_unknown_and_oversized_packets() {
     assert_eq!(pool.next_packet().await.unwrap().payload.as_ref(), [1]);
 }
 
+/// A saturated consumer queue must not freeze a session receive loop:
+/// the bounded ingest wait drops the packet, the loop goes back to
+/// polling `receive()`, and the packet already in the queue is kept.
+#[tokio::test]
+async fn saturated_queue_never_freezes_the_session_loop() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingSession {
+        peer: PeerId,
+        receives: Arc<AtomicUsize>,
+    }
+
+    impl OverlaySession for CountingSession {
+        fn peer_id(&self) -> PeerId {
+            self.peer
+        }
+
+        fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+            self.receives.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(Arc::from([9u8; 4].as_slice())) })
+        }
+
+        fn send(&mut self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    let receives = Arc::new(AtomicUsize::new(0));
+    let peer = PeerId::from_bytes([7; 32]);
+    let manager = PeerManager::with_overlay(
+        OverlayConfig {
+            queue_capacity: 1,
+            ..Default::default()
+        },
+        OverlayId::from_name(b"test"),
+    )
+    .unwrap();
+    manager
+        .add_session(Box::new(CountingSession {
+            peer,
+            receives: Arc::clone(&receives),
+        }))
+        .await;
+    let pool = manager.pool();
+
+    // The first packet fills the one-slot queue; every later packet
+    // must wait out the bounded ingest wait and be dropped without
+    // stalling the loop that keeps polling `receive()`.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while pool.ingest_drops() == 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the session loop froze instead of dropping past a saturated queue: receives={}",
+            receives.load(Ordering::SeqCst)
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        receives.load(Ordering::SeqCst) >= 2,
+        "the loop must keep polling receive() after a drop"
+    );
+    // The saturated queue kept the packet it already held.
+    assert_eq!(pool.next_packet().await.unwrap().payload.as_ref(), [9; 4]);
+}
+
 #[test]
 fn discovery_rejects_bad_records_and_falls_back_to_seeds() {
     let overlay = OverlayId::from_name(b"mainnet");
