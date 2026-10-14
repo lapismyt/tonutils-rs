@@ -63,10 +63,18 @@ impl QuicOverlaySession {
                 _ => return Err("unsupported overlay FEC type".to_owned()),
             };
             let data_size = fec.data_size;
+            // `symbol_size` and `symbols_count` also bound what the
+            // raptorq transmission information is built from: its
+            // constructor asserts the RFC 6330 `K'_max` symbol bound
+            // (56 403), and the decoder config truncates `symbol_size`
+            // to `u16` - crafted values would otherwise panic the
+            // receive loop.
             if data_size <= 0
                 || data_size as usize > 1 << 20
                 || symbol_size <= 0
                 || symbols_count <= 0
+                || symbol_size > u16::MAX as i32
+                || symbols_count as usize > crate::broadcast::MAX_FEC_SOURCE_SYMBOLS
                 || fec_data_size != data_size
                 || (data_size as usize).div_ceil(symbol_size as usize) != symbols_count as usize
                 || fec.seqno < 0
@@ -90,18 +98,45 @@ impl QuicOverlaySession {
             // `symbol_size` bytes long is the raw upstream symbol,
             // anything longer must be a serialized packet whose
             // payload decodes to `symbol_size` bytes.
-            let packet = if fec.data.len() == symbol_size as usize {
-                EncodingPacket::new(
-                    raptorq::PayloadId::new(0, fec.seqno as u32),
-                    fec.data.clone(),
-                )
+            let (wire_seqno, symbol) = if fec.data.len() == symbol_size as usize {
+                (fec.seqno as u32, fec.data.clone())
             } else {
                 let packet = EncodingPacket::deserialize(&fec.data);
                 if packet.data().len() != symbol_size as usize {
                     return Err("overlay FEC symbol has invalid length".to_owned());
                 }
-                packet
+                if packet.payload_id().source_block_number() != 0 {
+                    return Err("overlay FEC packet has invalid source block".to_owned());
+                }
+                (
+                    packet.payload_id().encoding_symbol_id(),
+                    packet.data().to_vec(),
+                )
             };
+            // The wire `seqno` numbers source symbols
+            // `0..symbols_count` and repair symbols densely above it
+            // (`BroadcastFecActor` emits `(size / 768 + 1) * 2` of
+            // them).  The raptorq decoder instead reserves
+            // `[symbols_count, K')` for the zero-padded extended
+            // symbols and numbers repair symbols from `K'`, so repair
+            // ids shift up by `K' - symbols_count` - upstream's
+            // `td::fec::raptorq::Decoder::add_symbol` applies the same
+            // shift.  The bound check runs on the wire id, before the
+            // shift.
+            let max_symbol_id = symbols_count as u32 + (symbols_count as u32 / 2) + 1024;
+            if wire_seqno > max_symbol_id {
+                return Err("overlay FEC packet has an excessive symbol id".to_owned());
+            }
+            let packet = EncodingPacket::new(
+                raptorq::PayloadId::new(
+                    0,
+                    crate::broadcast::fec_wire_symbol_id_to_internal(
+                        wire_seqno,
+                        symbols_count as u32,
+                    ),
+                ),
+                symbol,
+            );
             let state = self
                 .fec
                 .entry(fec.data_hash.0)
@@ -126,13 +161,6 @@ impl QuicOverlaySession {
             }
             state.last_seen = Instant::now();
             let expected_size = state.data_size;
-            if packet.payload_id().source_block_number() != 0 {
-                return Err("overlay FEC packet has invalid source block".to_owned());
-            }
-            let max_symbol_id = symbols_count as u32 + (symbols_count as u32 / 2) + 1024;
-            if packet.payload_id().encoding_symbol_id() > max_symbol_id {
-                return Err("overlay FEC packet has an excessive symbol id".to_owned());
-            }
             let Some(reconstructed) = state.decoder.decode(packet) else {
                 return Err("overlay FEC payload is incomplete".to_owned());
             };

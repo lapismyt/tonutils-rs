@@ -12,9 +12,10 @@
 //! external message through the mempool overlay.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::future::{BoxFuture, join_all};
-use raptorq::Encoder;
+use raptorq::{Encoder, ObjectTransmissionInformation};
 use sha2::{Digest, Sha256};
 use tonutils_adnl::{KeyPair, now_i32};
 use tonutils_overlay::PeerManager;
@@ -38,6 +39,44 @@ pub const SIMPLE_BROADCAST_MAX: usize = 768;
 /// RaptorQ symbol size upstream's `BroadcastFecActor` uses
 /// (`overlay/broadcast-fec.cpp`).
 pub const FEC_SYMBOL_SIZE: usize = 768;
+
+/// Hard cap on the `symbols_count` of an FEC broadcast part.
+///
+/// The raptorq decoder asserts the RFC 6330 `K'_max` table bound
+/// (56 403 symbols per block) when its transmission information is
+/// built, so a crafted `fec.raptorQ` type with a huge symbol count
+/// would panic the receive loop.  Upstream broadcasts use
+/// `size / 768 + 1` symbols over at most 1 MiB of data, far below
+/// this bound.
+pub(crate) const MAX_FEC_SOURCE_SYMBOLS: usize = 56_403;
+
+/// Parts sent per FEC fan-out tick - upstream's
+/// `BroadcastFecActor::alarm` emits four symbols per tick.
+const FEC_PARTS_PER_TICK: usize = 4;
+
+/// Spacing between FEC fan-out ticks - upstream's
+/// `BroadcastFecActor::delay_` is 10 ms.
+const FEC_SEND_TICK: Duration = Duration::from_millis(10);
+
+/// Maps an `overlay.broadcastFec` wire `seqno` onto the raptorq
+/// crate's internal encoding symbol id.
+///
+/// The wire space numbers source symbols `0..symbols_count` and then
+/// repair symbols densely (`symbols_count + i`) - the space upstream's
+/// `BroadcastFecActor` emits.  The raptorq crate instead reserves
+/// `[symbols_count, K')` for the zero-padded extended symbols of the
+/// RFC 6330 block and numbers repair symbols from
+/// `K' = extended_source_block_symbols(symbols_count)`, so wire repair
+/// ids shift up by `K' - symbols_count` before decoding - upstream's
+/// `td::fec::raptorq::Decoder::add_symbol` applies the same shift
+/// (`symbol.id += K_padded - K`).  Source ids pass through unchanged.
+pub(crate) fn fec_wire_symbol_id_to_internal(wire_seqno: u32, symbols_count: u32) -> u32 {
+    if wire_seqno < symbols_count {
+        wire_seqno
+    } else {
+        wire_seqno + raptorq::extended_source_block_symbols(symbols_count) - symbols_count
+    }
+}
 
 /// Serializes the `tonNode.externalMessageBroadcast` wrapper that
 /// upstream and pytoniq put into a broadcast's `data` field.
@@ -112,7 +151,8 @@ struct FecBroadcastIdentity {
     flags: i32,
 }
 
-/// Splits `data` into signed RaptorQ broadcast parts.
+/// Splits `data` into signed RaptorQ broadcast parts: every source
+/// symbol plus one repair symbol per source symbol.
 ///
 /// Each part carries the raw RaptorQ symbol bytes in its `data`
 /// field and the symbol id in `seqno` - the wire format
@@ -122,18 +162,28 @@ struct FecBroadcastIdentity {
 /// `BroadcastFecPart::run_checks` verifies before the symbol is
 /// fed to the decoder.
 ///
-/// Upstream paces symbol emission over time (`BroadcastFecActor`
-/// emits four symbols per 10 ms tick); this function returns every
-/// source symbol at once so the caller can fire the whole fan-out
-/// in a single round of datagrams.  Receivers reconstruct the
-/// object from any `symbols_count` symbols, so the source set
-/// alone is sufficient.
+/// Upstream's `BroadcastFecActor` emits `(size / 768 + 1) * 2`
+/// symbols per broadcast: the `symbols_count` source symbols, which
+/// are the raw data slices, followed by repair symbols above wire id
+/// `symbols_count`.  This function emits the same set - a receiver
+/// that loses any single datagram can still reconstruct from the
+/// remaining parts instead of waiting for a retransmission that
+/// never comes (broadcasts are not resent by the sender).  The
+/// caller paces the fan-out at four parts per 10 ms tick the way
+/// `BroadcastFecActor::alarm` does.
+///
+/// The raptorq crate numbers repair symbols from the extended block
+/// size `K'`; see [`fec_wire_symbol_id_to_internal`] for the wire
+/// renumbering applied here.
 pub fn fec_broadcast_parts(
     keypair: &KeyPair,
     data: &[u8],
     flags: i32,
     date: i32,
 ) -> Vec<FecBroadcastPart> {
+    if data.is_empty() {
+        return Vec::new();
+    }
     let data_size = data.len() as i32;
     let symbol_size = FEC_SYMBOL_SIZE as i32;
     let symbols_count = data.len().div_ceil(FEC_SYMBOL_SIZE) as i32;
@@ -143,7 +193,14 @@ pub fn fec_broadcast_parts(
         symbols_count,
     };
     let data_hash = Int256(Sha256::digest(data).into());
-    let encoder = Encoder::with_defaults(data, FEC_SYMBOL_SIZE as u16);
+    // The same single-block transmission information the receive
+    // path builds, so encoder and decoder agree on the symbol
+    // layout.
+    let encoder = Encoder::new(
+        data,
+        ObjectTransmissionInformation::new(data.len() as u64, FEC_SYMBOL_SIZE as u16, 1, 1, 1),
+    );
+    let block = &encoder.get_block_encoders()[0];
     let public_key = keypair.public_key.to_bytes();
     let identity = FecBroadcastIdentity {
         src: broadcast_src(keypair, flags),
@@ -152,13 +209,27 @@ pub fn fec_broadcast_parts(
         data_size,
         flags,
     };
-    encoder
-        .get_encoded_packets(0)
+    let mut wire_symbols: Vec<(i32, Vec<u8>)> = Vec::with_capacity(2 * symbols_count as usize);
+    for packet in block.source_packets() {
+        let (payload_id, symbol) = packet.split();
+        wire_symbols.push((payload_id.encoding_symbol_id() as i32, symbol));
+    }
+    for (index, packet) in block
+        .repair_packets(0, symbols_count as u32)
         .into_iter()
-        .map(|packet| {
-            let seqno = packet.payload_id().encoding_symbol_id() as i32;
-            let symbol = packet.data();
-            let signature = fec_part_signature(keypair, &identity, symbol, seqno, date);
+        .enumerate()
+    {
+        // Repair symbols carry the dense upstream wire id
+        // `symbols_count + i`; the raptorq crate's internal id starts
+        // at the extended block size `K'`, so the offset is applied
+        // on the wire (source wire ids equal the internal ids).
+        let (_, symbol) = packet.split();
+        wire_symbols.push((symbols_count + index as i32, symbol));
+    }
+    wire_symbols
+        .into_iter()
+        .map(|(seqno, symbol)| {
+            let signature = fec_part_signature(keypair, &identity, &symbol, seqno, date);
             let object = tl_proto::serialize(OverlayBroadcastFec {
                 src: TlPublicKey::Ed25519 {
                     key: Int256(public_key),
@@ -167,7 +238,7 @@ pub fn fec_broadcast_parts(
                 data_hash: identity.data_hash.clone(),
                 data_size,
                 flags,
-                data: symbol.to_vec(),
+                data: symbol,
                 seqno,
                 fec: identity.fec_type.clone(),
                 date,
@@ -219,8 +290,8 @@ fn fec_part_signature(
 pub enum ExternalMessageBroadcast {
     /// Signed simple broadcast - one datagram per peer.
     Simple(Vec<u8>),
-    /// Signed RaptorQ source symbols, one `overlay.broadcastFec`
-    /// object each.
+    /// Signed RaptorQ symbols - every source symbol and one repair
+    /// symbol each, one `overlay.broadcastFec` object each.
     Fec(Vec<FecBroadcastPart>),
 }
 
@@ -245,11 +316,11 @@ pub fn external_message_broadcast(
 /// the overlay every scanner session is connected to.
 ///
 /// The signed broadcast (or, for payloads above
-/// [`SIMPLE_BROADCAST_MAX`], every signed RaptorQ source symbol) is
-/// serialized once and the identical bytes are fanned out to all
-/// UDP and QUIC sessions in parallel, so a published message
-/// leaves this node in a single round of datagrams and keeps
-/// propagating through upstream's neighbour re-broadcast.
+/// [`SIMPLE_BROADCAST_MAX`], every signed RaptorQ source and repair
+/// symbol, paced four parts per tick) is serialized once and fanned
+/// out to all UDP and QUIC sessions in parallel, so a published
+/// message leaves this node right away and keeps propagating through
+/// upstream's neighbour re-broadcast.
 pub struct OverlayBroadcastPeer {
     manager: Arc<PeerManager>,
     keypair: KeyPair,
@@ -318,19 +389,47 @@ impl BroadcastPeer for OverlayBroadcastPeer {
                 }
                 ExternalMessageBroadcast::Fec(parts) => {
                     let total = parts.len();
-                    let results = join_all(parts.into_iter().map(|part| {
-                        let manager = manager.clone();
-                        let ranked = ranked.clone();
-                        let object = Arc::from(part.object);
-                        async move { manager.broadcast_object_in_order(object, &ranked).await }
-                    }))
-                    .await;
-                    let delivered = results.into_iter().filter(|sent| *sent > 0).count();
+                    let mut delivered = 0usize;
+                    let mut remaining = parts.into_iter();
+                    // Upstream paces FEC symbols at four per 10 ms tick
+                    // (`BroadcastFecActor::alarm`); the same cadence keeps
+                    // the fan-out from bursting `2 * symbols_count`
+                    // datagrams at every neighbour at once, and the first
+                    // four parts still leave immediately, so typical
+                    // externals (up to four symbols) finish in one round.
+                    loop {
+                        let batch: Vec<_> = remaining.by_ref().take(FEC_PARTS_PER_TICK).collect();
+                        if batch.is_empty() {
+                            break;
+                        }
+                        let results =
+                            join_all(
+                                batch.into_iter().map(|part| {
+                                    let manager = manager.clone();
+                                    let ranked = ranked.clone();
+                                    let object = Arc::from(part.object);
+                                    async move {
+                                        manager.broadcast_object_in_order(object, &ranked).await
+                                    }
+                                }),
+                            )
+                            .await;
+                        delivered += results.into_iter().filter(|sent| *sent > 0).count();
+                        if remaining.size_hint().0 == 0 {
+                            break;
+                        }
+                        if delivered == 0 {
+                            // No session took the first parts - there is
+                            // nothing left to pace the rest into.
+                            break;
+                        }
+                        tokio::time::sleep(FEC_SEND_TICK).await;
+                    }
                     if delivered == 0 {
                         return Err("no overlay sessions connected".to_owned());
                     }
                     log::debug!(
-                        "overlay broadcast: FEC delivered {delivered}/{total} part fan-outs"
+                        "overlay broadcast: FEC sent {total} parts ({delivered} part fan-outs)"
                     );
                     Ok(())
                 }
@@ -424,13 +523,17 @@ mod tests {
         let date = now_i32();
         let wrapper = external_message_wrapper(&test_boc(2000));
         let parts = fec_broadcast_parts(&keypair, &wrapper, 0, date);
-        let symbols_count = wrapper.len().div_ceil(FEC_SYMBOL_SIZE);
-        assert_eq!(parts.len(), symbols_count, "one part per source symbol");
+        let expected_symbols = wrapper.len().div_ceil(FEC_SYMBOL_SIZE);
+        assert_eq!(
+            parts.len(),
+            2 * expected_symbols,
+            "every source symbol plus one repair symbol each"
+        );
 
         let data_hash: [u8; 32] = Sha256::digest(&wrapper).into();
         let mut symbols = Vec::with_capacity(parts.len());
         for (index, part) in parts.iter().enumerate() {
-            assert_eq!(part.seqno, index as i32, "source symbols are ordered");
+            assert_eq!(part.seqno, index as i32, "parts are ordered by wire id");
             let object = tl_proto::deserialize::<OverlayBroadcastFec>(&part.object)
                 .expect("valid FEC object");
             assert_eq!(
@@ -452,7 +555,10 @@ mod tests {
                 } => {
                     assert_eq!(*data_size as usize, wrapper.len());
                     assert_eq!(*symbol_size as usize, FEC_SYMBOL_SIZE);
-                    assert_eq!(*symbols_count as usize, parts.len());
+                    assert_eq!(
+                        *symbols_count as usize, expected_symbols,
+                        "fec.Type carries the source symbol count, not the part count"
+                    );
                 }
                 _ => panic!("expected RaptorQ"),
             }
@@ -482,7 +588,11 @@ mod tests {
             });
             let expected = keypair.sign_raw(&to_sign);
             assert_eq!(object.signature, expected.to_vec());
-            symbols.push((object.seqno as u32, object.data.clone()));
+            // This test checks the source-symbol fast path; repair
+            // symbols get their own lossy reconstruction test below.
+            if (object.seqno as usize) < expected_symbols {
+                symbols.push((object.seqno as u32, object.data.clone()));
+            }
         }
 
         // The source symbols must decode back to the wrapper, each
@@ -503,6 +613,48 @@ mod tests {
             }
         }
         panic!("source symbols must reconstruct the object");
+    }
+
+    #[test]
+    fn fec_repair_symbols_recover_lost_source_parts() {
+        let keypair = KeyPair::generate(&mut rand::rngs::OsRng);
+        let date = now_i32();
+        let wrapper = external_message_wrapper(&test_boc(2000));
+        let parts = fec_broadcast_parts(&keypair, &wrapper, 0, date);
+        let expected_symbols = wrapper.len().div_ceil(FEC_SYMBOL_SIZE);
+        assert!(expected_symbols > 1, "wrapper must span several symbols");
+        let mut decoder = raptorq::Decoder::new(raptorq::ObjectTransmissionInformation::new(
+            wrapper.len() as u64,
+            FEC_SYMBOL_SIZE as u16,
+            1,
+            1,
+            1,
+        ));
+        let mut reconstructed = None;
+        for part in &parts {
+            let object =
+                tl_proto::deserialize::<OverlayBroadcastFec>(&part.object).expect("valid FEC");
+            let wire = object.seqno as u32;
+            // Simulate one lost source datagram: source symbol 1
+            // never arrives, everything else does.
+            if wire == 1 {
+                continue;
+            }
+            let symbol_id = fec_wire_symbol_id_to_internal(wire, expected_symbols as u32);
+            let packet = raptorq::EncodingPacket::new(
+                raptorq::PayloadId::new(0, symbol_id),
+                object.data.clone(),
+            );
+            if let Some(data) = decoder.decode(packet) {
+                reconstructed = Some(data);
+                break;
+            }
+        }
+        assert_eq!(
+            reconstructed.expect("repair symbols must cover the lost source part"),
+            wrapper,
+            "the object must reassemble without the lost source symbol"
+        );
     }
 
     struct RecordingSession {

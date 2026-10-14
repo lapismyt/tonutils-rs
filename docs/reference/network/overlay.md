@@ -44,7 +44,7 @@ broadcast as
   datagram per peer, signature over
   `overlay.broadcast.toSign{sha256(overlay.broadcast.id{src, sha256(data),
   flags}), date}` (`BroadcastSimple::create`), or
-- signed RaptorQ source symbols (`overlay.broadcastFec`, `0xbad7c36a`) for
+- signed RaptorQ symbols (`overlay.broadcastFec`, `0xbad7c36a`) for
   everything larger: 768-byte symbols (upstream
   `BroadcastFecActor::symbol_size_`), the raw symbol bytes in `data` and
   the symbol id in `seqno` - the wire format `BroadcastsFec::process_broadcast`
@@ -65,11 +65,30 @@ constructor, so the `overlay.unicast` wrapper that `OverlaySession::send`
 adds would deliver broadcast bytes to the plain-message callback instead
 of the broadcast machinery.
 
-Upstream paces FEC symbol emission (four symbols per 10 ms tick); this
-implementation returns every source symbol at once, so the whole fan-out
-leaves the node in a single round of datagrams. Receivers reconstruct the
-object from any `symbols_count` symbols, so the source set alone is
-sufficient and repair symbols are not sent.
+Upstream paces FEC symbol emission at four symbols per 10 ms tick
+(`BroadcastFecActor::alarm`) and emits `(size / 768 + 1) * 2` symbols
+per broadcast - the `symbols_count` source symbols plus one repair
+symbol each. This implementation follows both: the fan-out sends four
+parts per 10 ms tick with the first four leaving immediately, so
+typical external messages (up to four symbols) finish within one tick,
+and the repair symbols let a receiver that loses any single datagram
+still reconstruct from the remaining parts instead of waiting for a
+retransmission that never comes (the sender does not resend a
+broadcast).
+
+The wire `seqno` numbers source symbols `0..symbols_count` and then
+repair symbols densely (`symbols_count + i`). The raptorq crate's
+decoder instead reserves `[symbols_count, K')` for the zero-padded
+extended symbols of the RFC 6330 block and numbers repair symbols from
+`K' = extended_source_block_symbols(symbols_count)`, so both receive
+paths (`udp_session`, `quic_session`) shift wire repair ids up by
+`K' - symbols_count` before feeding the decoder - the same shift
+upstream's `td::fec::raptorq::Decoder::add_symbol` applies
+(`symbol.id += K_padded - K`). Source ids pass through unchanged, so
+source-only part streams keep decoding exactly as before. As a side
+effect of the redundancy, a late repair-part stream can assemble a
+second time after the first reassembly; the duplicate reaches
+`accept_fast` dedup and is dropped there.
 
 ## Peer delivery quality and eviction
 

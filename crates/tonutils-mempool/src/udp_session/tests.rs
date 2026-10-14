@@ -367,7 +367,9 @@ async fn passes_through_signed_broadcast_payload_that_is_already_a_boc() {
 /// symbol bytes in `data` and the symbol id in `seqno`, the wire format
 /// upstream's `BroadcastsFec::process_broadcast` decodes - reassemble
 /// through the session's FEC receive path back to the bare external
-/// message BoC.
+/// message BoC as soon as the last source symbol lands; the trailing
+/// repair symbols are optional redundancy and arrive after the
+/// reassembly.
 #[tokio::test]
 async fn reassembles_upstream_format_fec_external_message() {
     let mut adapter = broadcast_test_adapter().await;
@@ -376,16 +378,33 @@ async fn reassembles_upstream_format_fec_external_message() {
     raw_boc.resize(1000, 0x0a);
     let wrapper = external_message_wrapper(&raw_boc);
     let parts = fec_broadcast_parts(&keypair, &wrapper, 0, now_i32());
-    let total = parts.len();
-    assert!(total > 1, "the wrapper must span several symbols");
+    let symbols_count = wrapper.len().div_ceil(crate::broadcast::FEC_SYMBOL_SIZE);
+    assert!(symbols_count > 1, "the wrapper must span several symbols");
+    assert_eq!(
+        parts.len(),
+        2 * symbols_count,
+        "source symbols plus one repair symbol each"
+    );
     for part in parts {
         let payload = adapter.unwrap_overlay_payload(&part.object);
-        if part.seqno + 1 == total as i32 {
-            assert_eq!(payload.unwrap(), raw_boc);
-        } else {
+        if part.seqno + 1 == symbols_count as i32 {
+            assert_eq!(
+                payload.unwrap(),
+                raw_boc,
+                "the last source symbol must complete the reassembly"
+            );
+        } else if part.seqno < symbols_count as i32 {
             assert!(
                 payload.is_err(),
                 "an incomplete FEC payload must not unwrap"
+            );
+        } else if let Ok(extra) = payload {
+            // Trailing repair symbols may assemble a second time from
+            // the repair set alone - that is the redundancy they
+            // exist for - but only ever to the same object.
+            assert_eq!(
+                extra, raw_boc,
+                "a repair reassembly must yield the same object"
             );
         }
     }
