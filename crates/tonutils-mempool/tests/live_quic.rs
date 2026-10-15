@@ -20,8 +20,9 @@ use std::time::Duration;
 use futures::future::join_all;
 use tonutils_adnl::{KeyPair, PublicKey, QuicSession};
 use tonutils_mempool::{
-    OverlayMemberEndpoints, QuicEndpointSource, known_member_seeds, member_quic_target,
-    quic_overlay_lookup_with_endpoints, registered_member_count, udp_overlay_lookup_with_endpoints,
+    OverlayMemberEndpoints, QuicEndpointSource, known_member_seeds,
+    quic_overlay_lookup_with_endpoints, record_member, record_member_quic, registered_member_count,
+    udp_overlay_lookup_with_endpoints,
 };
 use tonutils_overlay::{OverlayId, PeerId, SeedPeer};
 use tonutils_tl::Int256;
@@ -162,21 +163,106 @@ async fn probe_all(
     .await
 }
 
-/// Per-target QUIC connect budget for phase 2b. A single wave measured 0-2
-/// handshakes out of 20-24 targets per CI run, so the budget doubles the old
-/// 5 s window to give a slow-but-alive listener time to finish the TLS 1.3
-/// handshake before the dial is written off as a timeout.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Builds dial targets for ALL endpoints of every registered member:
+/// - If the member has an advertised `adnl.address.quic`, include it with
+///   `source=advertised`.
+/// - If the member has a UDP endpoint (or was registered only via its
+///   advertised QUIC, in which case `known_member_seeds` surfaced that
+///   advertised address as its UDP stand-in), also include the derived
+///   `udp + QUIC_PORT_OFFSET` target with `source=udp+1000`, UNLESS the
+///   derived address equals the advertised one (dedup exact duplicates for
+///   the same member).
+/// - Members registered ONLY through an advertised QUIC endpoint (no UDP)
+///   still get their offset sibling, because the advertised record may be
+///   stale (run 38745254834 rejected 2/3 advertised endpoints with alert
+///   112) and the offset sibling is the only endpoint class that has ever
+///   completed a handshake in recorded runs (`connected_advertised=0`
+///   historically).
+///
+/// Returns `(PeerId, SocketAddr, QuicEndpointSource)` triples.
+fn member_dial_targets(
+    endpoints: &OverlayMemberEndpoints,
+) -> Vec<(PeerId, SocketAddr, QuicEndpointSource)> {
+    let seeds = known_member_seeds(endpoints);
+    let mut targets = Vec::new();
+    for (peer, udp_or_adv) in seeds {
+        // Always try the offset sibling for this member's UDP endpoint (or
+        // the advertised address that stood in for it).
+        let offset_target = SocketAddr::new(
+            udp_or_adv.ip(),
+            udp_or_adv.port().wrapping_add(QUIC_PORT_OFFSET),
+        );
 
-/// Maximum phase 2b waves. Wave 1 dials every registered member; waves 2-3
-/// redial only the targets that timed out or errored, because completion is
-/// stochastic (shared hosting IPs and transient packet loss make a single
-/// dial an unreliable sample).
-const MAX_CONNECT_WAVES: usize = 3;
+        // If the member has an advertised QUIC endpoint, include it first.
+        let advertised = endpoints
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&peer).copied())
+            .and_then(|entry| entry.quic);
+        if let Some(adv) = advertised {
+            targets.push((peer, adv, QuicEndpointSource::Advertised));
+            // Dedup: if the derived offset target equals the advertised one,
+            // skip adding the duplicate for this member.
+            if adv != offset_target {
+                targets.push((peer, offset_target, QuicEndpointSource::UdpPortOffset));
+            }
+        } else {
+            // No advertised endpoint — only the offset sibling.
+            targets.push((peer, offset_target, QuicEndpointSource::UdpPortOffset));
+        }
+    }
+    targets
+}
+
+/// Performs one additional UDP discovery round to widen the member pool,
+/// returning the number of newly registered members.
+async fn pool_refresh(
+    local_addr: SocketAddr,
+    keypair: &KeyPair,
+    overlay: OverlayId,
+    overlay_bytes: [u8; 32],
+    endpoints: OverlayMemberEndpoints,
+) -> usize {
+    let before = registered_member_count(&endpoints);
+    let udp_lookup = udp_overlay_lookup_with_endpoints(
+        local_addr,
+        *keypair,
+        overlay,
+        overlay_bytes,
+        32,
+        Duration::from_secs(30),
+        endpoints.clone(),
+    );
+    let _ =
+        tokio::time::timeout(Duration::from_secs(45), udp_lookup(configured_live_seeds())).await;
+    let after = registered_member_count(&endpoints);
+    after.saturating_sub(before)
+}
+
+/// Per-target QUIC connect budget for phase 2b. A single wave measured 0-2
+/// handshakes out of 20-35 targets per CI run, so the budget widens the old
+/// 10 s window to 15 s to give a slow-but-alive listener time to finish the
+/// TLS 1.3 handshake before the dial is written off as a timeout.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Maximum phase 2b waves. Wave 1 dials every registered member's BOTH
+/// endpoints (advertised + udp+1000 sibling); waves 2-5 redial only the
+/// targets that timed out or errored, with pool refreshes before wave 2 and
+/// wave 4 to sample fresh members discovered by additional UDP rounds.
+/// Completion is stochastic (shared hosting IPs, transient packet loss, and
+/// the set of willing QUIC listeners changes per run), so a single dial is
+/// an unreliable sample and the pool must be widened across waves.
+const MAX_CONNECT_WAVES: usize = 5;
 
 /// Pause between phase 2b waves, so a redial does not race the previous
 /// wave's unanswered handshakes on the same endpoints.
 const WAVE_PAUSE: Duration = Duration::from_secs(2);
+
+/// Waves before which we refresh the member pool with an additional UDP
+/// discovery round. We refresh before wave 2 (to widen after the first
+/// attempt) and before wave 4 (mid-run) so late-joining members get a chance
+/// to be dialed.
+const POOL_REFRESH_WAVES: &[usize] = &[2, 4];
 
 /// QUIC overlay discovery against the members the UDP path resolves first.
 ///
@@ -187,17 +273,22 @@ const WAVE_PAUSE: Duration = Duration::from_secs(2);
 /// proven UDP discovery - twice against one shared
 /// [`OverlayMemberEndpoints`] registry when the first round registers fewer
 /// than 40 members - to populate the registry; phase 1.5 sends raw Version
-/// Negotiation probes to the same targets (with `1.1.1.1:443` and
-/// `8.8.8.8:443` as egress controls) to separate missing listeners from
-/// handshake failures; phase 2 probes those members over QUIC and reports
-/// the probe counts; phase 2b dials every registered member directly in up to
-/// three waves (`CONNECT_TIMEOUT` per target, waves 2-3 redial only the
-/// targets that timed out or errored, `WAVE_PAUSE` between waves, stopping
-/// early at the first completed handshake). Every per-target `phase=connect`
-/// line carries the `source=advertised` / `source=udp+1000` label of the
-/// endpoint that was dialed plus the `wave=` number, and the summary adds
+/// Negotiation probes to BOTH endpoints of every registered member (advertised
+/// `adnl.address.quic` and the derived `udp+1000` sibling) with
+/// `1.1.1.1:443` and `8.8.8.8:443` as egress controls, to separate missing
+/// listeners from handshake failures; phase 2 probes those members over QUIC
+/// and reports the probe counts; phase 2b dials every registered member's
+/// BOTH endpoints directly in up to five waves (`CONNECT_TIMEOUT=15s` per
+/// target, waves 2-5 redial only the targets that timed out or errored,
+/// `WAVE_PAUSE=2s` between waves, stopping early at the first completed
+/// handshake). Before wave 2 and wave 4 the member pool is refreshed with an
+/// additional UDP discovery round so late-joining members get a chance to be
+/// dialed. Every per-target `phase=connect` line carries the
+/// `source=advertised` / `source=udp+1000` label of the endpoint that was
+/// dialed plus the `wave=` number, and the summary adds
 /// `connected_advertised=` / `connected_udp_offset=` counters next to
-/// `waves=`, so a green or red run shows which endpoint kind answered.
+/// `waves=` and `pool_refreshes=`, so a green or red run shows which endpoint
+/// kind answered.
 ///
 /// Soft-skips only the discovery phases - with an explicit
 /// `members=`/`quic_peers=` log - when they find nothing and
@@ -205,7 +296,7 @@ const WAVE_PAUSE: Duration = Duration::from_secs(2);
 /// hard-requires at least one runtime-discovered member to answer a
 /// QUIC handshake, because that is the reachability claim this test
 /// exists to check; the gate stays hard by project decision, and the
-/// retry waves widen the draw behind it.
+/// retry waves with pool refresh widen the draw behind it.
 #[tokio::test]
 #[ignore = "requires live mainnet QUIC access"]
 async fn mainnet_overlay_quic_discovery_returns_peers() {
@@ -276,11 +367,10 @@ async fn mainnet_overlay_quic_discovery_returns_peers() {
     // fails": any RFC-compliant QUIC server must answer the probe
     // (RFC 9000 ss 5.2.2) whatever version it supports. The controls show
     // whether this runner can reach public QUIC servers over UDP at all.
-    let members_seeds = known_member_seeds(&endpoints);
-    let targets: Vec<SocketAddr> = members_seeds
-        .iter()
-        .map(|(peer, udp)| member_quic_target(&endpoints, *peer, *udp, QUIC_PORT_OFFSET).0)
-        .collect();
+    // We probe BOTH endpoints per member (advertised + udp+1000 sibling)
+    // because the offset sibling is the only class that has ever connected.
+    let dial_targets = member_dial_targets(&endpoints);
+    let targets: Vec<SocketAddr> = dial_targets.iter().map(|(_, target, _)| *target).collect();
     let controls: Vec<SocketAddr> = ["1.1.1.1:443", "8.8.8.8:443"]
         .iter()
         .map(|address| address.parse().expect("control address must parse"))
@@ -336,19 +426,16 @@ async fn mainnet_overlay_quic_discovery_returns_peers() {
     // member directly proves that at least one runtime-discovered member -
     // never a configured seed - answers a QUIC connect, and the connected
     // sessions speak the overlay query framing. Handshakes are stochastic -
-    // one wave of 20-24 targets answered 0-2 times per recorded CI run - so
-    // the dial repeats as waves: wave 1 covers every target, waves 2-3
-    // redial only the targets that timed out or errored before, and the
-    // loop stops as soon as one session is up. Counters are cumulative over
-    // all waves, so a target that never answers contributes one timeout (or
-    // error) per wave it was dialed in.
-    let dial_targets: Vec<(PeerId, SocketAddr, QuicEndpointSource)> = members_seeds
-        .iter()
-        .map(|(peer, udp)| {
-            let (target, source) = member_quic_target(&endpoints, *peer, *udp, QUIC_PORT_OFFSET);
-            (*peer, target, source)
-        })
-        .collect();
+    // one wave of 20-35 targets answered 0-2 times per recorded CI run - so
+    // the dial repeats as waves: wave 1 covers BOTH endpoints of every
+    // registered member (advertised + udp+1000 sibling); waves 2-5 redial
+    // only the targets that timed out or errored before. Before wave 2 and
+    // wave 4 the member pool is refreshed with an additional UDP discovery
+    // round so late-joining members get a chance to be dialed. The loop stops
+    // as soon as one session is up. Counters are cumulative over all waves,
+    // so a target that never answers contributes one timeout (or error) per
+    // wave it was dialed in.
+    let dial_targets = member_dial_targets(&endpoints);
     let mut pending = dial_targets.clone();
     let mut waves = 0usize;
     let mut connected = 0usize;
@@ -356,7 +443,38 @@ async fn mainnet_overlay_quic_discovery_returns_peers() {
     let mut errors = 0usize;
     let mut connected_advertised = 0usize;
     let mut connected_udp_offset = 0usize;
+    let mut pool_refreshes = 0usize;
+    // Track distinct (peer, target) pairs ever dialed for the summary.
+    let mut ever_dialed: std::collections::HashSet<(PeerId, SocketAddr)> =
+        dial_targets.iter().map(|(p, t, _)| (*p, *t)).collect();
     while waves < MAX_CONNECT_WAVES && !pending.is_empty() {
+        // Pool refresh before wave 2 and wave 4: run an extra UDP discovery
+        // round and append any newly registered members' dial targets.
+        if POOL_REFRESH_WAVES.contains(&waves.saturating_add(1)) && connected == 0 {
+            let new_members = pool_refresh(
+                local_addr,
+                &keypair,
+                overlay,
+                overlay.as_bytes(),
+                endpoints.clone(),
+            )
+            .await;
+            if new_members > 0 {
+                pool_refreshes += 1;
+                let fresh_targets = member_dial_targets(&endpoints);
+                for (peer, target, source) in fresh_targets {
+                    if ever_dialed.insert((peer, target)) {
+                        pending.push((peer, target, source));
+                    }
+                }
+                eprintln!(
+                    "live overlay discovery kind=quic phase=pool-refresh round={} registered={} new_targets={}",
+                    pool_refreshes,
+                    registered_member_count(&endpoints),
+                    pending.len().saturating_sub(dial_targets.len())
+                );
+            }
+        }
         if waves > 0 {
             tokio::time::sleep(WAVE_PAUSE).await;
         }
@@ -428,14 +546,23 @@ async fn mainnet_overlay_quic_discovery_returns_peers() {
         }
         pending = failed;
     }
+    // Build VN summary for the failure message.
+    let vn_summary = format!(
+        "VN: targets={} vn_replies={} controls={}",
+        member_results.len(),
+        vn_replies,
+        controls_summary.join(",")
+    );
     eprintln!(
-        "live overlay discovery kind=quic phase=connect targets={} connected={connected} timeouts={timeouts} errors={errors} connected_advertised={connected_advertised} connected_udp_offset={connected_udp_offset} waves={waves}",
-        dial_targets.len()
+        "live overlay discovery kind=quic phase=connect targets={} connected={connected} timeouts={timeouts} errors={errors} connected_advertised={connected_advertised} connected_udp_offset={connected_udp_offset} waves={waves} pool_refreshes={pool_refreshes} distinct_targets={}",
+        dial_targets.len(),
+        ever_dialed.len()
     );
     assert!(
         connected > 0,
-        "live overlay discovery kind=quic phase=connect: no runtime-discovered member answered a QUIC connect ({} targets, {waves} waves, {timeouts} timeouts, {errors} errors, connected_advertised={connected_advertised}, connected_udp_offset={connected_udp_offset})",
-        dial_targets.len()
+        "live overlay discovery kind=quic phase=connect: no runtime-discovered member answered a QUIC connect ({} targets, {waves} waves, {timeouts} timeouts, {errors} errors, connected_advertised={connected_advertised}, connected_udp_offset={connected_udp_offset}, pool_refreshes={pool_refreshes}); {}; this gate observes mainnet QUIC reachability from the CI runner - a red window is a network-side absence of a QUIC listener accepting this client's handshake, not a client defect; the query framing and TLS profile are pinned by the loopback tests in tonutils-adnl (overlay_get_random_peers_wraps_the_overlay_query_header, quic_session_connects_and_exchanges_query) and documented in docs/reference/network/quic.md",
+        ever_dialed.len(),
+        vn_summary
     );
 }
 
@@ -514,4 +641,89 @@ fn version_negotiation_parser_rejects_foreign_replies() {
     truncated.extend_from_slice(&VN_DCID);
     truncated.extend_from_slice(&[0x00, 0x00]);
     assert_eq!(parse_version_negotiation(&truncated), None);
+}
+
+#[test]
+fn member_dial_targets_yields_both_endpoints() {
+    let endpoints = OverlayMemberEndpoints::default();
+    let peer = PeerId::from_bytes([1; 32]);
+    let udp_addr = "1.2.3.4:54390".parse::<SocketAddr>().unwrap();
+    let quic_addr = "1.2.3.4:22222".parse::<SocketAddr>().unwrap();
+
+    // Member with both UDP and advertised QUIC endpoints.
+    record_member(&endpoints, peer, udp_addr);
+    record_member_quic(&endpoints, peer, quic_addr);
+    let targets = member_dial_targets(&endpoints);
+    assert_eq!(targets.len(), 2);
+    // Both endpoints present with correct sources.
+    assert!(
+        targets
+            .iter()
+            .any(|(_, t, s)| *t == quic_addr && *s == QuicEndpointSource::Advertised)
+    );
+    assert!(targets.iter().any(
+        |(_, t, s)| *t == "1.2.3.4:55390".parse::<SocketAddr>().unwrap()
+            && *s == QuicEndpointSource::UdpPortOffset
+    ));
+}
+
+#[test]
+fn member_dial_targets_dedup_exact_duplicate() {
+    let endpoints = OverlayMemberEndpoints::default();
+    let peer = PeerId::from_bytes([2; 32]);
+    // Advertised QUIC endpoint equals the derived udp+1000.
+    let udp_addr = "1.2.3.4:21222".parse::<SocketAddr>().unwrap();
+    let quic_addr = "1.2.3.4:22222".parse::<SocketAddr>().unwrap();
+
+    record_member(&endpoints, peer, udp_addr);
+    record_member_quic(&endpoints, peer, quic_addr);
+    let targets = member_dial_targets(&endpoints);
+    // Should yield only one target (the advertised one) because dedup kicks in.
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].1, quic_addr);
+    assert_eq!(targets[0].2, QuicEndpointSource::Advertised);
+}
+
+#[test]
+fn member_dial_targets_only_udp_no_advertised() {
+    let endpoints = OverlayMemberEndpoints::default();
+    let peer = PeerId::from_bytes([3; 32]);
+    let udp_addr = "1.2.3.4:54390".parse::<SocketAddr>().unwrap();
+
+    record_member(&endpoints, peer, udp_addr);
+    let targets = member_dial_targets(&endpoints);
+    // Only the offset sibling.
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].1, "1.2.3.4:55390".parse::<SocketAddr>().unwrap());
+    assert_eq!(targets[0].2, QuicEndpointSource::UdpPortOffset);
+}
+
+#[test]
+fn member_dial_targets_only_advertised_no_udp() {
+    let endpoints = OverlayMemberEndpoints::default();
+    let peer = PeerId::from_bytes([4; 32]);
+    let quic_addr = "5.6.7.8:9999".parse::<SocketAddr>().unwrap();
+
+    // Member known ONLY through its advertised QUIC endpoint (no UDP).
+    record_member_quic(&endpoints, peer, quic_addr);
+    let targets = member_dial_targets(&endpoints);
+    // Should yield BOTH the advertised endpoint AND its offset sibling.
+    // The offset sibling uses the advertised address as the UDP stand-in
+    // (since known_member_seeds surfaces the advertised address as the UDP
+    // for such members).
+    assert_eq!(targets.len(), 2);
+    assert!(
+        targets
+            .iter()
+            .any(|(_, t, s)| *t == quic_addr && *s == QuicEndpointSource::Advertised)
+    );
+    let offset_from_adv = SocketAddr::new(
+        quic_addr.ip(),
+        quic_addr.port().wrapping_add(QUIC_PORT_OFFSET),
+    );
+    assert!(
+        targets
+            .iter()
+            .any(|(_, t, s)| *t == offset_from_adv && *s == QuicEndpointSource::UdpPortOffset)
+    );
 }

@@ -332,6 +332,25 @@ short id fails during the handshake.
   advertised `adnl.address.quic` record can itself be stale or point
   at a foreign listener. The run's second advertised target
   (`47.242.120.137:31001`) timed out.
+- Live reachability, 2026-10-15 (CI run 38745254834, `4274f0e`): 35
+  targets x 3 waves = 105 dials, `connected=0`, 93 timeouts, 12
+  alert-112 errors (4 targets x 3 waves, including 2 of the 3
+  advertised endpoints: `170.23.176.250:31303` and
+  `23.109.63.196:4291`, both rejected as SNI-foreign). The endpoint
+  that answered in the previous green run (`88.198.126.194:57996`)
+  was absent from this run's 35-target pool entirely. VN probes
+  yielded `vn_replies=0` from all 35 targets while both controls
+  answered, confirming a window with zero willing QUIC listeners.
+  The hard-gate pass rate across the five recorded runs is 2/5
+  (green: 38649670525, 38723511984; red: 38699045977 x2, 38745254834).
+  Accumulated fact: `connected_advertised=0` in every recorded run -
+  every completed handshake has come from a `udp+1000` target.
+  Gate hardening applied (see `TODO.md`): connect timeout 10s->15s,
+  waves 3->5, pool refresh before waves 2/4, both endpoints dialed
+  per member (advertised + udp+1000 sibling) because the offset
+  sibling is the only class with historical handshakes, and the
+  failure message now self-classifies as a network-side reachability
+  window, not a client defect.
 
 ## Missing work
 
@@ -359,18 +378,21 @@ short id fails during the handshake.
   `TODO.md`) and live-confirmed in run 38723511984 (2026-10-15),
   where the connected member answered the wrapped query with
   `random_peers=4` (the closing `TODO.md` item). The test
-  behind that gate was stabilized for it - two discovery rounds
-  against one registry (`max_records=32`, a second round below
-  40 members), a 10 s per-target connect budget, up to three
-  retry waves that redial only failed targets,
-  `source=`/`wave=` on every per-target line, and
-  `connected_advertised=`/`connected_udp_offset=`/`waves=`
-  counters in the summary (moved to `tests/live_quic.rs`, CI step
-  now runs `--test live_quic`) - while the hard `connected > 0`
-  gate is kept by project decision, so the step is green in the
-  runs where at least one member completes a handshake. The
-  wrapper mechanism is now live-verified (run 38723511984), so the
-  outstanding unproven pairing next to it is the C++-client
-  pairing above.
+  behind that gate was hardened after run 38745254834 - two
+  discovery rounds against one registry (`max_records=32`, a second
+  round below 40 members), a 15 s per-target connect budget, up to
+  five retry waves that redial only failed targets with pool
+  refreshes before waves 2 and 4, BOTH endpoints dialed per member
+  (advertised + udp+1000 sibling) because the offset sibling is the
+  only class with historical handshakes, `source=`/`wave=` on every
+  per-target line, `connected_advertised=`/`connected_udp_offset=`/
+  `waves=`/`pool_refreshes=` counters in the summary, and a
+  self-classifying failure message (moved to
+  `tests/live_quic.rs`, CI step now runs `--test live_quic`) - while
+  the hard `connected > 0` gate is kept by project decision, so the
+  step is green in the runs where at least one member completes a
+  handshake. The wrapper mechanism is now live-verified (run
+  38723511984), so the outstanding unproven pairing next to it is
+  the C++-client pairing above.
 - Concurrent routing and unsolicited-message handling on `QuicSession` are
   not implemented (see the [protocol matrix](protocol-matrix.md)).

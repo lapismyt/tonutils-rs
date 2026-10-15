@@ -367,14 +367,22 @@ recorded arms: run 38594880666 (2026-10-14, `386042b`) delivered ~80 s into
 the wait, seconds after a growth-phase peer pinged it and started pushing
 `overlay.message` custom datagrams; run 38558546040 (2026-10-14, `4894e5f`)
 delivered at ~295 s after 4313 such datagrams; runs 38579887480 (2026-10-14,
-`5fec546`) and 38723511984 (2026-10-15, `694aa49`) received none within the
-full 300 s budget despite normal membership and pinger counters. The earlier
-129-192 s band is superseded by these arms: timing follows whether any
-neighbour holder samples this node in its fan-out, and `membership_listed`
-and `dht_pings_received` - both 0 in every run, delivering or not - gate
-only third-party discovery, nothing in the observed path. A delivery's
-absence in a 300 s window still proves nothing about this node's
-reachability.
+`5fec546`), 38723511984 (2026-10-15, `694aa49`), and 38745254834 (2026-10-15,
+`4274f0e`) received none within the full 300 s budget despite normal
+membership and pinger counters. The earlier 129-192 s band is superseded by
+these arms: timing follows whether any neighbour holder samples this node in
+its fan-out, and `membership_listed` and `dht_pings_received` - both 0 in
+every run, delivering or not - gate only third-party discovery, nothing in
+the observed path. A delivery's absence in a 300 s window still proves
+nothing about this node's reachability.
+
+Roster freeze: every recent run saturated at `registered_peers=65-71` against
+the default `overlay_max_peers=64`, so the managed roster froze near the cap
+within the first minute, all admission tickets were spent early, and growth
+stopped adding fresh full-node contacts. The CI test now runs with
+`TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS=128` and aggressive churn (`churn_interval=10s`,
+`quality_eviction=true`) so eviction -> growth round -> new admission ticket
+cycles continue throughout the 300 s wait.
 
 ### Address routing: channels versus stored lists
 

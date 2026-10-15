@@ -282,6 +282,7 @@ jobs:
       - name: Run configured seed-only mempool live test
         env:
           TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS || '300' }}
+          TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS: '128'
         # Job logs require admin access, so a failed acceptance run must
         # publish its own diagnosis: the final metrics line, ADNL channel
         # negotiation counts, custom-message (broadcast candidate) counters,

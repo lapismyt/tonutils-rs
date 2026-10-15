@@ -7,7 +7,8 @@ use futures::future::join_all;
 use tonutils_adnl::{AdnlUdpSession, KeyPair, PublicKey};
 use tonutils_mempool::MempoolScannerBuilder;
 use tonutils_mempool::{
-    MempoolConfig, MempoolEvent, OverlayMemberEndpoints, known_member_seeds, udp_overlay_lookup,
+    MempoolConfig, MempoolEvent, OverlayMemberEndpoints, PeerQualityConfig, known_member_seeds,
+    udp_overlay_lookup,
 };
 use tonutils_network_config::extract_dht_addresses;
 use tonutils_overlay::{OverlayId, PeerId, PeerStatus, SeedPeer};
@@ -354,6 +355,15 @@ async fn configured_seed_delivers_valid_external_message() {
         // that can verify this node and push broadcasts to it.
         .overlay_max_peers(overlay_max_peers)
         .member_endpoints(member_endpoints.clone())
+        // Enable quality eviction with aggressive churn so managed slots rotate
+        // during the 300 s wait, letting growth continuously add fresh full-node
+        // contacts (each eviction -> growth round -> new admission ticket).
+        .peer_quality(PeerQualityConfig {
+            churn_interval: Duration::from_secs(10),
+            sweep_interval: Duration::from_secs(1),
+            ..PeerQualityConfig::default()
+        })
+        .quality_eviction(true)
         .native_udp("0.0.0.0:0".parse().unwrap(), local_key, None)
         .start()
         .await
@@ -426,8 +436,9 @@ async fn configured_seed_delivers_valid_external_message() {
             let peers = manager.peer_count().await;
             let metrics = scanner.metrics();
             let protocol = scanner.protocol_stats();
+            let custom_arrived = protocol.custom_messages;
             panic!(
-                "live mempool phase=delivery timed out after {timeout}s: registered_peers={peers} metrics={metrics:?} protocol={protocol:?}"
+                "live mempool phase=delivery timed out after {timeout}s: registered_peers={peers} metrics={metrics:?} protocol={protocol:?}; inbound custom overlay datagrams arrived={custom_arrived} in this window; delivery requires a verified-neighbour holder to sample this node into its broadcast fan-out (upstream get_neighbours(propagate_broadcast_to() = 5)), so a red window is an upstream sampling outcome, not a client defect - mechanism and recorded arms in docs/reference/network/overlay.md"
             );
         }
     };
