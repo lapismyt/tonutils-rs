@@ -166,14 +166,46 @@ impl QuicSession {
     }
 
     /// Sends an overlay getRandomPeers query over QUIC.
+    ///
+    /// `quic.query.data` must carry the `overlay.query{overlay}` header -
+    /// upstream `ton_api.tl` defines `overlay.query overlay:int256 = True;`
+    /// as a 4-byte constructor plus the 32-byte overlay id, with the inner
+    /// query bytes appended RAW (no `bytes` length prefix) - because the
+    /// member dispatches on that prefix: `OverlayManager` subscribes only
+    /// `overlay.query`/`overlay.queryWithExtra` (plus the two message
+    /// constructors) on the member's NODE id, and a bare inner query
+    /// matches no prefix, so it is dropped with "no callbacks for custom
+    /// query" and `QuicSender::on_inbound_query` has no error branch - no
+    /// `quic.answer` is sent and the client just times out. That was the
+    /// recorded pre-fix symptom: 4/4 completed mainnet handshakes never
+    /// answered `overlay.getRandomPeers` within 15s (Evidence in
+    /// `docs/reference/network/quic.md`).
+    ///
+    /// The framing matches the proven UDP path
+    /// (`AdnlUdpSession::send_overlay_get_random_peers_with_id`) and
+    /// upstream's `OverlayManager::send_query_via`.
+    ///
+    /// `peers` stays empty: the QUIC session has no signed local overlay
+    /// node (the UDP client builds one from its channel address list), and
+    /// that is safe because upstream `OverlayImpl::process_query` answers
+    /// `overlay.getRandomPeers` regardless of the list - `add_peers` of an
+    /// empty `overlay.nodes` is a no-op. The only cost is peer admission,
+    /// not the answer: an outgoing query with an empty `peers` list does
+    /// not queue this node in the member's `pending_peers_` (see
+    /// `docs/reference/network/overlay.md`), so ping-back visibility is
+    /// left to the UDP path that carries the signed record.
     pub async fn overlay_get_random_peers(
         &self,
-        _overlay: Int256,
+        overlay: Int256,
         timeout: Duration,
     ) -> Result<tonutils_tl::tl::network::OverlayNodesBoxed, AdnlError> {
-        let query = tl_proto::serialize(tonutils_tl::tl::network::OverlayQuery::GetRandomPeers {
-            peers: tonutils_tl::tl::network::OverlayNodes { nodes: Vec::new() },
-        });
+        let mut query =
+            tl_proto::serialize(tonutils_tl::tl::network::OverlayQuery::Query { overlay });
+        query.extend(tl_proto::serialize(
+            tonutils_tl::tl::network::OverlayQuery::GetRandomPeers {
+                peers: tonutils_tl::tl::network::OverlayNodes { nodes: Vec::new() },
+            },
+        ));
         let response = self.send_query(query, timeout).await?;
         tl_proto::deserialize(&response).map_err(|e| AdnlError::TlsConfig(e.to_string()))
     }
@@ -348,6 +380,81 @@ mod tests {
 
         let (_server_result, response) = tokio::join!(server_fut, client_fut);
         assert_eq!(response, vec![42]);
+    }
+
+    #[tokio::test]
+    async fn overlay_get_random_peers_wraps_the_overlay_query_header() {
+        let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+        let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+
+        let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair).unwrap();
+        let server_addr = server.endpoint.local_addr().unwrap();
+
+        let client_handle = tokio::spawn({
+            let pk = server_keypair.public_key;
+            async move {
+                QuicSession::connect(
+                    "127.0.0.1:0".parse().unwrap(),
+                    server_addr,
+                    client_keypair,
+                    pk,
+                )
+                .await
+                .unwrap()
+            }
+        });
+
+        let (server_conn, _sni) = server.accept().await.unwrap();
+        let server_fut = async move {
+            let (mut send, mut recv) = server_conn.accept_bi().await.unwrap();
+            let buf = recv.read_to_end(MAX_FRAME_SIZE).await.unwrap();
+            let query: QuicQuery = tl_proto::deserialize(&buf).unwrap();
+
+            // Exact byte equality proves all four properties at once: the
+            // `overlay.query overlay:int256 = True` header (4-byte
+            // constructor + 32-byte overlay id, no length prefix), the
+            // overlay id value itself, the RAW unlength-prefixed suffix,
+            // and the inner `overlay.getRandomPeers` constructor with an
+            // empty `overlay.nodes`.
+            let mut expected = tl_proto::serialize(tonutils_tl::tl::network::OverlayQuery::Query {
+                overlay: Int256([7; 32]),
+            });
+            expected.extend(tl_proto::serialize(
+                tonutils_tl::tl::network::OverlayQuery::GetRandomPeers {
+                    peers: tonutils_tl::tl::network::OverlayNodes { nodes: vec![] },
+                },
+            ));
+            assert_eq!(
+                query.data, expected,
+                "the quic.query payload must be the overlay.query header \
+                 (constructor + overlay id) followed by the raw \
+                 overlay.getRandomPeers query"
+            );
+
+            let answer = QuicAnswer {
+                data: tl_proto::serialize(tonutils_tl::tl::network::OverlayNodesBoxed {
+                    nodes: vec![],
+                }),
+            };
+            let answer_bytes = tl_proto::serialize(answer);
+            send.write_all(&answer_bytes).await.unwrap();
+            send.finish().unwrap();
+            server_conn.closed().await;
+        };
+
+        let client_fut = async {
+            let client = client_handle.await.unwrap();
+            client
+                .overlay_get_random_peers(Int256([7; 32]), Duration::from_secs(5))
+                .await
+                .unwrap()
+        };
+
+        let ((), nodes) = tokio::join!(server_fut, client_fut);
+        assert!(
+            nodes.nodes.is_empty(),
+            "the loopback answer must round-trip as zero overlay nodes"
+        );
     }
 
     #[tokio::test]

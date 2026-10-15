@@ -144,9 +144,14 @@ short id fails during the handshake.
   handshake response), while one member
   (`198.13.134.211:9589`) runs a live QUIC endpoint
   that actively aborts the cryptographic handshake with
-  CRYPTO_ERROR `0x170` - TLS alert 112
-  (`bad_certificate_status_response` per the IANA
-  registry). Run 38292378027 measured the first
+  CRYPTO_ERROR `0x170` - TLS alert 112 =
+  `unrecognized_name` (RFC 6066; `bad_certificate_status_response`
+  is alert 113, `0x171`). That is exactly the alert
+  upstream's SNI callback sends for an unknown name (see
+  "SNI gating" above), so the rejection is consistent with
+  dialing a guessed `udp+1000` port whose QUIC listener
+  hosts a different node identity than the dialed member.
+  Run 38292378027 measured the first
   completed handshake: 23 targets, 21 silent, 1
   aborting with alert 112 (`91.108.10.44:33000`), and
   1 (`5.199.161.213:31310`) completing the full TLS 1.3
@@ -154,11 +159,142 @@ short id fails during the handshake.
   client auth - so the live test's hard `connected > 0`
   assert passed and the CI step went green. The
   connected member did not answer `overlay.getRandomPeers`
-  within 15s (logged as `query_error`), which is the
-  open question tracked in `TODO.md`. The live test's
+  within 15s (logged as `query_error`) - the symptom whose root
+  cause was later confirmed and fixed (see the client-side
+  addressing gap below, tracked in `TODO.md`). The live test's
   per-target `phase=connect` lines separate silence,
   active rejection, and completed handshakes on every
   run.
+- Live reachability, 2026-10-14/15 (CI runs 38649670525 and
+  38699045977 plus its re-run; the test now lives in
+  `crates/tonutils-mempool/tests/live_quic.rs`): run 38649670525
+  probed 24 targets and went green with
+  `connected=2 timeouts=19 errors=3` - both connected targets
+  (`88.99.250.112:31303`, `62.210.145.26:50769`) were
+  `source=udp+1000` (the phase-2 `quic probe:` lines say so)
+  and both then logged `query_error=QUIC query timed out after
+  15s`, while 3 targets aborted with alert 112. Run 38699045977
+  recorded `connected=0 timeouts=16 errors=4` over 20 targets
+  (alert 112 from `162.43.189.13:61912`, `85.90.235.131:31001`,
+  `91.108.10.7:33000`, `51.222.42.108:24633`) and its re-run
+  recorded `connected=0` over 22 targets with 2 alert-112
+  rejections - a false red for PR #65. The only advertised
+  endpoint dialed in that run (`91.134.9.14:4286`,
+  `source=advertised`) timed out. Three conclusions:
+
+  - (a) every alert-112 rejection recorded so far was on a
+    guessed `udp+1000` port: three of the four in run 38699045977
+    carry an explicit `quic probe: ... source=udp+1000` line, and
+    the fourth (`51.222.42.108:24633`) was confirmed
+    `source=udp+1000` from its member's address record. Alert 112
+    = `unrecognized_name` then means a guessed-port identity
+    mismatch: many members share hosting IPs (5 members on
+    `198.244.253.169`, 3 on `173.234.75.230` in that run), and the
+    listener behind the guessed port selects its own identity from
+    the SNI instead of the dialed member's.
+  - (b) guessed ports do complete handshakes when the member runs
+    QUIC on `udp+1000` without advertising it - both connected
+    targets of the green run were `source=udp+1000` - so growing
+    the candidate pool still helps.
+  - (c) the post-handshake silence is systematic: all four
+    handshakes that completed across the recorded runs
+    (`5.199.161.213:31310` in 38292378027, `18.183.41.221:32000`
+    in 38594880666, `88.99.250.112:31303` and
+    `62.210.145.26:50769` in 38649670525) never answered
+    `overlay.getRandomPeers` within 15s (4/4 `query_error`) - the
+    silence was traced to the missing `overlay.query{overlay}` header
+    on our QUIC client and fixed on 2026-10-15 (see the client-side
+    addressing gap below); live confirmation is pending.
+- Reference-SDK gap (verified 2026-10-15 from the GitHub source
+  trees): pytoniq and pytoniq-core contain no QUIC client at all -
+  their ADNL transport is UDP-only - so no SDK reference exists to
+  compare our ADNL-over-QUIC query pattern with; the comparison has
+  to come from upstream C++ directly.
+- Upstream query dispatch over QUIC (verified 2026-10-15 against
+  `ton-blockchain/ton` master): `quic/quic-sender.cpp::
+  QuicSender::on_inbound_query` takes `quic.query.data` and asks
+  `AdnlPeerTable::deliver_query(src = connection->path.second`
+  (the remote peer), `dst = connection->path.first` (the local
+  node id the server was bound to through `QuicSender::add_id`),
+  `data)`; `adnl/adnl-peer-table.cpp::AdnlPeerTableImpl::
+  deliver_query` resolves `dst` in `local_ids_` and forwards to
+  `adnl/adnl-local-id.cpp::AdnlLocalId::deliver_query`, which
+  dispatches on a 4-byte TL-prefix match against the callbacks
+  subscribed on that node id. There is no `adnl.message.query`
+  wrapper in this path - `quic.query.data` must begin with the
+  inner query's own TL constructor (or with the `overlay.query`
+  header, below). When no prefix matches, `AdnlLocalId::
+  deliver_query` rejects with "no callbacks for custom query",
+  and `QuicSender::on_inbound_query` sends `quic.answer` only
+  along its success path (it has no error branch), so the stream
+  is left unanswered and the client observes a query timeout.
+- How upstream serves `overlay.getRandomPeers` (research
+  2026-10-15, `overlay/overlay-manager.cpp`): the manager
+  subscribes exactly four TL prefixes on the member's NODE ADNL
+  id - `overlay.message` (`0x75252420`), `overlay.query`
+  (`0xccfd8443`), `overlay.messageWithExtra` (`0xa232233d`), and
+  `overlay.queryWithExtra` (`0x94ffc3e9`) - in
+  `OverlayManager::register_overlay(local_id, overlay_id, ...)`,
+  and callers pass their own node id as `local_id` (for example
+  `validator/full-node-fast-sync-overlays.cpp::
+  create_semiprivate_overlay(local_id_, ...)`, the same
+  `local_id_` it registers on `QuicSender::add_id`). So an
+  overlay query arriving on the member's NODE id is answerable;
+  the overlay id is never an ADNL destination in this chain, it
+  travels inside the `overlay.query` header. After the prefix
+  match, `OverlayManager::receive_query` strips that header with
+  `fetch_tl_prefix<overlay_query(WithExtra)>`, resolves
+  `overlays_[dst][overlay_id]` (node id first, then overlay id -
+  an overlay the node did not join under that id is buffered or
+  rejected with `bad local_id` / `bad overlay_id`), and hands the
+  bare inner query to `OverlayImpl::receive_query`, whose
+  `process_query(overlay_getRandomPeers&)` answers with
+  `overlay.nodes`. Upstream builds the outgoing header in
+  `OverlayManager::send_query_via` with
+  `create_serialize_tl_object_suffix<ton_api::overlay_query>
+  (query.as_slice(), overlay_id.tl())` - a 4-byte constructor,
+  the 32-byte overlay id, then the raw inner query bytes - on
+  every transport, QUIC included.
+- Client-side addressing gap - root cause confirmed and fixed
+  (2026-10-15): historically `QuicSession::overlay_get_random_peers`
+  (`crates/tonutils-adnl/src/adnl/quic.rs`) ignored its `_overlay`
+  argument and serialized only `overlay.getRandomPeers`
+  (`0x48ee64ab`) as `quic.query.data`, while the UDP client
+  (`AdnlUdpSession::send_overlay_get_random_peers_with_id`)
+  prefixes `overlay.query{overlay}` exactly like upstream. Against
+  an upstream node the bare query matches no subscribed prefix, so
+  it is dropped with "no callbacks for custom query" and no
+  `quic.answer` is sent - which explains the 4/4 post-handshake
+  timeouts above. Nothing local could falsify it either: no test
+  exchanged `overlay.getRandomPeers` over QUIC
+  (`QuicOverlaySession::receive` finished inbound `quic.query`
+  streams without a `quic.answer`), and the UDP-side dispatcher
+  (`overlay_inbound::build_overlay_answer`) accepts the bare
+  constructor as well as the wrapped one, so our own client and
+  server agreed on a shape upstream rejects. The root cause is now
+  confirmed against upstream `ton_api.tl` (`overlay.query
+  overlay:int256 = True;` - a 4-byte constructor and the 32-byte
+  overlay id with the inner query appended raw, no `bytes` length
+  prefix) and the `overlay/overlay.cpp` dispatch chain documented
+  above. The fix makes `QuicSession::overlay_get_random_peers` build
+  `overlay.query{overlay} ++ overlay.getRandomPeers` exactly like
+  `send_overlay_get_random_peers_with_id` and upstream's
+  `OverlayManager::send_query_via`; the loopback test
+  `overlay_get_random_peers_wraps_the_overlay_query_header`
+  (`crates/tonutils-adnl/src/adnl/quic.rs`) asserts byte equality
+  of the whole payload, and `OverlayImpl::process_query` answers an
+  empty `peers:overlay.nodes` list regardless (`add_peers` of an
+  empty list is a no-op), so the header-only payload needs no
+  signed local node record - the only cost is peer admission, since
+  an empty list does not queue this node in the member's
+  `pending_peers_` (`docs/reference/network/overlay.md`), leaving
+  ping-back visibility to the UDP path that carries the signed
+  record. Live confirmation lands with the next CI
+  live run. Side benefit: `QuicOverlaySession::receive`'s 5s
+  keepalive (`crates/tonutils-mempool/src/quic_session.rs`) calls
+  the same method with a 3s budget and previously always burned
+  that full timeout on a never-answered query, stalling the receive
+  loop; with answers returning it completes in about one RTT.
 
 ## Missing work
 
@@ -168,14 +304,34 @@ short id fails during the handshake.
   `TODO.md`.
 - Whether mainnet full nodes answer QUIC from third-party sources
   has a three-way verdict across the recorded runs: most probed
-  members are silent, some abort the handshake with TLS alert 112,
-  and one member per run (`5.199.161.213:31310` in run
-  38292378027) completes the full handshake but did not answer
-  `overlay.getRandomPeers` within 15s - see Evidence above and
-  the open question in `TODO.md`. The live test's hard
-  `connected > 0` assert passed in run 38292378027, so the CI
-  step is green while at least one member completes a handshake
-  on a given run; the C++-client pairing above remains unproven
-  either way.
+  members are silent, some abort the handshake with TLS alert 112
+  (`unrecognized_name`, seen only on guessed `udp+1000` ports -
+  a different node identity behind the port, see Evidence above),
+  and four handshakes so far completed (one each in runs
+  38292378027 and 38594880666, two in run 38649670525; all four
+  were dialed as `adnl_udp_port + 1000`, two of them with an
+  explicit `source=udp+1000` probe line) without any of them
+  answering `overlay.getRandomPeers` within 15s - 4/4
+  systematic silence whose explanation is now implemented: the
+  missing `overlay.query` header on our QUIC client, confirmed
+  against `ton_api.tl` and the upstream dispatch chain and fixed
+  in `QuicSession::overlay_get_random_peers` with the loopback
+  test named above (Evidence above, root-cause item in
+  `TODO.md`), with live confirmation - a green run where a
+  member answers the wrapped query - still pending as its own
+  `TODO.md` item. The test
+  behind that gate was stabilized for it - two discovery rounds
+  against one registry (`max_records=32`, a second round below
+  40 members), a 10 s per-target connect budget, up to three
+  retry waves that redial only failed targets,
+  `source=`/`wave=` on every per-target line, and
+  `connected_advertised=`/`connected_udp_offset=`/`waves=`
+  counters in the summary (moved to `tests/live_quic.rs`, CI step
+  now runs `--test live_quic`) - while the hard `connected > 0`
+  gate is kept by project decision, so the step is green in the
+  runs where at least one member completes a handshake. The
+  wrapper hypothesis behind the silence is now the confirmed
+  mechanism, so only its live verification - next to the
+  C++-client pairing above, which remains unproven - is outstanding.
 - Concurrent routing and unsolicited-message handling on `QuicSession` are
   not implemented (see the [protocol matrix](protocol-matrix.md)).
