@@ -182,16 +182,23 @@ short id fails during the handshake.
   endpoint dialed in that run (`91.134.9.14:4286`,
   `source=advertised`) timed out. Three conclusions:
 
-  - (a) every alert-112 rejection recorded so far was on a
-    guessed `udp+1000` port: three of the four in run 38699045977
+  - (a) alert-112 rejections have mostly been on guessed
+    `udp+1000` ports: three of the four in run 38699045977
     carry an explicit `quic probe: ... source=udp+1000` line, and
     the fourth (`51.222.42.108:24633`) was confirmed
-    `source=udp+1000` from its member's address record. Alert 112
-    = `unrecognized_name` then means a guessed-port identity
-    mismatch: many members share hosting IPs (5 members on
-    `198.244.253.169`, 3 on `173.234.75.230` in that run), and the
+    `source=udp+1000` from its member's address record; many
+    members share hosting IPs (5 members on
+    `198.244.253.169`, 3 on `173.234.75.230` in that run), so the
     listener behind the guessed port selects its own identity from
-    the SNI instead of the dialed member's.
+    the SNI instead of the dialed member's. The counterexample
+    landed in run 38723511984 (2026-10-15): `141.94.3.10:4279`
+    aborted with alert 112 as `source=advertised`. The mechanism
+    is unchanged - the listener rejects a dial whose SNI name it
+    does not know - but the guessed-port-only qualifier no longer
+    holds, so
+    an advertised `adnl.address.quic` record can itself be stale
+    or point at a foreign listener (see the live-confirmation
+    bullet below).
   - (b) guessed ports do complete handshakes when the member runs
     QUIC on `udp+1000` without advertising it - both connected
     targets of the green run were `source=udp+1000` - so growing
@@ -204,7 +211,8 @@ short id fails during the handshake.
     `overlay.getRandomPeers` within 15s (4/4 `query_error`) - the
     silence was traced to the missing `overlay.query{overlay}` header
     on our QUIC client and fixed on 2026-10-15 (see the client-side
-    addressing gap below); live confirmation is pending.
+    addressing gap below); live confirmation landed the same day in
+    run 38723511984 (see below).
 - Reference-SDK gap (verified 2026-10-15 from the GitHub source
   trees): pytoniq and pytoniq-core contain no QUIC client at all -
   their ADNL transport is UDP-only - so no SDK reference exists to
@@ -289,12 +297,40 @@ short id fails during the handshake.
   an empty list does not queue this node in the member's
   `pending_peers_` (`docs/reference/network/overlay.md`), leaving
   ping-back visibility to the UDP path that carries the signed
-  record. Live confirmation lands with the next CI
-  live run. Side benefit: `QuicOverlaySession::receive`'s 5s
+  record. Live confirmation landed in run 38723511984 (the next
+  CI live run - see the bullet below). Side benefit:
+  `QuicOverlaySession::receive`'s 5s
   keepalive (`crates/tonutils-mempool/src/quic_session.rs`) calls
   the same method with a 3s budget and previously always burned
   that full timeout on a never-answered query, stalling the receive
   loop; with answers returning it completes in about one RTT.
+- Live confirmation, 2026-10-15 (CI run 38723511984, `694aa49`): the
+  first live run after the wrapper fix. The sole connected target
+  (`88.198.126.194:57996`, `source=udp+1000`, wave 1) answered the
+  wrapped query with four nodes - logged as
+  `phase=connect target=88.198.126.194:57996 source=udp+1000 wave=1
+  result=connected random_peers=4` - the first live answer to
+  `overlay.getRandomPeers` over QUIC, ending the 4/4 post-handshake
+  silence streak and live-confirming the `overlay.query{overlay}` fix.
+  The stabilization also held: `phase=members registered=17 udp_peers=17`
+  then `phase=members-round2 registered=33 udp_peers=17` (the second
+  discovery round nearly doubled the pool), 33 targets dialed,
+  `phase=connect targets=33 connected=1 timeouts=29 errors=3
+  connected_advertised=0 connected_udp_offset=1 waves=1`, and the step
+  went green on wave 1 (early stop at the first handshake);
+  `phase=version-negotiation targets=33 vn_replies=0 controls=
+  1.1.1.1:443:reply,8.8.8.8:443:reply` confirms the reachability
+  verdict is unchanged for the 5 s probe budget - `phase=probe
+  members_before=33 quic_peers=0 members_after=33`, so the probe phase
+  still finds nothing and only the 10 s wave-1 connects answer. The
+  alert-112 nuance: this run produced the first alert 112 on an
+  `advertised` endpoint (`141.94.3.10:4279`, `source=advertised`), and
+  the run's other two 112s were `udp+1000` (`84.207.214.244:21470`,
+  `85.90.235.130:31005`) - the mechanism (SNI `unrecognized_name`)
+  holds, but a guessed-port-only qualifier no longer does: an
+  advertised `adnl.address.quic` record can itself be stale or point
+  at a foreign listener. The run's second advertised target
+  (`47.242.120.137:31001`) timed out.
 
 ## Missing work
 
@@ -305,21 +341,23 @@ short id fails during the handshake.
 - Whether mainnet full nodes answer QUIC from third-party sources
   has a three-way verdict across the recorded runs: most probed
   members are silent, some abort the handshake with TLS alert 112
-  (`unrecognized_name`, seen only on guessed `udp+1000` ports -
-  a different node identity behind the port, see Evidence above),
-  and four handshakes so far completed (one each in runs
+  (`unrecognized_name`, an SNI identity mismatch - the listener
+  serving a different node identity than the dialed name, including
+  the first one on an `advertised` endpoint in run 38723511984, see
+  Evidence above), and four handshakes completed in the pre-fix
+  runs (one each in runs
   38292378027 and 38594880666, two in run 38649670525; all four
   were dialed as `adnl_udp_port + 1000`, two of them with an
   explicit `source=udp+1000` probe line) without any of them
   answering `overlay.getRandomPeers` within 15s - 4/4
-  systematic silence whose explanation is now implemented: the
+  systematic silence explained by the
   missing `overlay.query` header on our QUIC client, confirmed
-  against `ton_api.tl` and the upstream dispatch chain and fixed
+  against `ton_api.tl` and the upstream dispatch chain, fixed
   in `QuicSession::overlay_get_random_peers` with the loopback
   test named above (Evidence above, root-cause item in
-  `TODO.md`), with live confirmation - a green run where a
-  member answers the wrapped query - still pending as its own
-  `TODO.md` item. The test
+  `TODO.md`) and live-confirmed in run 38723511984 (2026-10-15),
+  where the connected member answered the wrapped query with
+  `random_peers=4` (the closing `TODO.md` item). The test
   behind that gate was stabilized for it - two discovery rounds
   against one registry (`max_records=32`, a second round below
   40 members), a 10 s per-target connect budget, up to three
@@ -330,8 +368,8 @@ short id fails during the handshake.
   now runs `--test live_quic`) - while the hard `connected > 0`
   gate is kept by project decision, so the step is green in the
   runs where at least one member completes a handshake. The
-  wrapper hypothesis behind the silence is now the confirmed
-  mechanism, so only its live verification - next to the
-  C++-client pairing above, which remains unproven - is outstanding.
+  wrapper mechanism is now live-verified (run 38723511984), so the
+  outstanding unproven pairing next to it is the C++-client
+  pairing above.
 - Concurrent routing and unsolicited-message handling on `QuicSession` are
   not implemented (see the [protocol matrix](protocol-matrix.md)).
