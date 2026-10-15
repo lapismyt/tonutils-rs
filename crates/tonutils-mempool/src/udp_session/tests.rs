@@ -377,6 +377,7 @@ async fn passes_through_signed_broadcast_payload_that_is_already_a_boc() {
 #[tokio::test]
 async fn reassembles_upstream_format_fec_external_message() {
     let mut adapter = broadcast_test_adapter().await;
+    let before = crate::protocol_stats::protocol_stats();
     let keypair = KeyPair::generate(&mut rand::rngs::OsRng);
     let mut raw_boc = vec![0xb5, 0xee, 0x9c, 0x72];
     raw_boc.resize(1000, 0x0a);
@@ -412,6 +413,24 @@ async fn reassembles_upstream_format_fec_external_message() {
             );
         }
     }
+    // The counters are process-global and tests run in parallel, so the
+    // deltas are lower bounds: every part fed to a decoder counts once,
+    // split into source and repair by the wire id, and the completed
+    // reassembly counts as decoded.
+    let after = crate::protocol_stats::protocol_stats();
+    assert!(
+        after.fec_symbols_accepted >= before.fec_symbols_accepted + 2 * symbols_count as u64,
+        "every fed part must count as an accepted symbol"
+    );
+    assert!(
+        after.fec_repair_symbols_received
+            >= before.fec_repair_symbols_received + symbols_count as u64,
+        "the repair tail must count as repair symbols"
+    );
+    assert!(
+        after.fec_decoded > before.fec_decoded,
+        "the completed reassembly must count as decoded"
+    );
 }
 
 /// A raw-object send reaches the peer's overlay receive path and unwraps

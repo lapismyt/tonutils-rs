@@ -405,6 +405,13 @@ impl BroadcastPeer for OverlayBroadcastPeer {
                         let results =
                             join_all(
                                 batch.into_iter().map(|part| {
+                                    // Wire ids `0..symbols_count` are
+                                    // source symbols, the dense tail above
+                                    // it is repair; `total` is always
+                                    // `2 * symbols_count`.
+                                    crate::protocol_stats::record_fec_part_sent(
+                                        part.seqno >= total as i32 / 2,
+                                    );
                                     let manager = manager.clone();
                                     let ranked = ranked.clone();
                                     let object = Arc::from(part.object);
@@ -683,6 +690,41 @@ mod tests {
                 Ok(())
             })
         }
+
+        fn sender(&self) -> Option<Arc<dyn tonutils_overlay::OverlaySessionSender>> {
+            Some(Arc::new(RecordingSender {
+                peer: self.peer,
+                log: Arc::clone(&self.log),
+            }))
+        }
+    }
+
+    /// The session's lock-free sender: it records into the same log, so
+    /// fan-out tests observe sends without the parked receive loop's
+    /// session lock ever entering the picture.
+    struct RecordingSender {
+        peer: tonutils_overlay::PeerId,
+        log: Arc<tokio::sync::Mutex<Vec<tonutils_overlay::PeerId>>>,
+    }
+
+    impl tonutils_overlay::OverlaySessionSender for RecordingSender {
+        fn send(&self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            let peer = self.peer;
+            let log = Arc::clone(&self.log);
+            Box::pin(async move {
+                log.lock().await.push(peer);
+                Ok(())
+            })
+        }
+
+        fn send_object(&self, _object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            let peer = self.peer;
+            let log = Arc::clone(&self.log);
+            Box::pin(async move {
+                log.lock().await.push(peer);
+                Ok(())
+            })
+        }
     }
 
     #[tokio::test]
@@ -720,6 +762,50 @@ mod tests {
             *log.lock().await,
             vec![best, rest],
             "the best-scoring peer must start its send first"
+        );
+        manager.shutdown_wait().await;
+    }
+
+    /// The paced FEC fan-out counts every source and repair part it
+    /// hands to the sessions, so a live run can tell repair traffic
+    /// leaving the node from source traffic.
+    #[tokio::test]
+    async fn fec_fanout_counts_source_and_repair_parts() {
+        use tonutils_overlay::{OverlayConfig, PeerId};
+
+        let manager = Arc::new(
+            PeerManager::new(OverlayConfig::default()).expect("peer manager must be created"),
+        );
+        let log = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        manager
+            .add_session(Box::new(RecordingSession {
+                peer: PeerId::from_bytes([3; 32]),
+                log: Arc::clone(&log),
+            }))
+            .await;
+        let broadcast = OverlayBroadcastPeer::new(
+            Arc::clone(&manager),
+            KeyPair::generate(&mut rand::rngs::OsRng),
+        );
+        let raw = test_boc(2048);
+        let symbols_count = external_message_wrapper(&raw)
+            .len()
+            .div_ceil(FEC_SYMBOL_SIZE) as u64;
+        assert!(symbols_count > 1, "the test payload must use the FEC path");
+        let before = crate::protocol_stats::protocol_stats();
+        broadcast
+            .send_external(Arc::from(raw.as_slice()))
+            .await
+            .expect("a connected peer set must accept the FEC broadcast"); // The counters are process-global and tests run in parallel, so
+        // the deltas are lower bounds.
+        let after = crate::protocol_stats::protocol_stats();
+        assert!(
+            after.fec_parts_sent >= before.fec_parts_sent + 2 * symbols_count,
+            "every source and repair part must count as sent"
+        );
+        assert!(
+            after.fec_repair_parts_sent >= before.fec_repair_parts_sent + symbols_count,
+            "the repair half must count as repair parts"
         );
         manager.shutdown_wait().await;
     }

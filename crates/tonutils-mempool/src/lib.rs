@@ -446,12 +446,18 @@ impl MempoolScanner {
     }
 
     /// Validates, deduplicates, publishes, and broadcasts one external BoC.
+    ///
+    /// The completion log line carries the submit-side latency: from the
+    /// caller's entry to the last fan-out session, the our-side half of
+    /// the delivery measurement (the other half - the peers' receipt -
+    /// is observable only from the receiving side).
     pub async fn send_external(
         &self,
         raw_boc: impl Into<Arc<[u8]>>,
     ) -> Result<MessageHash, MempoolError> {
+        let started = Instant::now();
         let raw_boc = raw_boc.into();
-        let hash = Sha256::digest(&raw_boc).into();
+        let hash: MessageHash = Sha256::digest(&raw_boc).into();
         let accepted = self
             .accept_fast(
                 raw_boc.clone(),
@@ -467,15 +473,20 @@ impl MempoolScanner {
                 .filter(|peer| peer.peer_id().map(|id| peer_ids.insert(id)).unwrap_or(true))
                 .filter(|peer| peer.is_healthy())
                 .collect::<Vec<_>>();
+            let peer_total = peers.len();
             let results = join_all(
                 peers
                     .into_iter()
                     .map(|peer| peer.send_external(raw_boc.clone())),
             )
             .await;
-            self.broadcast_failures.fetch_add(
-                results.iter().filter(|result| result.is_err()).count() as u64,
-                Ordering::Relaxed,
+            let failures = results.iter().filter(|result| result.is_err()).count();
+            self.broadcast_failures
+                .fetch_add(failures as u64, Ordering::Relaxed);
+            log::info!(
+                "mempool external message submitted: hash={hash:02x?} bytes={} peers={peer_total} failed={failures} elapsed={:?}",
+                raw_boc.len(),
+                started.elapsed(),
             );
         }
         Ok(hash)

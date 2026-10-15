@@ -20,10 +20,13 @@ backpressure for peer-ingested messages; a local echo from `send_external` is
 the exception - it uses a non-blocking `try_send` and is dropped with a
 warning when the queue is full, because the dedup entry and the broadcast are
 already recorded and a stalled consumer must never block the submitter.
-Deduplication is sharded by the first hash byte, purged by the
-configured TTL (amortized to at most one scan per TTL per shard), and bounded
-by shard capacity. `MempoolMetrics` exposes accepted, duplicate, rejected,
-broadcast-failure, and rate-limited invalid-warning counters.
+`send_external` also logs one completion line per submitted message (hash,
+bytes, peers, failures, elapsed), which is the submit-side latency half of
+the delivery measurement. Deduplication is sharded by the first hash byte,
+purged by the configured TTL (amortized to at most one scan per TTL per
+shard), and bounded by shard capacity. `MempoolMetrics` exposes accepted,
+duplicate, rejected, broadcast-failure, and rate-limited invalid-warning
+counters.
 
 ## Fast and slow paths
 

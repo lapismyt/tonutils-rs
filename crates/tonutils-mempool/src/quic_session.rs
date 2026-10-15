@@ -67,7 +67,10 @@ impl QuicOverlaySession {
                     symbol_size,
                     symbols_count,
                 } => (fec_data_size, symbol_size, symbols_count),
-                _ => return Err("unsupported overlay FEC type".to_owned()),
+                _ => {
+                    crate::protocol_stats::record_fec_param_rejection();
+                    return Err("unsupported overlay FEC type".to_owned());
+                }
             };
             let data_size = fec.data_size;
             // `symbol_size` and `symbols_count` also bound what the
@@ -86,6 +89,7 @@ impl QuicOverlaySession {
                 || (data_size as usize).div_ceil(symbol_size as usize) != symbols_count as usize
                 || fec.seqno < 0
             {
+                crate::protocol_stats::record_fec_param_rejection();
                 return Err("invalid overlay FEC parameters".to_owned());
             }
             self.fec
@@ -132,8 +136,10 @@ impl QuicOverlaySession {
             // shift.
             let max_symbol_id = symbols_count as u32 + (symbols_count as u32 / 2) + 1024;
             if wire_seqno > max_symbol_id {
+                crate::protocol_stats::record_fec_param_rejection();
                 return Err("overlay FEC packet has an excessive symbol id".to_owned());
             }
+            crate::protocol_stats::record_fec_symbol(wire_seqno >= symbols_count as u32);
             let packet = EncodingPacket::new(
                 raptorq::PayloadId::new(
                     0,
@@ -180,6 +186,7 @@ impl QuicOverlaySession {
                 &reconstructed,
             )
             .map_err(|_| "overlay FEC reconstructed payload is not external message".to_owned())?;
+            crate::protocol_stats::record_fec_decoded();
             return Ok(broadcast.message.data);
         }
         match tl_proto::deserialize::<OverlayBroadcast>(data) {
@@ -293,31 +300,71 @@ impl OverlaySession for QuicOverlaySession {
     }
 
     fn send(&mut self, payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
-        Box::pin(async move {
-            let mut wrapped = Vec::with_capacity(36 + 4 + payload.len());
-            wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
-            wrapped.extend_from_slice(&self.overlay);
-            wrapped.extend_from_slice(&tl_proto::serialize(OverlayBroadcast::Unicast {
-                data: payload.to_vec(),
-            }));
-            self.session
-                .send_message(wrapped)
-                .await
-                .map_err(|e| e.to_string())
-        })
+        let sender = self.sender_handle();
+        Box::pin(async move { sender.send_payload(payload).await })
     }
 
     fn send_object(&mut self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
-        Box::pin(async move {
-            let mut wrapped = Vec::with_capacity(36 + object.len());
-            wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
-            wrapped.extend_from_slice(&self.overlay);
-            wrapped.extend_from_slice(&object);
-            self.session
-                .send_message(wrapped)
-                .await
-                .map_err(|e| e.to_string())
-        })
+        let sender = self.sender_handle();
+        Box::pin(async move { sender.send_raw_object(object).await })
+    }
+
+    fn sender(&self) -> Option<Arc<dyn tonutils_overlay::OverlaySessionSender>> {
+        Some(Arc::new(self.sender_handle()))
+    }
+}
+
+/// Lock-free send handle over the internally synchronized QUIC session:
+/// the connection lives behind a shared `Arc`, so a sender clone
+/// frames and sends without the receive loop's session lock.
+struct QuicOverlaySender {
+    session: Arc<QuicSession>,
+    overlay: [u8; 32],
+}
+
+impl QuicOverlaySender {
+    async fn send_payload(&self, payload: Arc<[u8]>) -> Result<(), String> {
+        let mut wrapped = Vec::with_capacity(36 + 4 + payload.len());
+        wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
+        wrapped.extend_from_slice(&self.overlay);
+        wrapped.extend_from_slice(&tl_proto::serialize(OverlayBroadcast::Unicast {
+            data: payload.to_vec(),
+        }));
+        self.session
+            .send_message(wrapped)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    async fn send_raw_object(&self, object: Arc<[u8]>) -> Result<(), String> {
+        let mut wrapped = Vec::with_capacity(36 + object.len());
+        wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
+        wrapped.extend_from_slice(&self.overlay);
+        wrapped.extend_from_slice(&object);
+        self.session
+            .send_message(wrapped)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl tonutils_overlay::OverlaySessionSender for QuicOverlaySender {
+    fn send(&self, payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(self.send_payload(payload))
+    }
+
+    fn send_object(&self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(self.send_raw_object(object))
+    }
+}
+
+impl QuicOverlaySession {
+    /// A cheap sender view onto the same connection.
+    fn sender_handle(&self) -> QuicOverlaySender {
+        QuicOverlaySender {
+            session: Arc::clone(&self.session),
+            overlay: self.overlay,
+        }
     }
 }
 

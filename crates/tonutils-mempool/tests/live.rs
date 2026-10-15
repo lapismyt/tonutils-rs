@@ -334,6 +334,7 @@ async fn configured_seed_delivers_valid_external_message() {
     let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let overlay = OverlayId::from_bytes(overlay_bytes);
     let dht_overlay_key: [u8; 32] = overlay_bytes;
+    let bootstrap_started = tokio::time::Instant::now();
     // Shared with the builder so the UDP discovery, peer-growth and
     // session factory all record into the registry this test reads
     // after bootstrap: it holds every runtime-resolved member, which
@@ -364,6 +365,10 @@ async fn configured_seed_delivers_valid_external_message() {
         "live mempool phase=bootstrap readiness failed: registered_peers=0"
     );
     eprintln!(
+        "live mempool phase=bootstrap elapsed={:?} registered_peers={connected_peers}",
+        bootstrap_started.elapsed()
+    );
+    eprintln!(
         "live mempool phase=discovery {:?}",
         scanner.discovery_stats()
     );
@@ -377,6 +382,7 @@ async fn configured_seed_delivers_valid_external_message() {
     // adding members that answer `overlay.getRandomPeers`.
     let seed_ids: std::collections::HashSet<PeerId> = seeds.iter().map(|seed| seed.peer).collect();
     let mut non_seed_connected: Vec<PeerId> = Vec::new();
+    let delivery_started = tokio::time::Instant::now();
     let event = tokio::time::timeout(Duration::from_secs(timeout), async {
         loop {
             tokio::select! {
@@ -406,7 +412,17 @@ async fn configured_seed_delivers_valid_external_message() {
     })
     .await;
     let event = match event {
-        Ok(event) => event,
+        Ok(event) => {
+            // The our-side delivery measurement: bootstrap finished, so
+            // this bounds how long a broadcast from the live overlay
+            // takes to reach this node's accept path.
+            eprintln!(
+                "live mempool phase=delivery time_to_message={:?} metrics={:?}",
+                delivery_started.elapsed(),
+                scanner.metrics(),
+            );
+            event
+        }
         Err(_) => {
             let peers = manager.peer_count().await;
             let metrics = scanner.metrics();

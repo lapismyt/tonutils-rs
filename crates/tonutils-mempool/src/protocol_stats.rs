@@ -21,7 +21,15 @@
 //!   and a peer that listed us treats us as a verified member;
 //! * [`ProtocolStats::dht_pings_received`] counts pytoniq-style liveness
 //!   probes (`dht.ping` wrapped in `overlay.query`), which a peer sends only
-//!   for nodes it keeps in its own peer list.
+//!   for nodes it keeps in its own peer list;
+//! * [`ProtocolStats::fec_parts_sent`] /
+//!   [`ProtocolStats::fec_repair_parts_sent`] separate source from repair
+//!   traffic on the send side, and [`ProtocolStats::fec_symbols_accepted`] /
+//!   [`ProtocolStats::fec_repair_symbols_received`] /
+//!   [`ProtocolStats::fec_decoded`] /
+//!   [`ProtocolStats::fec_param_rejections`] explain the receive side: do
+//!   FEC parts arrive at all, does repair traffic flow, do reassemblies
+//!   complete, and is someone sending crafted parameters.
 //!
 //! All getters return a point-in-time [`ProtocolStats`] snapshot.
 
@@ -91,6 +99,23 @@ pub struct ProtocolStats {
     /// within the cache window, which never paid a TL parse or
     /// signature verification.
     pub payload_duplicates: u64,
+    /// FEC symbol parts fanned out by this node's broadcasters.
+    pub fec_parts_sent: u64,
+    /// The subset of [`ProtocolStats::fec_parts_sent`] that carried a
+    /// repair symbol (wire id at or above `symbols_count`).
+    pub fec_repair_parts_sent: u64,
+    /// FEC parts accepted into a reassembly - parameters validated and
+    /// the symbol fed to a decoder - whether or not the broadcast
+    /// decoded from it.
+    pub fec_symbols_accepted: u64,
+    /// The subset of [`ProtocolStats::fec_symbols_accepted`] that
+    /// carried a repair symbol.
+    pub fec_repair_symbols_received: u64,
+    /// FEC broadcasts fully reconstructed, hash-verified, and unwrapped.
+    pub fec_decoded: u64,
+    /// FEC parts rejected on bounds: an unsupported FEC type, invalid
+    /// reassembly parameters, or an excessive wire symbol id.
+    pub fec_param_rejections: u64,
 }
 
 struct Counters {
@@ -111,6 +136,12 @@ struct Counters {
     dht_pings_received: AtomicU64,
     custom_messages: AtomicU64,
     payload_duplicates: AtomicU64,
+    fec_parts_sent: AtomicU64,
+    fec_repair_parts_sent: AtomicU64,
+    fec_symbols_accepted: AtomicU64,
+    fec_repair_symbols_received: AtomicU64,
+    fec_decoded: AtomicU64,
+    fec_param_rejections: AtomicU64,
     pingers_seen: DistinctPeers,
     listing_peers_seen: DistinctPeers,
 }
@@ -158,6 +189,12 @@ static COUNTERS: Counters = Counters {
     dht_pings_received: AtomicU64::new(0),
     custom_messages: AtomicU64::new(0),
     payload_duplicates: AtomicU64::new(0),
+    fec_parts_sent: AtomicU64::new(0),
+    fec_repair_parts_sent: AtomicU64::new(0),
+    fec_symbols_accepted: AtomicU64::new(0),
+    fec_repair_symbols_received: AtomicU64::new(0),
+    fec_decoded: AtomicU64::new(0),
+    fec_param_rejections: AtomicU64::new(0),
     pingers_seen: DistinctPeers::new(),
     listing_peers_seen: DistinctPeers::new(),
 };
@@ -233,6 +270,28 @@ pub(crate) fn record_payload_duplicate() {
     inc(&COUNTERS.payload_duplicates);
 }
 
+pub(crate) fn record_fec_part_sent(repair: bool) {
+    inc(&COUNTERS.fec_parts_sent);
+    if repair {
+        inc(&COUNTERS.fec_repair_parts_sent);
+    }
+}
+
+pub(crate) fn record_fec_symbol(repair: bool) {
+    inc(&COUNTERS.fec_symbols_accepted);
+    if repair {
+        inc(&COUNTERS.fec_repair_symbols_received);
+    }
+}
+
+pub(crate) fn record_fec_decoded() {
+    inc(&COUNTERS.fec_decoded);
+}
+
+pub(crate) fn record_fec_param_rejection() {
+    inc(&COUNTERS.fec_param_rejections);
+}
+
 /// Returns the current overlay protocol counters.
 pub fn protocol_stats() -> ProtocolStats {
     ProtocolStats {
@@ -254,6 +313,12 @@ pub fn protocol_stats() -> ProtocolStats {
         dht_pings_received: COUNTERS.dht_pings_received.load(Ordering::Relaxed),
         custom_messages: COUNTERS.custom_messages.load(Ordering::Relaxed),
         payload_duplicates: COUNTERS.payload_duplicates.load(Ordering::Relaxed),
+        fec_parts_sent: COUNTERS.fec_parts_sent.load(Ordering::Relaxed),
+        fec_repair_parts_sent: COUNTERS.fec_repair_parts_sent.load(Ordering::Relaxed),
+        fec_symbols_accepted: COUNTERS.fec_symbols_accepted.load(Ordering::Relaxed),
+        fec_repair_symbols_received: COUNTERS.fec_repair_symbols_received.load(Ordering::Relaxed),
+        fec_decoded: COUNTERS.fec_decoded.load(Ordering::Relaxed),
+        fec_param_rejections: COUNTERS.fec_param_rejections.load(Ordering::Relaxed),
     }
 }
 

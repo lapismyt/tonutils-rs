@@ -418,83 +418,110 @@ impl OverlaySession for AdnlUdpOverlaySession {
     }
 
     fn send(&mut self, payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
-        Box::pin(async move {
-            let mut data = tl_proto::serialize(OverlayBroadcast::Unicast {
-                data: payload.to_vec(),
-            });
-            if let Some(overlay) = self.overlay {
-                let mut wrapped = Vec::with_capacity(36 + data.len());
-                wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
-                wrapped.extend_from_slice(&overlay.as_bytes());
-                wrapped.append(&mut data);
-                data = wrapped;
-            }
-            self.session
-                .send_contents(PacketContents {
-                    rand1: vec![0; 7],
-                    flags: (),
-                    from: None,
-                    from_short: None,
-                    message: Some(AdnlMessage::Custom { data }),
-                    messages: None,
-                    address: None,
-                    priority_address: None,
-                    seqno: None,
-                    confirm_seqno: None,
-                    recv_addr_list_version: None,
-                    recv_priority_addr_list_version: None,
-                    reinit_date: None,
-                    dst_reinit_date: None,
-                    signature: None,
-                    rand2: vec![0; 7],
-                })
-                .await
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        })
+        let sender = self.sender_handle();
+        Box::pin(async move { sender.send_payload(payload).await })
     }
 
     fn send_object(&mut self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
-        Box::pin(async move {
-            // Build the wrapped frame in one allocation: the old path made
-            // an intermediate Vec from `object` and then appended it into
-            // the frame, paying a second allocation per object.
-            let data = if let Some(overlay) = self.overlay {
-                let mut wrapped = Vec::with_capacity(36 + object.len());
-                wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
-                wrapped.extend_from_slice(&overlay.as_bytes());
-                wrapped.extend_from_slice(&object);
-                wrapped
-            } else {
-                object.to_vec()
-            };
-            self.session
-                .send_contents(PacketContents {
-                    rand1: vec![0; 7],
-                    flags: (),
-                    from: None,
-                    from_short: None,
-                    message: Some(AdnlMessage::Custom { data }),
-                    messages: None,
-                    address: None,
-                    priority_address: None,
-                    seqno: None,
-                    confirm_seqno: None,
-                    recv_addr_list_version: None,
-                    recv_priority_addr_list_version: None,
-                    reinit_date: None,
-                    dst_reinit_date: None,
-                    signature: None,
-                    rand2: vec![0; 7],
-                })
-                .await
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        })
+        let sender = self.sender_handle();
+        Box::pin(async move { sender.send_raw_object(object).await })
+    }
+
+    fn sender(&self) -> Option<Arc<dyn tonutils_overlay::OverlaySessionSender>> {
+        Some(Arc::new(self.sender_handle()))
+    }
+}
+
+/// Lock-free send handle over the internally synchronized ADNL/UDP
+/// session.
+///
+/// `AdnlUdpSession` is `Clone` over a shared `Arc`, so a sender clone
+/// frames and sends without the receive loop's session lock: a
+/// broadcast to a member whose `receive()` is parked (any peer that
+/// does not push this node custom payloads) no longer waits out the
+/// idle timeout.
+struct AdnlUdpOverlaySender {
+    session: AdnlUdpSession,
+    overlay: Option<OverlayId>,
+}
+
+impl AdnlUdpOverlaySender {
+    async fn send_payload(&self, payload: Arc<[u8]>) -> Result<(), String> {
+        let mut data = tl_proto::serialize(OverlayBroadcast::Unicast {
+            data: payload.to_vec(),
+        });
+        if let Some(overlay) = self.overlay {
+            let mut wrapped = Vec::with_capacity(36 + data.len());
+            wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
+            wrapped.extend_from_slice(&overlay.as_bytes());
+            wrapped.append(&mut data);
+            data = wrapped;
+        }
+        self.transmit(data).await
+    }
+
+    async fn send_raw_object(&self, object: Arc<[u8]>) -> Result<(), String> {
+        // Build the wrapped frame in one allocation: the old path made
+        // an intermediate Vec from `object` and then appended it into
+        // the frame, paying a second allocation per object.
+        let data = if let Some(overlay) = self.overlay {
+            let mut wrapped = Vec::with_capacity(36 + object.len());
+            wrapped.extend_from_slice(&0x75252420u32.to_le_bytes());
+            wrapped.extend_from_slice(&overlay.as_bytes());
+            wrapped.extend_from_slice(&object);
+            wrapped
+        } else {
+            object.to_vec()
+        };
+        self.transmit(data).await
+    }
+
+    async fn transmit(&self, data: Vec<u8>) -> Result<(), String> {
+        self.session
+            .send_contents(PacketContents {
+                rand1: vec![0; 7],
+                flags: (),
+                from: None,
+                from_short: None,
+                message: Some(AdnlMessage::Custom { data }),
+                messages: None,
+                address: None,
+                priority_address: None,
+                seqno: None,
+                confirm_seqno: None,
+                recv_addr_list_version: None,
+                recv_priority_addr_list_version: None,
+                reinit_date: None,
+                dst_reinit_date: None,
+                signature: None,
+                rand2: vec![0; 7],
+            })
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl tonutils_overlay::OverlaySessionSender for AdnlUdpOverlaySender {
+    fn send(&self, payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(self.send_payload(payload))
+    }
+
+    fn send_object(&self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(self.send_raw_object(object))
     }
 }
 
 impl AdnlUdpOverlaySession {
+    /// A cheap sender view onto the same transport: `AdnlUdpSession`
+    /// clones share one `Arc`, so no state is duplicated.
+    fn sender_handle(&self) -> AdnlUdpOverlaySender {
+        AdnlUdpOverlaySender {
+            session: self.session.clone(),
+            overlay: self.overlay,
+        }
+    }
+
     /// Answers the overlay queries this node is expected to serve.
     ///
     /// The dispatch, including the `overlay.query` wrapper that upstream
@@ -532,7 +559,10 @@ impl AdnlUdpOverlaySession {
                     symbol_size,
                     symbols_count,
                 } => (fec_data_size, symbol_size, symbols_count),
-                _ => return Err("unsupported overlay FEC type".to_owned()),
+                _ => {
+                    protocol_stats::record_fec_param_rejection();
+                    return Err("unsupported overlay FEC type".to_owned());
+                }
             };
             let data_size = fec.data_size;
             // `symbol_size` and `symbols_count` also bound what the
@@ -551,6 +581,7 @@ impl AdnlUdpOverlaySession {
                 || (data_size as usize).div_ceil(symbol_size as usize) != symbols_count as usize
                 || fec.seqno < 0
             {
+                protocol_stats::record_fec_param_rejection();
                 return Err("invalid overlay FEC parameters".to_owned());
             }
             self.fec
@@ -597,8 +628,10 @@ impl AdnlUdpOverlaySession {
             // shift.
             let max_symbol_id = symbols_count as u32 + (symbols_count as u32 / 2) + 1024;
             if wire_seqno > max_symbol_id {
+                protocol_stats::record_fec_param_rejection();
                 return Err("overlay FEC packet has an excessive symbol id".to_owned());
             }
+            protocol_stats::record_fec_symbol(wire_seqno >= symbols_count as u32);
             let packet = EncodingPacket::new(
                 raptorq::PayloadId::new(
                     0,
@@ -645,6 +678,7 @@ impl AdnlUdpOverlaySession {
                 &reconstructed,
             )
             .map_err(|_| "overlay FEC reconstructed payload is not external message".to_owned())?;
+            protocol_stats::record_fec_decoded();
             return Ok(broadcast.message.data);
         }
         match tl_proto::deserialize::<OverlayBroadcast>(data) {

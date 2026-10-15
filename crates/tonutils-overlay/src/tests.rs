@@ -410,6 +410,66 @@ async fn ranked_broadcast_starts_high_quality_sends_first() {
     manager.shutdown_wait().await;
 }
 
+/// A parked `receive()` must not stall sends: the session's lock-free
+/// sender bypasses the receive loop's mutex, so a broadcast to a member
+/// that pushes this node no custom payloads completes immediately
+/// instead of waiting out the idle deadline.
+#[tokio::test]
+async fn sender_bypasses_the_receive_loop_lock() {
+    struct QuietSession {
+        peer: PeerId,
+    }
+
+    impl OverlaySession for QuietSession {
+        fn peer_id(&self) -> PeerId {
+            self.peer
+        }
+
+        fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+            // Parks forever while holding the session lock, exactly like a
+            // real member whose inbound stream stays quiet.
+            Box::pin(std::future::pending())
+        }
+
+        fn send(&mut self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Err("mutex path must not be taken".to_owned()) })
+        }
+
+        fn sender(&self) -> Option<Arc<dyn OverlaySessionSender>> {
+            Some(Arc::new(QuietSender))
+        }
+    }
+
+    struct QuietSender;
+
+    impl OverlaySessionSender for QuietSender {
+        fn send(&self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn send_object(&self, _object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+    manager
+        .add_session(Box::new(QuietSession {
+            peer: PeerId::from_bytes([4; 32]),
+        }))
+        .await;
+    // Let the receive task run until it parks holding the session lock.
+    tokio::task::yield_now().await;
+    let sent = tokio::time::timeout(
+        Duration::from_secs(1),
+        manager.broadcast(Arc::from([7u8; 3].as_slice())),
+    )
+    .await
+    .expect("the lock-free sender must bypass the parked receive lock");
+    assert_eq!(sent, 1, "the session must take the broadcast");
+    manager.shutdown_wait().await;
+}
+
 #[tokio::test]
 async fn remove_session_reports_disconnected_exactly_once() {
     let manager = PeerManager::new(OverlayConfig::default()).unwrap();

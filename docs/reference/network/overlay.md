@@ -65,6 +65,21 @@ constructor, so the `overlay.unicast` wrapper that `OverlaySession::send`
 adds would deliver broadcast bytes to the plain-message callback instead
 of the broadcast machinery.
 
+Sends never wait on a session's receive loop. A session receive task holds
+its session's mutex while `receive()` waits for - and consumes protocol
+traffic inside - the next inbound payload, so a send through the shared
+session would stall on any member that does not push this node custom
+broadcasts: until the next broadcast packet from that member or until
+`peer_idle_timeout` (60 s) expires, with one such member delaying a whole
+fan-out join. Both transports are internally synchronized - an ADNL/UDP
+session is `Clone` over a shared `Arc`, a QUIC session shares an `Arc`
+connection - so each exposes an `OverlaySessionSender` handle
+(`AdnlUdpOverlaySender`, `QuicOverlaySender`) whose `send`/`send_object`
+frame and transmit by `&self` without the mutex. `SharedSession` stores the
+handle next to the session, and `broadcast`, `broadcast_object`, and
+`broadcast_object_in_order` prefer it; sessions without a handle (mocks,
+custom transports) fall back to the mutex path unchanged.
+
 On the inbound side, the two receive paths consult a shared
 raw-payload pre-dedup cache (`PacketPreDedup`) before the TL parse and
 ed25519 verification: relayed copies of one broadcast are
@@ -91,7 +106,14 @@ typical external messages (up to four symbols) finish within one tick,
 and the repair symbols let a receiver that loses any single datagram
 still reconstruct from the remaining parts instead of waiting for a
 retransmission that never comes (the sender does not resend a
-broadcast).
+broadcast). Both halves report into `ProtocolStats` so a live run can
+explain the FEC traffic without logs: `fec_parts_sent` /
+`fec_repair_parts_sent` count the fan-out, `fec_symbols_accepted` /
+`fec_repair_symbols_received` count parts fed to a decoder,
+`fec_decoded` counts verified reconstructions, and
+`fec_param_rejections` counts parts refused on the hardened bounds
+(unsupported FEC type, invalid reassembly parameters, excessive symbol
+id).
 
 The wire `seqno` numbers source symbols `0..symbols_count` and then
 repair symbols densely (`symbols_count + i`). The raptorq crate's
