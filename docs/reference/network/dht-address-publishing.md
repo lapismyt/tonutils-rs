@@ -16,8 +16,14 @@ publishes it can only be reached by peers it contacted itself: every peer that
 learns its signed `overlay.node` record from an `overlay.getRandomPeers` answer
 fails the `dht.getValue(address)` resolution, cannot `overlay.ping` it, and
 therefore never adds it as a verified neighbour. That is what stops transitive
-peer discovery from compounding, and why no broadcast is ever pushed to a
-non-publishing node.
+peer discovery from compounding: the missing value closes the path through
+third parties, not delivery as a whole. Peers this node contacted itself keep
+its routable source address from its datagrams
+(`AdnlPeerPairImpl::receive_packet_checked`), and those peers do push
+broadcasts to a non-publishing node - runs 38594880666 (38 inbound overlay
+custom messages) and 38558546040 (4313) both delivered the external message
+while `dht address publish: stored on 0 of 4` in every recorded run,
+delivering or not.
 
 This page covers value construction, the publish/verify round, and
 external-address resolution for the native UDP path (`native_udp` and
@@ -42,7 +48,7 @@ yet; see Missing work.
 | `adnl.address.udp ip:int port:int = adnl.Address;` | `0x670da6e7` |
 
 - `dht.key.id` is the node's ADNL short id: sha256 of the boxed public key
-  (the `0xc6b41348` `pub.ed25519` prefix plus the 32 key bytes), i.e. upstream's
+  (the `0x4813b4c6` `pub.ed25519` prefix plus the 32 key bytes), i.e. upstream's
   `short_id_.pubkey_hash()`. `name` is the literal bytes `"address"`, `idx` is
   `0`.
 - The routing key id used by `dht.findNode`/`dht.findValue` is sha256 of the

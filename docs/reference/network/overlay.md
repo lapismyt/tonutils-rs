@@ -284,14 +284,29 @@ broadcasts to us".
   pending entry, sends `overlay.ping` with a 5 s timeout and 3 attempts, and
   only then calls `add_peer(verified = true)`.
 - **Verification is what grants a neighbour slot.** `add_peer(verified = true)`
-  inserts into `neighbours_` only while `neighbours_.size() < max_neighbours()`
-  (10); otherwise the node sits in `peers_` and waits for
+  always inserts into `peers_`, and into `neighbours_` only while
+  `neighbours_.size() < max_neighbours()` (10) and the peer's flags have no
+  `DoNotReceiveBroadcasts`; otherwise the node sits in `peers_` and waits for
   `update_neighbours`.
 - **`update_neighbours(0)` runs every second** and fills free neighbour slots
   from random live members, while `update_neighbours(2)` - scheduled every
   30-120 s - replaces two random slots. So a freshly verified member is picked
   up quickly when a slot is free, and otherwise depends on the member set size
   for a lottery ticket roughly every 75 s.
+- **Pushing is a per-wave random sample of the neighbour set.** Broadcasts fan
+  out through `get_neighbours(propagate_broadcast_to())`, and
+  `propagate_broadcast_to()` is 5 in both `BroadcastSimple::run_continue`
+  (`overlay/broadcast-simple.cpp`) and `BroadcastFec::distribute_part`
+  (`overlay/broadcast-fec.cpp`); `get_neighbours` delegates to
+  `choose_neighbours` (`overlay/overlay-peers.cpp`), a uniform random sample
+  without replacement of at most 5 of the at-most-10 `neighbours_`. A holder
+  therefore pushes to a verified neighbour with probability about
+  `5 / |neighbours|` per broadcast wave, and a peer whose neighbour set was
+  already full when it verified this node becomes pushable only through the
+  `update_neighbours` lottery above. This makes delivery all-or-nothing and
+  the pinger count non-predictive: the delivering run 38594880666 (2026-10-14,
+  `386042b`) had 2 pingers, while the non-delivering run 38723511984
+  (2026-10-15, `694aa49`) had 5 and received no broadcast at all.
 - **An answer is a sample, not a membership proof.**
   `send_random_peers_cont` builds the reply from `announce_self_` plus up to
   `nodes_to_send_()` (4) calls to `get_random_peer(true)` over the peer's whole
@@ -337,14 +352,29 @@ such values either (`DhtClient.store_value` rejects the `overlayNodes` rule
 with `DhtError('currently overlay is not supported')`). This scanner reads
 the value for discovery (`lookup.rs`) but cannot and must not write it.
 
-The practical consequence is a bimodal delivery distribution. Admission by
-the few full nodes in the overlay works through the query path; a bot learns
-this node only when a full node samples it into a `getRandomPeers` answer
-(`4 / |peers_|` per answer) and the bot then resolves its DHT `address` value
-(`DhtClient.get_overlay_node`). One such listing typically cascades through
-the small bot sets within minutes, which matches the observed 129-192 s
-delivery runs - and its absence in a 300-600 s window proves nothing about
-this node's reachability.
+The practical consequence is a bimodal delivery distribution, but the
+observed mechanism is narrower than a listing cascade. A bot could in
+principle learn this node when a full node samples it into a
+`getRandomPeers` answer (`4 / |peers_|` per answer) and then resolve its
+DHT `address` value (`DhtClient.get_overlay_node`), but in every recorded
+run - the delivering ones included - publishing ended with
+`dht address publish: stored on 0 of 4`, so that value never existed, no bot
+could resolve it, and the cascade remains a possible path with no positive
+live evidence. What the logs show instead is the direct path: a growth or
+bootstrap session peer answers a query, originates `overlay.ping`, marks
+this node verified after the pong, and pushes broadcasts to it. The
+recorded arms: run 38594880666 (2026-10-14, `386042b`) delivered ~80 s into
+the wait, seconds after a growth-phase peer pinged it and started pushing
+`overlay.message` custom datagrams; run 38558546040 (2026-10-14, `4894e5f`)
+delivered at ~295 s after 4313 such datagrams; runs 38579887480 (2026-10-14,
+`5fec546`) and 38723511984 (2026-10-15, `694aa49`) received none within the
+full 300 s budget despite normal membership and pinger counters. The earlier
+129-192 s band is superseded by these arms: timing follows whether any
+neighbour holder samples this node in its fan-out, and `membership_listed`
+and `dht_pings_received` - both 0 in every run, delivering or not - gate
+only third-party discovery, nothing in the observed path. A delivery's
+absence in a 300 s window still proves nothing about this node's
+reachability.
 
 ### Address routing: channels versus stored lists
 

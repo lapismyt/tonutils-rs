@@ -35,7 +35,7 @@ summary lives in the [protocol matrix](protocol-matrix.md).
 | Protocol version | TLS 1.3 only (`rustls::version::TLS13`, mirroring upstream `SSL_CTX_set_min/max_proto_version(TLS1_3)` in `quic/quic-pimpl.cpp::setup_rpk_context`) |
 | ALPN | `ton` (upstream `QuicServer`/`QuicSender` `alpn = "ton"`) |
 | SNI | `<hex[0:32]>.<hex[32:64]>.adnl` - lowercase hex of the peer's ADNL short id, split at 32 characters |
-| Short id | SHA-256 over the TL-tagged Ed25519 public key (`pub.ed25519`, constructor id `0xc6b41348`), i.e. `AdnlAddress::from(&PublicKey)` |
+| Short id | SHA-256 over the TL-tagged Ed25519 public key (`pub.ed25519`, constructor id `0x4813b4c6`, little-endian bytes `c6 b4 13 48` on the wire), i.e. `AdnlAddress::from(&PublicKey)` |
 | Certificate payload | RFC 7250 raw public key: a 44-byte Ed25519 SubjectPublicKeyInfo (`302a300506032b6570032100` prefix, RFC 8410) or a bare 32-byte key. No X.509 chain, no SAN, no fallback |
 | Client certificate | Required. The server offers client auth, marks it mandatory, and requires the raw-public-key certificate type; upstream requests a certificate (`SSL_VERIFY_PEER`) and drops a missing or non-32-byte peer key in `quic/quic-pimpl.cpp::parse_peer_id` |
 | CertificateVerify | Standard RFC 8032 Ed25519 over the TLS 1.3 transcript hash, verified with `PublicKey::verify_raw`. TLS 1.2 signature verification returns `Err` (fail-closed) |
@@ -61,7 +61,8 @@ A fixed vector pins the derivation: seed `[0x42; 32]` yields public key
 `2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12`
 (verified with `openssl pkey -inform der -pubout`), short id
 `c46870c7c81b3b56bafd6e0836362a189ebc58281029effb8460bda50f3a3af0`
-(verified with `sha256` over `c6b41348 || pubkey`), SNI
+(verified with `sha256` over `c6b41348 || pubkey`, the little-endian
+wire bytes of ctor id `0x4813b4c6`), SNI
 `c46870c7c81b3b56bafd6e0836362a18.9ebc58281029effb8460bda50f3a3af0.adnl`.
 
 ### Certificate-type interlock

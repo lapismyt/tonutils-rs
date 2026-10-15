@@ -55,7 +55,7 @@ const ALPN_TON: &[u8] = b"ton";
 /// Derives the SNI hostname for a TON QUIC connection.
 ///
 /// The hostname is the peer's ADNL short id - SHA-256 over the TL-tagged
-/// Ed25519 public key (`pub.ed25519`, constructor id `0xc6b41348`) - as
+/// Ed25519 public key (`pub.ed25519`, constructor id `0x4813b4c6`) - as
 /// lowercase hex split at 32 characters with an `.adnl` suffix:
 /// `<hex[0:32]>.<hex[32:64]>.adnl`.
 ///
@@ -395,7 +395,8 @@ mod tests {
     /// Seed for the fixed SNI vector. The expected public key below comes
     /// from OpenSSL (`openssl pkey -inform der` over the PKCS#8 built from
     /// this seed), and the expected short id from
-    /// `sha256(c6b41348 || pubkey)` computed outside this crate, so the test
+    /// `sha256(c6b41348 || pubkey)` computed outside this crate (`c6 b4 13 48`
+    /// is the little-endian wire form of ctor id `0x4813b4c6`), so the test
     /// fails if either the derivation or the hashing wrapper drifts.
     const SNI_SEED: [u8; 32] = [0x42; 32];
     const SNI_PUBKEY_HEX: &str = "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12";
