@@ -186,14 +186,21 @@ jobs:
         run: cargo test -p tonutils-mempool --test live mainnet_overlay_dht_discovery_returns_peers -- --ignored --nocapture
 
       - name: Run mempool overlay QUIC discovery live test
-        # Hard-asserts at least one member QUIC connect (phase 2b).
-        # Green only while some mainnet member completes a handshake
-        # from hosted runners (first seen in CI run 38292378027);
-        # see docs/reference/network/quic.md for the reachability
-        # verdict and the per-target log format.
+        # Runs in its own test binary (`--test live_quic`). Phase 2b
+        # hard-asserts at least one member QUIC connect (`connected > 0`,
+        # the gate stays hard by project decision) with a 10 s per-target
+        # connect budget and up to three retry waves: wave 1 dials every
+        # registered member, waves 2-3 redial only the targets that timed
+        # out or errored, and the loop stops at the first handshake. Every
+        # per-target line carries `source=advertised|udp+1000` and the wave
+        # number, and the summary adds `connected_advertised=`,
+        # `connected_udp_offset=` and `waves=`. Green only while some
+        # mainnet member completes a handshake from hosted runners (first
+        # seen in CI run 38292378027); see docs/reference/network/quic.md
+        # for the reachability verdict and the per-target log format.
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils-mempool --test live mainnet_overlay_quic_discovery_returns_peers -- --ignored --nocapture
+        run: cargo test -p tonutils-mempool --test live_quic mainnet_overlay_quic_discovery_returns_peers -- --ignored --nocapture
 
       - name: Run live workflow smoke tests
         # Last and unconditional so the two flaky live-test classes cannot
