@@ -33,6 +33,8 @@ pub(crate) struct PeerGrowthTask {
     /// Pinned peers: excluded from `max_peers`, already registered, never
     /// re-added by growth and never evicted by quality churn.
     pub(crate) pinned: HashSet<PeerId>,
+    /// Interval between periodic growth rounds.
+    pub(crate) growth_interval: Duration,
     /// The scanner's event sender, read by the idle gate.
     pub(crate) event_tx: mpsc::Sender<MempoolEvent>,
 }
@@ -50,6 +52,7 @@ impl PeerGrowthTask {
             backoff,
             max_peers,
             pinned,
+            growth_interval,
             event_tx,
         } = self;
         if max_peers == 0 {
@@ -66,7 +69,7 @@ impl PeerGrowthTask {
             // periodic tick further away, and a round that outlives
             // the interval must not turn the cadence into a tight
             // loop.
-            let mut ticker = tokio::time::interval(PEER_GROWTH_INTERVAL);
+            let mut ticker = tokio::time::interval(growth_interval);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             // The first tick fires immediately; consume it so the first
             // round still happens one full interval after bootstrap.

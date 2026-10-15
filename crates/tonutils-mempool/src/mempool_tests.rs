@@ -441,6 +441,7 @@ async fn disconnect_triggers_an_immediate_growth_round() {
         backoff: Duration::ZERO,
         max_peers: 8,
         pinned: HashSet::new(),
+        growth_interval: Duration::from_millis(100),
         event_tx: scanner.event_tx.clone(),
     }
     .spawn();

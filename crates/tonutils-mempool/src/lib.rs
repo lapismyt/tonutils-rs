@@ -64,7 +64,8 @@ pub use udp_session::{
 /// Ten seconds matches pytoniq's `OverlayManager.get_more_peers` cadence: it
 /// keeps re-announcing this node while it harvests members reachable only
 /// through `overlay.getRandomPeers`.
-const PEER_GROWTH_INTERVAL: Duration = Duration::from_secs(10);
+#[allow(dead_code)]
+const DEFAULT_PEER_GROWTH_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Ingest workers draining the overlay pool queue.
 ///
@@ -89,6 +90,10 @@ pub struct MempoolConfig {
     pub validate_message: bool,
     pub dedup_ttl: Duration,
     pub max_dedup_entries: usize,
+    /// Interval between peer-growth rounds after bootstrap.
+    /// Default 10s (matches pytoniq's cadence). Lower values
+    /// increase roster turnover for live tests.
+    pub growth_interval: Duration,
 }
 
 impl Default for MempoolConfig {
@@ -101,6 +106,7 @@ impl Default for MempoolConfig {
             validate_message: true,
             dedup_ttl: Duration::from_secs(300),
             max_dedup_entries: 100_000,
+            growth_interval: Duration::from_secs(10),
         }
     }
 }

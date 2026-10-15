@@ -8,7 +8,7 @@ use tonutils_adnl::{AdnlUdpSession, KeyPair, PublicKey};
 use tonutils_mempool::MempoolScannerBuilder;
 use tonutils_mempool::{
     MempoolConfig, MempoolEvent, OverlayMemberEndpoints, PeerQualityConfig, known_member_seeds,
-    udp_overlay_lookup,
+    udp_overlay_lookup, udp_overlay_lookup_with_endpoints,
 };
 use tonutils_network_config::extract_dht_addresses;
 use tonutils_overlay::{OverlayId, PeerId, PeerStatus, SeedPeer};
@@ -343,7 +343,10 @@ async fn configured_seed_delivers_valid_external_message() {
     let (scanner, manager, stream) = MempoolScannerBuilder::new()
         .download_config(false)
         .overlay_id(overlay)
-        .config(MempoolConfig::default())
+        .config(MempoolConfig {
+            growth_interval: Duration::from_secs(3),
+            ..MempoolConfig::default()
+        })
         .seeds(seeds.clone())
         .reconnect_attempts(2)
         .discovery_timeout(Duration::from_secs(30))
@@ -359,7 +362,7 @@ async fn configured_seed_delivers_valid_external_message() {
         // during the 300 s wait, letting growth continuously add fresh full-node
         // contacts (each eviction -> growth round -> new admission ticket).
         .peer_quality(PeerQualityConfig {
-            churn_interval: Duration::from_secs(10),
+            churn_interval: Duration::from_secs(3),
             sweep_interval: Duration::from_secs(1),
             ..PeerQualityConfig::default()
         })
@@ -382,6 +385,25 @@ async fn configured_seed_delivers_valid_external_message() {
         scanner.discovery_stats()
     );
     eprintln!("live mempool phase=connected registered_peers={connected_peers} overlay={overlay}");
+
+    // Pre-wait growth burst: run 4 aggressive growth rounds back-to-back
+    // to seed neighbour slots on full nodes before the passive wait window.
+    // Uses the same UDP overlay lookup that the builder's growth task uses.
+    for burst in 1..=4 {
+        eprintln!("live mempool phase=growth-burst round={burst}");
+        let burst_lookup = udp_overlay_lookup_with_endpoints(
+            "0.0.0.0:0".parse().unwrap(),
+            local_key,
+            overlay,
+            overlay_bytes,
+            32,
+            Duration::from_secs(30),
+            member_endpoints.clone(),
+        );
+        let _ = tokio::time::timeout(Duration::from_secs(30), burst_lookup(seeds.clone())).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+
     let mut events = Box::pin(stream);
     let mut progress = tokio::time::interval(Duration::from_secs(10));
     progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);

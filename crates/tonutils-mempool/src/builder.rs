@@ -610,6 +610,7 @@ impl MempoolScannerBuilder {
         );
         let manager = PeerManager::with_overlay(self.overlay, self.overlay_id)
             .map_err(|error| MempoolError::Overlay(error.to_string()))?;
+        let growth_interval = self.config.growth_interval;
         let scanner = Arc::new(MempoolScanner::with_quality(
             self.config,
             self.peer_quality.clone(),
@@ -759,6 +760,7 @@ impl MempoolScannerBuilder {
                     backoff: self.reconnect_backoff,
                     max_peers: usize::try_from(self.overlay_max_peers).unwrap_or(usize::MAX),
                     pinned: pinned_ids.clone(),
+                    growth_interval,
                     event_tx: scanner.event_tx.clone(),
                 }
                 .spawn();
