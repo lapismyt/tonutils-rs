@@ -479,6 +479,20 @@ retried in a second sweep over a wider list, DNS resolution is bounded, a
 store round that stored nothing is retried once, and the gate job prints the
 per-sample STUN observations into the job log.
 
+Run 38917780756 (2026-10-16, `1a5cf52`, 300 s budget): green, and the first
+gate that classified the runner's NAT.  All eight samples published a
+`dht.address` value: Cloudflare (`162.159.207.0:3478`) and Google
+(`74.125.250.129:19302`) - two distinct destinations - reported the same
+mapped port for each sample's shared socket (one port per sample, 5184-5191),
+so the runner's mapping is endpoint independent and every sample passed the
+distinct-destination agreement rule.  Sample 7 delivered at
+`time_to_message=274.8s` and satisfied the gate; samples 1/3/5/6/8 were
+stopped once the winner was found.  The two timed-out samples still recorded
+healthy admission (`unique_pingers=4/6`, `pings_received=16/20`,
+`membership_answers=1174/1240`), and sample 4 recorded the first non-zero
+`membership_listing_peers=2`: full nodes now resolve the published address,
+admit this node, and list it back in their own `getRandomPeers` answers.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established
