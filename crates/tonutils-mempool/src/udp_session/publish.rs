@@ -65,6 +65,13 @@ const VALUE_TTL_SECS: i32 = 3600;
 /// round fails.
 pub const PUBLISH_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
+/// Delay before one bounded retry of a store round that stored nothing.
+///
+/// A responsible node that is momentarily unreachable answers nothing at
+/// all, which the round cannot tell apart from a rejection, so a single
+/// retry keeps one silent node from costing the whole publish interval.
+const PUBLISH_STORE_RETRY_DELAY: Duration = Duration::from_secs(5);
+
 /// A DHT node a publish round can store the value on.
 #[derive(Clone, Debug)]
 pub(in crate::udp_session) struct DhtCandidate {
@@ -604,7 +611,9 @@ pub type DhtAddressPublisher =
 /// `TON_MEMPOOL_EXTERNAL_ADDRESS` environment variable, then a
 /// route probe against the known DHT nodes.  A lazy resolution
 /// keeps the value correct when the host's address changes
-/// between rounds.
+/// between rounds.  A store round that stored nothing is retried
+/// once after a short delay, because a silent responsible node is
+/// indistinguishable from a transient failure.
 #[allow(clippy::large_types_passed_by_value)]
 pub fn address_publisher(
     local_addr: SocketAddr,
@@ -632,9 +641,16 @@ pub fn address_publisher(
                 log::debug!("dht address publish: no externally reachable address for this node");
                 return 0;
             };
-            let stored =
+            let mut stored =
                 publish_dht_address_value(local_addr, local_keypair, external, &nodes, timeout)
                     .await;
+            if stored.is_empty() {
+                log::debug!("dht address publish: store round stored nothing, retrying once");
+                tokio::time::sleep(PUBLISH_STORE_RETRY_DELAY).await;
+                stored =
+                    publish_dht_address_value(local_addr, local_keypair, external, &nodes, timeout)
+                        .await;
+            }
             let served = verify_dht_address_value(
                 local_addr,
                 local_keypair,

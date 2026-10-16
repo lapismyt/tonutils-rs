@@ -16,6 +16,15 @@
 //! from the servers that answered, not proof that every overlay peer can
 //! deliver to it.  [`discover_mapped_address`] therefore reports a
 //! candidate and logs its reasoning rather than asserting reachability.
+//!
+//! A mapping is published only when servers behind distinct destinations
+//! report the same `ip:port`: a symmetric NAT maps the socket separately
+//! per destination, and such a per-destination port is not where other
+//! peers can deliver.  Two hostnames that resolve to the same server are
+//! one destination and their agreement proves nothing, so agreement is
+//! counted across distinct server addresses only.  The server list is
+//! swept more than once because one unanswered request says nothing
+//! about the mapping.
 
 use std::net::{Ipv4Addr, SocketAddr};
 
@@ -41,25 +50,45 @@ const XOR_MAPPED_ADDRESS: u16 = 0x0020;
 
 /// Public STUN servers queried for the socket's mapped address.
 ///
-/// Several servers are queried because a single answer cannot be
-/// distinguished from a symmetric NAT that maps the socket differently
-/// per destination: such a mapping is not the address overlay peers can
-/// deliver to.
-const STUN_SERVERS: [&str; 3] = [
+/// Several independent operators are queried because a mapping is only
+/// publishable when servers behind distinct destinations report the same
+/// `ip:port`: a symmetric NAT maps the socket separately per destination
+/// and such a mapping is not the address overlay peers can deliver to.
+/// The two Google hostnames are kept because they resolve to different
+/// anycast addresses on some networks and deduplicate on others.
+const STUN_SERVERS: [&str; 8] = [
+    "stun.cloudflare.com:3478",
     "stun.l.google.com:19302",
     "stun1.l.google.com:19302",
-    "stun.cloudflare.com:3478",
+    "stun.miwifi.com:3478",
+    "stun.sipnet.net:3478",
+    "stun.voip.blackberry.com:3478",
+    "stun.ekiga.net:3478",
+    "stun.nextcloud.com:443",
 ];
 
-/// Distinct mapped addresses that must agree before one is reported.
+/// Distinct server addresses that must report the same mapping before
+/// one is published.
 ///
-/// Endpoint-independent mapping reports the same `ip:port` no matter
-/// which server is asked; a symmetric NAT reports a different port per
-/// server and is rejected.
+/// An endpoint-independent NAT reports the same `ip:port` to every
+/// destination; a symmetric NAT reports a different port per destination
+/// and is rejected.  Two hostnames that resolve to one address are a
+/// single destination, so only distinct addresses count.
 const REQUIRED_AGREEMENT: usize = 2;
+
+/// How many passes over [`STUN_SERVERS`] one discovery round makes.
+///
+/// A single unanswered request is not evidence of a per-destination NAT,
+/// so a pass that reached fewer than [`REQUIRED_AGREEMENT`] agreements is
+/// repeated for the servers that stayed silent; servers that already
+/// answered are not asked again.
+const STUN_SWEEPS: usize = 2;
 
 /// Per server budget for a binding exchange.
 const STUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Per name budget for resolving a STUN server.
+const RESOLVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Builds a `BindingRequest` carrying `transaction_id`.
 ///
@@ -145,69 +174,150 @@ fn parse_address_attribute(attribute: u16, value: &[u8]) -> Option<SocketAddr> {
     Some(SocketAddr::new(Ipv4Addr::from(address).into(), port))
 }
 
+/// Bookkeeping for one discovery round: which server destinations have
+/// answered and whether their mappings agree.
+#[derive(Default)]
+struct MappingAgreement {
+    answered: Vec<SocketAddr>,
+    candidate: Option<SocketAddr>,
+    agreed: usize,
+    disagreed: bool,
+}
+
+impl MappingAgreement {
+    fn has_answered(&self, server: SocketAddr) -> bool {
+        self.answered.contains(&server)
+    }
+
+    /// Marks a server that answered with an unusable mapping (for
+    /// example a non-routable address) as asked.
+    fn mark_answered(&mut self, server: SocketAddr) {
+        if !self.has_answered(server) {
+            self.answered.push(server);
+        }
+    }
+
+    /// Records a publishable mapping from `server` and reports whether
+    /// [`REQUIRED_AGREEMENT`] distinct servers now agree on one address.
+    ///
+    /// The first mapping becomes the candidate; any different mapping
+    /// from a distinct destination disqualifies the round, because a
+    /// mapping that varies per destination is not where other peers can
+    /// deliver.
+    fn record_mapping(&mut self, server: SocketAddr, mapped: SocketAddr) -> bool {
+        if self.has_answered(server) {
+            return self.reached_agreement();
+        }
+        self.mark_answered(server);
+        match self.candidate {
+            None => {
+                self.candidate = Some(mapped);
+                self.agreed = 1;
+            }
+            Some(candidate) if candidate == mapped => self.agreed += 1,
+            Some(_) => self.disagreed = true,
+        }
+        self.reached_agreement()
+    }
+
+    fn reached_agreement(&self) -> bool {
+        !self.disagreed && self.agreed >= REQUIRED_AGREEMENT
+    }
+
+    fn candidate(&self) -> Option<SocketAddr> {
+        self.candidate
+    }
+
+    fn disagreed(&self) -> bool {
+        self.disagreed
+    }
+
+    fn agreed(&self) -> usize {
+        self.agreed
+    }
+}
+
 /// Asks the STUN servers where the shared socket is reachable from.
 ///
-/// One `BindingRequest` per server, sent from the transport's own
-/// socket, so the reported mapping describes that socket.  A mapping is
-/// reported only when [`REQUIRED_AGREEMENT`] servers describe the same
-/// `ip:port` and the address is globally routable, see
-/// [`is_publishable_ip`].  Otherwise the round is logged and no address
-/// is published, which is the same outcome as before STUN existed.
+/// One `BindingRequest` per distinct server address, sent from the
+/// transport's own socket, so the reported mapping describes that
+/// socket.  A mapping is reported only when [`REQUIRED_AGREEMENT`]
+/// distinct servers describe the same `ip:port` and the address is
+/// globally routable, see [`is_publishable_ip`]; any disagreement from a
+/// distinct destination disqualifies the round, and a round that reached
+/// too few agreements is swept once more for the servers that stayed
+/// silent.  Otherwise the round is logged and no address is published,
+/// which is the correct outcome behind a per-destination NAT.
 pub(super) async fn discover_mapped_address(transport: &AdnlUdpTransport) -> Option<SocketAddr> {
-    let mut observations: Vec<(SocketAddr, SocketAddr)> = Vec::new();
-    for server in STUN_SERVERS {
-        let Some(server) = resolve_stun_server(server).await else {
-            log::debug!("dht address publish: stun server {server} did not resolve");
-            continue;
-        };
-        let transaction_id = tonutils_tl::Int256::random().0[..12].try_into().unwrap();
-        let request = binding_request(transaction_id);
-        let response = match transport.raw_exchange(server, &request, STUN_TIMEOUT).await {
-            Ok(response) => response,
-            Err(error) => {
-                log::debug!("dht address publish: binding request to {server} failed: {error}");
+    let mut agreement = MappingAgreement::default();
+    let mut sweeps_run = 0;
+    for sweep in 1..=STUN_SWEEPS {
+        sweeps_run = sweep;
+        for name in STUN_SERVERS {
+            let Some(server) = resolve_stun_server(name).await else {
+                log::debug!("dht address publish: stun server {name} did not resolve");
+                continue;
+            };
+            if agreement.has_answered(server) {
                 continue;
             }
-        };
-        let Some(mapped) = parse_binding_response(&response, transaction_id) else {
+            let transaction_id = tonutils_tl::Int256::random().0[..12].try_into().unwrap();
+            let request = binding_request(transaction_id);
+            let response = match transport.raw_exchange(server, &request, STUN_TIMEOUT).await {
+                Ok(response) => response,
+                Err(error) => {
+                    log::debug!("dht address publish: binding request to {server} failed: {error}");
+                    continue;
+                }
+            };
+            let Some(mapped) = parse_binding_response(&response, transaction_id) else {
+                log::debug!(
+                    "dht address publish: binding response from {server} did not parse \
+                     ({} bytes)",
+                    response.len()
+                );
+                continue;
+            };
             log::debug!(
-                "dht address publish: binding response from {server} did not parse \
-                 ({} bytes)",
-                response.len()
+                "dht address publish: stun server {server} reports {mapped} for this socket"
             );
-            continue;
-        };
-        log::debug!("dht address publish: stun server {server} reports {mapped} for this socket");
-        if !is_publishable_ip(mapped) {
-            log::debug!(
-                "dht address publish: mapped address {mapped} is not globally routable, \
-                 continuing"
-            );
-            continue;
+            if !is_publishable_ip(mapped) {
+                log::debug!(
+                    "dht address publish: mapped address {mapped} is not globally routable, \
+                     continuing"
+                );
+                agreement.mark_answered(server);
+                continue;
+            }
+            if agreement.record_mapping(server, mapped) {
+                log::info!(
+                    "dht address publish: stun reports {mapped} reachable for this socket \
+                     ({server}, sweep {sweep})"
+                );
+                return Some(mapped);
+            }
+            if agreement.disagreed()
+                && let Some(candidate) = agreement.candidate()
+            {
+                log::debug!(
+                    "dht address publish: stun servers disagree ({candidate} vs {mapped}); \
+                     the NAT maps per destination, continuing"
+                );
+            }
         }
-        if let Some((previous, _)) = observations.first()
-            && *previous != mapped
-        {
-            log::debug!(
-                "dht address publish: stun servers disagree ({previous} vs {mapped}); \
-                 the NAT maps per destination, continuing"
-            );
-            continue;
-        }
-        observations.push((mapped, server));
-        if observations.len() >= REQUIRED_AGREEMENT {
-            log::info!(
-                "dht address publish: stun reports {mapped} reachable for this socket \
-                 ({server})"
-            );
-            return Some(mapped);
+        if agreement.disagreed() {
+            // Distinct destinations already reported different mappings;
+            // retrying silent servers cannot make the mapping endpoint
+            // independent.
+            break;
         }
     }
     log::debug!(
-        "dht address publish: stun reached no agreement ({}/{} servers), no address \
-         published",
-        observations.len(),
-        REQUIRED_AGREEMENT
+        "dht address publish: stun reached no agreement ({}/{} servers after sweep {}), \
+         no address published",
+        agreement.agreed(),
+        REQUIRED_AGREEMENT,
+        sweeps_run
     );
     None
 }
@@ -215,10 +325,12 @@ pub(super) async fn discover_mapped_address(transport: &AdnlUdpTransport) -> Opt
 /// Resolves a STUN server name, preferring an IPv4 address.
 ///
 /// The binding exchange handled here is IPv4 only, so a name that
-/// resolves to IPv6 alone is treated as unreachable.
+/// resolves to IPv6 alone is treated as unreachable.  Resolution is
+/// bounded so a stuck resolver cannot stall the publish round.
 async fn resolve_stun_server(server: &str) -> Option<SocketAddr> {
-    lookup_host(server)
+    tokio::time::timeout(RESOLVE_TIMEOUT, lookup_host(server))
         .await
+        .ok()?
         .ok()?
         .find(|address| address.is_ipv4())
 }
@@ -373,5 +485,61 @@ mod tests {
         value[1] = 0x02;
         let response = binding_response(XOR_MAPPED_ADDRESS, value);
         assert_eq!(parse_binding_response(&response, TRANSACTION_ID), None);
+    }
+
+    #[test]
+    fn agreement_needs_distinct_server_addresses() {
+        let mut agreement = MappingAgreement::default();
+        let mapped: SocketAddr = "203.0.113.7:3478".parse().unwrap();
+        let server: SocketAddr = "198.51.100.9:3478".parse().unwrap();
+        assert!(
+            !agreement.record_mapping(server, mapped),
+            "one destination is not agreement"
+        );
+        assert!(
+            !agreement.record_mapping(server, mapped),
+            "the same destination twice is still one observation"
+        );
+        assert_eq!(agreement.agreed(), 1);
+        let other: SocketAddr = "198.51.100.10:3478".parse().unwrap();
+        assert!(
+            agreement.record_mapping(other, mapped),
+            "two distinct destinations reporting the same mapping agree"
+        );
+    }
+
+    #[test]
+    fn a_different_mapping_from_another_destination_blocks_agreement() {
+        let mut agreement = MappingAgreement::default();
+        let first: SocketAddr = "203.0.113.7:3478".parse().unwrap();
+        let second: SocketAddr = "203.0.113.8:3478".parse().unwrap();
+        let a: SocketAddr = "198.51.100.9:3478".parse().unwrap();
+        let b: SocketAddr = "198.51.100.10:3478".parse().unwrap();
+        let c: SocketAddr = "198.51.100.11:3478".parse().unwrap();
+        assert!(!agreement.record_mapping(a, first));
+        assert!(
+            !agreement.record_mapping(b, second),
+            "disagreement is not agreement"
+        );
+        assert!(agreement.disagreed());
+        assert!(
+            !agreement.record_mapping(c, first),
+            "a later matching answer cannot outvote a recorded disagreement"
+        );
+    }
+
+    #[test]
+    fn answered_servers_are_not_asked_again() {
+        let mut agreement = MappingAgreement::default();
+        let server: SocketAddr = "198.51.100.9:3478".parse().unwrap();
+        let mapped: SocketAddr = "203.0.113.7:3478".parse().unwrap();
+        assert!(!agreement.has_answered(server));
+        agreement.mark_answered(server);
+        assert!(agreement.has_answered(server));
+        assert!(
+            !agreement.record_mapping(server, mapped),
+            "an unusable answer still counts the destination as asked"
+        );
+        assert_eq!(agreement.agreed(), 0);
     }
 }
