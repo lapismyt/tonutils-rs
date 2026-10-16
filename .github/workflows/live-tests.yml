@@ -421,6 +421,22 @@ jobs:
             classify "$i" | tee -a "$summary"
           done
 
+          # The STUN observations behind each sample's address publication.
+          # Distinct servers reporting different ports are the signature of
+          # a per-destination NAT, which correctly publishes nothing; the
+          # sample logs stay on the runner, so this is the only place those
+          # observations reach the job log.
+          for i in $(seq 1 "$samples"); do
+            s="$artifacts/sample-$i.log"
+            [ -s "$s" ] || continue
+            reports="$(grep -oE 'stun server [0-9.]+:[0-9]+ reports [0-9.]+:[0-9]+' "$s" \
+              | sed -E 's/stun server ([0-9.]+:[0-9]+) reports ([0-9.]+:[0-9]+)/\1=\2/' \
+              | head -n 8 | paste -sd' ' -)"
+            failed="$(grep -cE 'binding request to .* failed|stun server .* did not resolve' "$s" || true)"
+            verdict="$(grep -oE 'stun reached no agreement \([^)]*\)|stun reports [0-9.]+:[0-9]+ reachable' "$s" | tail -n 1)"
+            echo "sample $i: stun_reports=[$reports] stun_failed=$failed stun_verdict=${verdict:-none}"
+          done
+
           if [ -n "$winner" ]; then
             {
               echo '### Mempool delivery acceptance passed'
