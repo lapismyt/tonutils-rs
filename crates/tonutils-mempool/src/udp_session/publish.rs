@@ -32,8 +32,8 @@ use tonutils_adnl::{AdnlAddress, AdnlUdpTransport, KeyPair, PublicKey as AdnlPub
 use tonutils_overlay::SeedPeer;
 use tonutils_tl::Int256;
 use tonutils_tl::tl::network::{
-    Address, AddressListBoxed, DhtKey, DhtKeyDescription, DhtNode, DhtNodesBoxed, DhtUpdateRule,
-    DhtValue, DhtValueResult, PublicKey as TlPublicKey,
+    Address, AddressListBoxed, DhtKey, DhtKeyDescription, DhtMessage, DhtNode, DhtNodesBoxed,
+    DhtUpdateRule, DhtValue, DhtValueBare, DhtValueResult, PublicKey as TlPublicKey,
 };
 
 use super::lookup::{dht_key_id, shared_session};
@@ -239,6 +239,17 @@ pub async fn publish_dht_address_value(
     timeout: Duration,
 ) -> usize {
     let value = address_dht_value(&local_keypair, external);
+    let store_query = tl_proto::serialize(DhtMessage::Store {
+        value: DhtValueBare::from(&value),
+    });
+    // A DHT node that rejects the stored value answers nothing at
+    // all - the client only sees a timeout - so the exact payload is
+    // the primary evidence when a store round fails.
+    log::debug!(
+        "dht address publish: dht.store payload ({} bytes): {}",
+        store_query.len(),
+        hex::encode(&store_query)
+    );
     let key_id = dht_key_id(short_id(&local_keypair.public_key), b"address").0;
     let mut candidates = known_candidates(dht_nodes);
     enrich_with_find_node(local_addr, local_keypair, &key_id, &mut candidates, timeout).await;

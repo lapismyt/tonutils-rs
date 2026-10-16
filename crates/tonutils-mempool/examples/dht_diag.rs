@@ -1,10 +1,12 @@
 #![allow(clippy::large_types_passed_by_value)]
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
 use tonutils_adnl::{AdnlUdpSession, KeyPair};
+use tonutils_mempool::address_publisher;
 use tonutils_network_config::extract_dht_addresses;
+use tonutils_overlay::SeedPeer;
 use tonutils_tl::tl::network::DhtKey;
 
 use sha2::{Digest, Sha256};
@@ -13,10 +15,16 @@ use sha2::{Digest, Sha256};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
 
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("store") {
+        return store_against_single_node(&args).await;
+    }
+
     let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let local_addr: SocketAddr = "0.0.0.0:0".parse()?;
-    let config_path = std::env::args()
-        .nth(1)
+    let config_path = args
+        .get(1)
+        .cloned()
         .unwrap_or_else(|| "global.config.json".into());
     let json = std::fs::read_to_string(&config_path)?;
 
@@ -102,4 +110,43 @@ async fn test_dht_value(
         Ok(result) => Ok(format!("{result:?}")),
         Err(e) => Err(format!("{e}").into()),
     }
+}
+
+/// Runs one production publish round against a single DHT node.
+///
+/// `dht_diag store <peer_pubkey_hex> <addr:port>` replays the exact
+/// `dht.store` payload [`address_publisher`] sends from the native
+/// UDP path.  A local `dht-server` then logs why it drops a store
+/// that the public DHT nodes answer nothing to.
+async fn store_against_single_node(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
+    let usage = "usage: dht_diag store <peer_pubkey_hex> <addr:port>";
+    let peer_hex = args.get(2).ok_or(usage)?;
+    let peer_addr: SocketAddr = args.get(3).ok_or(usage)?.parse()?;
+    let peer_key: [u8; 32] = hex::decode(peer_hex)?
+        .try_into()
+        .map_err(|_| "peer public key must be 32 bytes")?;
+
+    let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let local_addr: SocketAddr = "0.0.0.0:0".parse()?;
+    // Any stable address works: the round stores this value and
+    // verifies the value the node serves against it.
+    let external = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9);
+
+    let seed = SeedPeer::from_public_key(peer_key, peer_addr.to_string());
+    let publisher = address_publisher(
+        local_addr,
+        local_key,
+        Some(external),
+        Duration::from_secs(8),
+    );
+
+    println!(
+        "Local pubkey: {}",
+        hex::encode(local_key.public_key.as_bytes())
+    );
+    println!("Publishing address {external} to {peer_addr}...");
+    let stored = publisher(vec![seed]).await;
+    println!("stored on {stored} node(s)");
+
+    Ok(())
 }
