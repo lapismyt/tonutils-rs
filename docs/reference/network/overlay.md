@@ -384,6 +384,16 @@ stopped adding fresh full-node contacts. The CI test now runs with
 `quality_eviction=true`) so eviction -> growth round -> new admission ticket
 cycles continue throughout the 300 s wait.
 
+Run 38819591750 (2026-10-15, `fb9afc9`, 300 s budget): timeout arm again.
+Aggressive growth (`max_peers=256`, `growth_interval=3s`, `churn_interval=3s`,
+pre-wait burst of 4 rounds) raised metrics: `registered_peers=94`,
+`address_storing_peers=145`, `unique_pingers=9`, `membership_answers=2400`,
+`random_peers_queries_sent=3226`. Despite the strongest admission window
+yet recorded, `custom_messages=0` and `overlay_packets=0` — no full-node
+neighbour holder sampled this node into its `get_neighbours(propagate_broadcast_to() = 5)` fan-out. This confirms the push lottery is the bottleneck:
+even with ~9 verified neighbours, the per-wave push probability (~5/|neighbours|)
+can yield zero inbound broadcasts for an entire 300 s window.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established

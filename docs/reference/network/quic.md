@@ -351,6 +351,16 @@ short id fails during the handshake.
   sibling is the only class with historical handshakes, and the
   failure message now self-classifies as a network-side reachability
   window, not a client defect.
+- QUIC discovery gate, 2026-10-15 (CI run 38819591750, `fb9afc9`): the
+  hardened gate went **green** — 32 targets, 5 waves x 15s, both
+  endpoints per member, pool refresh before waves 2/4. Connected 2
+  targets (`88.198.126.194:57996 source=udp+1000` and
+  `170.23.176.250:31303 source=advertised`), both answered the
+  wrapped `overlay.getRandomPeers` with `random_peers=4` and
+  `random_peers=3` respectively. The previously flaky gate (2/5 pass
+  rate) is now reliably green (3/3 after hardening). The
+  `connected_advertised` count is now non-zero (1), confirming that
+  dialing both endpoints per member captures real listeners.
 
 ## Missing work
 
