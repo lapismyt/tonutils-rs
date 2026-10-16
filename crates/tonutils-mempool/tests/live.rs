@@ -307,6 +307,10 @@ fn write_live_fixture(peer: &str, answer: &[u8]) {
 #[tokio::test]
 #[ignore = "requires a configured live overlay seed and external-message traffic"]
 async fn configured_seed_delivers_valid_external_message() {
+    // Post-delivery roundtrip probe shape: waves of this many targets,
+    // bounded so the whole check costs at most a few query timeouts.
+    const ROUNDTRIP_WAVE_TARGETS: usize = 6;
+    const ROUNDTRIP_MAX_WAVES: usize = 3;
     let _ = pretty_env_logger::try_init();
     let seeds = configured_live_seeds();
     assert!(
@@ -498,9 +502,9 @@ async fn configured_seed_delivers_valid_external_message() {
     // random peers, the same query the growth path uses. A
     // member's recorded endpoint can go stale between discovery
     // and this check (NAT rebinding) and any single member can
-    // be transiently unresponsive, so a handful of members are
-    // probed and at least one must answer.
-    let non_seed_members: Vec<(PeerId, SocketAddr)> = known_member_seeds(&member_endpoints)
+    // be transiently unresponsive, so the registry is probed in
+    // waves of a few members and at least one must answer.
+    let mut non_seed_members: Vec<(PeerId, SocketAddr)> = known_member_seeds(&member_endpoints)
         .into_iter()
         .filter(|(peer, _)| !seed_ids.contains(peer))
         .collect();
@@ -509,17 +513,26 @@ async fn configured_seed_delivers_valid_external_message() {
         "live mempool phase=non-seed: the member registry holds only configured seeds (seed_count={})",
         seeds.len()
     );
-    // A member's recorded endpoint can go stale between discovery and
-    // this check and any single member can be transiently unresponsive,
-    // so several members are probed concurrently in one round and at
-    // least one must answer.  Concurrency matters twice over: the whole
-    // probe round costs one timeout window instead of one per target,
-    // and more targets are affordable within it.
-    let roundtrip_budget = non_seed_members.len().min(6);
-    let probes = non_seed_members
-        .into_iter()
-        .take(roundtrip_budget)
-        .map(|(member_peer, member_addr)| async move {
+    // Members the manager holds a live session to are the freshest
+    // candidates - their endpoint was proven by that session - so they
+    // are probed before the rest of the registry.
+    non_seed_members.sort_by_key(|(peer, _)| !non_seed_connected.contains(peer));
+    // A single arbitrary wave is a sampling lottery: in run 38909762774
+    // sample 1 the node had just delivered a broadcast, then all six
+    // drawn members failed to answer while the manager held live
+    // sessions to others.  Each wave takes the next few distinct
+    // members, stops at the first answer, and the round is bounded by
+    // ROUNDTRIP_MAX_WAVES.
+    let roundtrip_targets = non_seed_members.len();
+    let mut probed = 0usize;
+    let mut answered = 0usize;
+    let mut waves = 0usize;
+    while answered == 0 && !non_seed_members.is_empty() && waves < ROUNDTRIP_MAX_WAVES {
+        waves += 1;
+        let wave_len = non_seed_members.len().min(ROUNDTRIP_WAVE_TARGETS);
+        let probes = non_seed_members
+            .drain(..wave_len)
+            .map(|(member_peer, member_addr)| async move {
             let member_key = match PublicKey::from_bytes(member_peer.as_bytes()) {
                 Some(member_key) => member_key,
                 None => {
@@ -581,10 +594,17 @@ async fn configured_seed_delivers_valid_external_message() {
             );
             1
         });
-    let roundtrip_ok: usize = join_all(probes).await.into_iter().sum();
+        let wave_ok: usize = join_all(probes).await.into_iter().sum();
+        probed += wave_len;
+        answered += wave_ok;
+    }
+    eprintln!(
+        "live mempool phase=non-seed udp roundtrip summary: answered={answered} probed={probed} waves={waves} targets={roundtrip_targets} seed_count={}",
+        seeds.len()
+    );
     assert!(
-        roundtrip_ok > 0,
-        "live mempool phase=non-seed udp roundtrip: no non-seed member answered overlay.getRandomPeers ({roundtrip_budget} probed, seed_count={})",
+        answered > 0,
+        "live mempool phase=non-seed udp roundtrip: no non-seed member answered overlay.getRandomPeers ({probed} probed in {waves} wave(s), seed_count={})",
         seeds.len()
     );
     manager.shutdown_wait().await;
