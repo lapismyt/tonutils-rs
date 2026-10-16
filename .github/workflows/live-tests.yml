@@ -302,8 +302,9 @@ jobs:
         # (1 - p)^samples false alarm at the recorded p, and therefore real
         # evidence of a regression. Job logs require admin access, so a
         # failed gate still publishes its own diagnosis: the per-sample
-        # publish progress census with panic counts, the raw log tail of the
-        # first timed-out sample, the final metrics line, ADNL channel
+        # publish progress census with panic counts, the panic cause of a
+        # sample that delivered but failed a later phase, the raw log tail of
+        # the first timed-out sample, the final metrics line, ADNL channel
         # negotiation counts, custom-message (broadcast candidate) counters,
         # the inbound query census by constructor, and the growth/publishing
         # lines go to a check annotation (GitHub caps annotations at 4 KiB,
@@ -379,7 +380,9 @@ jobs:
               if grep -q 'test result: ok' "$log"; then
                 echo "sample $i: delivered and passed ($time_line)"
               elif grep -q 'test result: FAILED' "$log"; then
-                echo "sample $i: delivered but failed a later phase ($time_line)"
+                local cause
+                cause="$(grep -A1 'panicked at' "$log" | tail -n 2 | tr '\n' ' ' | cut -c1-220)"
+                echo "sample $i: delivered but failed a later phase ($time_line) cause=$cause"
               else
                 echo "sample $i: delivered, then stopped with the gate already satisfied ($time_line)"
               fi
