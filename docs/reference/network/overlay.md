@@ -293,6 +293,28 @@ broadcasts to us".
   30-120 s - replaces two random slots. So a freshly verified member is picked
   up quickly when a slot is free, and otherwise depends on the member set size
   for a lottery ticket roughly every 75 s.
+- **The `update_neighbours` draw is uniform over the verified member set.**
+  Every iteration draws `peer_list_.peers_.get_random()`; when the neighbour
+  set is full, the drawn member replaces a uniformly random current slot
+  (`overlay/overlay-peers.cpp`). With `max_peers_ = 300` and
+  `max_neighbours_ = 10`, one full node's `update_neighbours(2)` call gives a
+  pooled member roughly `2 / |peers_|` per 30-120 s window, and the same call
+  runs a five-slot draw over `plumtree_neighbours_` whenever
+  `max_plumtree_neighbours() > 0`. Verified peers also churn: `del_some_peers`
+  runs on every verified add and deletes up to 10 peers past `max_peers_`
+  (bad-scored first via a rotating pointer, random otherwise), so membership
+  can lapse and be re-verified - a fresh admission ticket each time.
+- **Liveness in a peer's table is refreshed by any authenticated packet, not
+  only by pongs.** `OverlayPeer::on_ping_result` (`overlay/overlay.hpp`)
+  starts every peer alive; a success resets `missed_pings_`, re-stamps
+  `last_receive_at_` and keeps `is_alive_` true, and `is_alive_` clears only
+  after three misses accumulate while `last_receive_at_` is older than 15 s.
+  For `OverlayType::Public` overlays, `check_src_peer` forwards every
+  authenticated inbound packet to `on_ping_result(src, true)`
+  (`overlay/overlay-peers.cpp`), so the scanner's regular query traffic -
+  the 10 s per-session `overlay.getRandomPeers` keepalive included - keeps it
+  in every accepting peer's `update_neighbours` draw even while it is not a
+  neighbour.
 - **Pushing is a per-wave random sample of the neighbour set.** Broadcasts fan
   out through `get_neighbours(propagate_broadcast_to())`, and
   `propagate_broadcast_to()` is 5 in both `BroadcastSimple::run_continue`
@@ -317,6 +339,14 @@ broadcasts to us".
 - **A node only gossips outward with a valid certificate.** The alarm's
   outbound `send_random_peers` to a random neighbour and a random peer is
   guarded by `has_valid_membership_certificate()`.
+- **There is no query-based broadcast fetch path to fall back on.**
+  `overlay.getBroadcastList` is dropped outright by upstream
+  (`OverlayImpl::process_query` logs "DROPPING getBroadcastList query"), and
+  `overlay.getBroadcast hash:int256` is answered only from the holder's
+  local broadcast store when the hash is present
+  (`BroadcastSimple::process_query`), so a broadcast hash cannot be learned
+  without receiving a push first. The neighbour fan-out above is the only
+  inbound broadcast route.
 
 ### The two-tier overlay ecosystem
 
@@ -371,17 +401,18 @@ delivered at ~295 s after 4313 such datagrams; runs 38579887480 (2026-10-14,
 `4274f0e`) received none within the full 300 s budget despite normal
 membership and pinger counters. The earlier 129-192 s band is superseded by
 these arms: timing follows whether any neighbour holder samples this node in
-its fan-out, and `membership_listed` and `dht_pings_received` - both 0 in
-every run, delivering or not - gate only third-party discovery, nothing in
-the observed path. A delivery's absence in a 300 s window still proves
-nothing about this node's reachability.
+its fan-out, and `dht_pings_received` was 0 in every run while
+`membership_listed` stayed 0 until run 38828796572 recorded 4 listings from
+one peer; neither counter tracks the push path. A delivery's absence in a
+300 s window still proves nothing about this node's reachability.
 
 Roster freeze: every recent run saturated at `registered_peers=65-71` against
 the default `overlay_max_peers=64`, so the managed roster froze near the cap
 within the first minute, all admission tickets were spent early, and growth
 stopped adding fresh full-node contacts. The CI test now runs with
-`TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS=128` and aggressive churn (`churn_interval=10s`,
-`quality_eviction=true`) so eviction -> growth round -> new admission ticket
+`TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS=256`, `MempoolConfig.growth_interval=3s`,
+`churn_interval=3s`, and `quality_eviction(true)` with a pre-wait burst of
+four growth rounds, so eviction -> growth round -> new admission ticket
 cycles continue throughout the 300 s wait.
 
 Run 38819591750 (2026-10-15, `fb9afc9`, 300 s budget): timeout arm again.
@@ -393,6 +424,18 @@ yet recorded, `custom_messages=0` and `overlay_packets=0` — no full-node
 neighbour holder sampled this node into its `get_neighbours(propagate_broadcast_to() = 5)` fan-out. This confirms the push lottery is the bottleneck:
 even with ~9 verified neighbours, the per-wave push probability (~5/|neighbours|)
 can yield zero inbound broadcasts for an entire 300 s window.
+
+Run 38828796572 (2026-10-16, `7ae1cbd`, 300 s budget): delivered. The delta
+from run 38819591750 is documentation text only - the delivery test code is
+identical - and the admission metrics land in the same band
+(`unique_pingers=9`, `address_storing_peers=125`, `membership_answers=2724`,
+`random_peers_queries_sent=2436`; the first recorded nonzero listing,
+`membership_listed=4` from one peer). This arm counted `custom_messages=1`
+and delivered at `time_to_message=222.5s`, while the earlier arm counted zero
+for its entire window. The pair - red 22:48 UTC, green 00:19 UTC, same code -
+is the cleanest recorded evidence that a live delivery outcome is a per-run
+result of the upstream neighbour draw and push fan-out above, not a
+client-state difference.
 
 ### Address routing: channels versus stored lists
 
