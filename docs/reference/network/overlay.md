@@ -573,17 +573,20 @@ live run against `dht.static_nodes` answered `overlay.getRandomPeers` from every
 DHT-discovered member it held and from none of the sixteen config seeds, which
 are DHT contacts rather than overlay members, so seeds alone never produce a
 verified peer. The member source is the DHT `overlay.<id>.nodes` value - the
-overlay's full-node phonebook - and seed discovery resolves the whole value:
-one seed's answer is walked up to six hops, every candidate's `address` record
-is resolved concurrently (`ADDRESS_LOOKUP_CONCURRENCY` = 12 in flight) until
-the round's deadline, and the lookup's record cap comes from the caller's
-budget (`MempoolScannerBuilder::native_udp` passes `overlay_max_peers`), so
-`start` registers one session per discovered member within the configured
-budget instead of a four-entry-per-seed sample. Growth then rotates its
-`overlay.getRandomPeers` announcements across the whole known set. The
-measurement that this sweep reaches the full-node population (a rise in
-bootstrap `registered_peers` and in the census `unique_pingers`) is owed in
-the next delivery gate. Both the sweep and the roster behaviour are tracked in
+overlay's full-node phonebook, which held five members per answering seed in a
+local mainnet scout (union across the sixteen config seeds: 20) - and seed
+discovery resolves the whole value: one seed's answer is walked up to six
+hops, every candidate's `address` record is resolved concurrently
+(`ADDRESS_LOOKUP_CONCURRENCY` = 12 in flight) until the round's deadline, and
+the lookup's record cap comes from the caller's budget
+(`MempoolScannerBuilder::native_udp` passes `overlay_max_peers`), so `start`
+registers one session per discovered member within the configured budget
+instead of a four-entry-per-seed sample. Growth then rotates its
+`overlay.getRandomPeers` announcements across the whole known set. The scout
+(45 s wait) reached `registered_peers=51`, `unique_pingers=2`,
+`address_storing_peers=91`, and `pings_received=2` without a delivery, which
+is a red window by the push-lottery model; the delivery gate remains the
+measurement for both the sweep and the admission funnel. Both are tracked in
 `TODO.md`.
 
 ## Full-node queries seen on the overlay
