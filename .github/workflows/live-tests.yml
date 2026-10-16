@@ -434,13 +434,26 @@ jobs:
             exit 0
           fi
 
-          ref=1
+          # Prefer the sample that actually delivered and then failed a
+          # later phase; fall back to the first timed-out sample so the
+          # digest still shows the passive window.
+          ref=""
           for i in $(seq 1 "$samples"); do
-            if grep -q 'phase=delivery timed out' "$artifacts/sample-$i.log"; then
+            s="$artifacts/sample-$i.log"
+            if grep -q 'phase=delivery time_to_message=' "$s" && grep -q 'test result: FAILED' "$s"; then
               ref="$i"
               break
             fi
           done
+          if [ -z "$ref" ]; then
+            for i in $(seq 1 "$samples"); do
+              if grep -q 'phase=delivery timed out' "$artifacts/sample-$i.log"; then
+                ref="$i"
+                break
+              fi
+            done
+          fi
+          [ -n "$ref" ] || ref=1
           log="$artifacts/sample-$ref.log"
 
           set +e
@@ -509,7 +522,7 @@ jobs:
             echo "-- dht address publishing --"
             grep 'dht address publish' "$log" | elide_hex | tail -n 10
             echo "-- non-seed connectivity --"
-            grep 'phase=non-seed' "$log" | tail -n 8
+            grep 'phase=non-seed' "$log" | tail -n 12
             echo "-- log tail (full, waiting metrics elided) --"
             grep -v 'phase=waiting metrics=' "$log" | tail -n 60 | elide_hex
           } > "$diag"
@@ -518,7 +531,7 @@ jobs:
           # sections, while the step summary carries the full digest.
           head -c 3800 "$diag" > "$annot"
           {
-            echo '### Mempool delivery test failed: no sample delivered'
+            echo '### Mempool delivery gate failed'
             echo
             echo '```'
             cat "$diag"
