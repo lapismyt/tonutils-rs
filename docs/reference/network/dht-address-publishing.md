@@ -86,10 +86,15 @@ yet; see Missing work.
 `publish_dht_address_value` runs one round:
 
 1. Build and sign the value for the resolved external address (below).
-2. Candidate set: the known DHT nodes, plus one `dht.findNode` round with
+2. Candidate set: the known DHT nodes, plus `dht.findNode` rounds with
    `k = FIND_NODE_K` (8) toward the key id, merged and de-duplicated by short
    id. The known set is usually the static seed list, which is rarely the part
-   of the keyspace a fresh node id lands in.
+   of the keyspace a fresh node id lands in, and the closest seed of that list
+   is not guaranteed to answer: the round asks the closest
+   `ENRICH_ATTEMPTS` (3) seeds in distance order and stops at the first that
+   answers, so one silent seed no longer degrades the round to the unenriched
+   list (run 38885001661 lost the round on a silent closest seed in 6 of 8
+   samples).
 3. Sort candidates by XOR distance to the key id and send `dht.store` to the
    `PUBLISH_TARGETS` (4) closest concurrently. A node keeps a value only when
    it is close enough to the key: upstream `store_in` compares the distance
@@ -97,19 +102,23 @@ yet; see Missing work.
    runs `value.check()`, which verifies both signatures and the update rule -
    a malformed signature, like a mis-framed value (see Wire Format), produces
    no answer at all.
-4. `verify_dht_address_value` asks the closest known node with `dht.findValue`.
+4. `verify_dht_address_value` asks the nodes that answered `dht.stored` -
+   they are the nodes that hold the value - concurrently, and falls back to
+   the closest known seeds only when the store failed everywhere. A
+   `dht.valueNotFound` answer is followed through the closer nodes it carries,
+   the same walk `resolve_address_on_session` makes, for up to
+   `VERIFY_WALK_ROUNDS` (3) rounds of `VERIFY_WALK_BRANCH` (4) nodes, so a
+   node that never received the store can still lead the walk to one that did.
    `dht.valueFound` plus an own-key match, `verify_signature()`, and the
    expected `ip:port` in the payload means the DHT serves the value
-   (`served_by_dht=true` in the log line); `dht.valueNotFound` means the round
-   has not taken effect yet. A `dht.stored` answer alone only proves one node
-   accepted the value. Two limits matter on mainnet: the target is the closest
-   of the **known** nodes (the seed list), not the enriched candidates the
-   stores went to, and a `valueNotFound` answer is not followed to the closer
-   nodes it carries. When the closest seed is not among the store targets the
-   verify therefore reports `false` even after a full store round (run
-   38885001661: `stored on 4` / `stored on 3` in two samples,
-   `served_by_dht=false` in all eight; the local rig reports `true` only
-   because its single seed is also the store target).
+   (`served_by_dht=true` in the log line, which names the answering node and
+   the round); a value that is found but does not match this node is a stale
+   value and still reports `false`. A `dht.stored` answer alone only proves
+   one node accepted the value. Before the verify asked the storing nodes
+   directly, one recorded sample of run 38888038146 reported
+   `served_by_dht=true` (sample 4: `stored on 4 node(s)`) only because the
+   closest known seed happened to be a store target - the other samples of
+   that run stored on 3-6 nodes and still reported `false`.
 
 The publishing task runs one round before the first peer-growth round, so
 transitive discovery can resolve this node's address right away, and then
@@ -238,12 +247,12 @@ Limits and edge cases:
 - First runner-observed stores reached the public DHT in run 38885001661
   (2026-10-16): `stored on 4 node(s)` and `stored on 3 node(s)` in 2 of 8
   samples with `task_panics=0` everywhere, after the `dht.store` framing fix.
-  Live `served_by_dht=true` and third-party resolve-and-ping are still
-  unobserved: the verify asks the closest known seed rather than the nodes
-  that stored the value (see Publish Round), so it reports `false` even after
-  a full store round; a NAT'd local host cannot produce the confirmation
-  either. Replaying the publish bytes against a local upstream `dht-server`
-  (2026-10-16) answers `dht.stored` and serves the value back through
-  `dht.findValue`, which is what pinned the framing fault.
+  Run 38888038146 recorded the first `served_by_dht=true` (sample 4, `stored
+  on 4 node(s)`) - a single occurrence that depended on the closest known seed
+  being a store target, not the answer the code now asks the storing nodes
+  for. Third-party resolve-and-ping of this node remains unobserved, and a
+  NAT'd local host cannot produce that confirmation: the local upstream
+  `dht-server` rig only proves the round itself (`stored on 1 of 1`,
+  `served_by_dht=true` through the new targets-first verify).
 - There is no SOCKS5 UDP relay yet, so a NAT'd host that must publish cannot
   do so without configuring `external_address` explicitly.
