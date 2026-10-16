@@ -22,8 +22,10 @@ its routable source address from its datagrams
 (`AdnlPeerPairImpl::receive_packet_checked`), and those peers do push
 broadcasts to a non-publishing node - runs 38594880666 (38 inbound overlay
 custom messages) and 38558546040 (4313) both delivered the external message
-while `dht address publish: stored on 0 of 4` in every recorded run,
-delivering or not.
+while `dht address publish: stored on 0 of 4` in every recorded pre-fix run,
+and run 38885001661 delivered in a sample whose round stored on 0 nodes
+(sample 2, `time_to_message=1.647s`) - delivering does not require the
+stored value.
 
 This page covers value construction, the publish/verify round, and
 external-address resolution for the native UDP path (`native_udp` and
@@ -100,7 +102,14 @@ yet; see Missing work.
    expected `ip:port` in the payload means the DHT serves the value
    (`served_by_dht=true` in the log line); `dht.valueNotFound` means the round
    has not taken effect yet. A `dht.stored` answer alone only proves one node
-   accepted the value.
+   accepted the value. Two limits matter on mainnet: the target is the closest
+   of the **known** nodes (the seed list), not the enriched candidates the
+   stores went to, and a `valueNotFound` answer is not followed to the closer
+   nodes it carries. When the closest seed is not among the store targets the
+   verify therefore reports `false` even after a full store round (run
+   38885001661: `stored on 4` / `stored on 3` in two samples,
+   `served_by_dht=false` in all eight; the local rig reports `true` only
+   because its single seed is also the store target).
 
 The publishing task runs one round before the first peer-growth round, so
 transitive discovery can resolve this node's address right away, and then
@@ -226,11 +235,15 @@ Limits and edge cases:
 
 - The QUIC path (`native_quic`) does not publish an `address` value; mainnet
   seeds expose no QUIC endpoint, so discovery there is deferred in `TODO.md`.
-- Live confirmation on the public DHT that the value is served
-  (`served_by_dht=true`) and that third parties resolve and ping this node
-  through it is pending the live-tests run after the `dht.store` framing fix;
-  a NAT'd local host cannot produce it. Replaying the publish bytes against a
-  local upstream `dht-server` (2026-10-16) answers `dht.stored` and serves the
-  value back through `dht.findValue`, which is what pinned the framing fault.
+- First runner-observed stores reached the public DHT in run 38885001661
+  (2026-10-16): `stored on 4 node(s)` and `stored on 3 node(s)` in 2 of 8
+  samples with `task_panics=0` everywhere, after the `dht.store` framing fix.
+  Live `served_by_dht=true` and third-party resolve-and-ping are still
+  unobserved: the verify asks the closest known seed rather than the nodes
+  that stored the value (see Publish Round), so it reports `false` even after
+  a full store round; a NAT'd local host cannot produce the confirmation
+  either. Replaying the publish bytes against a local upstream `dht-server`
+  (2026-10-16) answers `dht.stored` and serves the value back through
+  `dht.findValue`, which is what pinned the framing fault.
 - There is no SOCKS5 UDP relay yet, so a NAT'd host that must publish cannot
   do so without configuring `external_address` explicitly.
