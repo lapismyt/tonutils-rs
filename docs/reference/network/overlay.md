@@ -461,6 +461,24 @@ previous 0-7 band) and the first with reproducible `served_by_dht=true`
 the publish path moved while the push lottery kept seven samples at
 `custom_messages=0`.
 
+Run 38912409135 (2026-10-16, `b19ce81`, 300 s budget): all eight samples timed
+out with `custom_messages=0`, `unique_pingers=5-9`, `pings_received=14-35`,
+`address_storing_peers=99-137` and `membership_listing_peers=0`.  The publish
+stage, not admission, was the weak arm in this gate: five samples ended at
+`no externally reachable address` and one at `stored on 0 node(s)`; only the
+remaining two stored and verified.  The STUN agreement check was counting one
+observation per hostname and the two Google hostnames resolve to the same
+server, so two answers from a single NAT destination could pass as agreement.
+A local probe of the public STUN fleet showed Cloudflare, miwifi, sipnet and
+blackberry all answering from the same public IP with a *different* mapped
+port per server - the signature of a per-destination (symmetric) NAT, whose
+mapping is only valid toward the server that observed it.  Agreement now
+counts distinct resolved server addresses only, any disagreement from a
+distinct destination disqualifies the round, servers that stayed silent are
+retried in a second sweep over a wider list, DNS resolution is bounded, a
+store round that stored nothing is retried once, and the gate job prints the
+per-sample STUN observations into the job log.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established
@@ -481,6 +499,15 @@ peers that ever echoed it, and `ProtocolStats::unique_pingers` /
 split the later admission stages per distinct peer, so a live run can tell
 "the peer cannot reach us" from "the peer does not admit us" from "the peer
 keeps us in its own list".
+
+A `dht.address` value is published only when the mapping is endpoint
+independent: several STUN servers behind distinct destinations must report the
+same `ip:port`.  Behind a per-destination NAT no single published address can
+serve all peers, so the correct behavior is to publish nothing and rely on the
+observed source address every peer learns from this node's own datagrams
+(`AdnlPeerPairImpl::receive_packet_checked` accepts the datagram source when
+the address list is empty); publishing a per-destination mapping would only
+advertise an address that a peer other than the observer cannot deliver to.
 
 ## Reference and unfinished work
 
