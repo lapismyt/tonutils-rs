@@ -19,6 +19,9 @@
 //!   stages per distinct peer: a peer that stored a routable address for this
 //!   node can originate `overlay.ping`, a peer that pinged answered our pong,
 //!   and a peer that listed us treats us as a verified member;
+//! * [`ProtocolStats::pushers`] closes the funnel: distinct peers whose
+//!   custom overlay payloads reached the scanner, i.e. peers that actually
+//!   push to this node after admitting it;
 //! * [`ProtocolStats::dht_pings_received`] counts pytoniq-style liveness
 //!   probes (`dht.ping` wrapped in `overlay.query`), which a peer sends only
 //!   for nodes it keeps in its own peer list;
@@ -62,6 +65,11 @@ pub struct ProtocolStats {
     pub last_unhandled_query_id: u32,
     /// `overlay.pong` answers sent.
     pub pongs_sent: u64,
+    /// Total `overlay.ping` queries answered.  Distinct pingers are in
+    /// [`ProtocolStats::unique_pingers`]; the pair with
+    /// [`ProtocolStats::pongs_sent`] shows whether every ping produced its
+    /// pong.
+    pub pings_received: u64,
     /// `overlay.getRandomPeers` answers sent.
     pub random_peers_answers: u64,
     /// `tonNode.capabilities` answers sent.
@@ -94,6 +102,9 @@ pub struct ProtocolStats {
     pub dht_pings_received: u64,
     /// Custom overlay payloads handed to the scanner (broadcast candidates).
     pub custom_messages: u64,
+    /// Distinct peers whose custom overlay payloads were handed to the
+    /// scanner - the peers that push to this node after admitting it.
+    pub pushers: u64,
     /// Custom overlay payloads suppressed by the raw-payload pre-dedup:
     /// byte-identical copies of a payload this node already accepted
     /// within the cache window, which never paid a TL parse or
@@ -125,6 +136,7 @@ struct Counters {
     queries_unhandled: AtomicU64,
     last_unhandled_query_id: AtomicU32,
     pongs_sent: AtomicU64,
+    pings_received: AtomicU64,
     random_peers_answers: AtomicU64,
     capabilities_answers: AtomicU64,
     random_peers_queries_sent: AtomicU64,
@@ -135,6 +147,7 @@ struct Counters {
     unique_pingers: AtomicU64,
     dht_pings_received: AtomicU64,
     custom_messages: AtomicU64,
+    pushers: AtomicU64,
     payload_duplicates: AtomicU64,
     fec_parts_sent: AtomicU64,
     fec_repair_parts_sent: AtomicU64,
@@ -144,6 +157,7 @@ struct Counters {
     fec_param_rejections: AtomicU64,
     pingers_seen: DistinctPeers,
     listing_peers_seen: DistinctPeers,
+    pushers_seen: DistinctPeers,
 }
 
 /// Bounded set of distinct peer ids behind one counter.
@@ -178,6 +192,7 @@ static COUNTERS: Counters = Counters {
     queries_unhandled: AtomicU64::new(0),
     last_unhandled_query_id: AtomicU32::new(0),
     pongs_sent: AtomicU64::new(0),
+    pings_received: AtomicU64::new(0),
     random_peers_answers: AtomicU64::new(0),
     capabilities_answers: AtomicU64::new(0),
     random_peers_queries_sent: AtomicU64::new(0),
@@ -188,6 +203,7 @@ static COUNTERS: Counters = Counters {
     unique_pingers: AtomicU64::new(0),
     dht_pings_received: AtomicU64::new(0),
     custom_messages: AtomicU64::new(0),
+    pushers: AtomicU64::new(0),
     payload_duplicates: AtomicU64::new(0),
     fec_parts_sent: AtomicU64::new(0),
     fec_repair_parts_sent: AtomicU64::new(0),
@@ -197,6 +213,7 @@ static COUNTERS: Counters = Counters {
     fec_param_rejections: AtomicU64::new(0),
     pingers_seen: DistinctPeers::new(),
     listing_peers_seen: DistinctPeers::new(),
+    pushers_seen: DistinctPeers::new(),
 };
 
 fn inc(counter: &AtomicU64) {
@@ -253,6 +270,7 @@ pub(crate) fn record_membership_answer(listed: bool, peer: [u8; 32]) {
 }
 
 pub(crate) fn record_ping_from(peer: [u8; 32]) {
+    inc(&COUNTERS.pings_received);
     if COUNTERS.pingers_seen.record(peer) {
         inc(&COUNTERS.unique_pingers);
     }
@@ -262,8 +280,11 @@ pub(crate) fn record_dht_ping() {
     inc(&COUNTERS.dht_pings_received);
 }
 
-pub(crate) fn record_custom_message() {
+pub(crate) fn record_custom_message_from(peer: [u8; 32]) {
     inc(&COUNTERS.custom_messages);
+    if COUNTERS.pushers_seen.record(peer) {
+        inc(&COUNTERS.pushers);
+    }
 }
 
 pub(crate) fn record_payload_duplicate() {
@@ -301,6 +322,7 @@ pub fn protocol_stats() -> ProtocolStats {
         queries_unhandled: COUNTERS.queries_unhandled.load(Ordering::Relaxed),
         last_unhandled_query_id: COUNTERS.last_unhandled_query_id.load(Ordering::Relaxed),
         pongs_sent: COUNTERS.pongs_sent.load(Ordering::Relaxed),
+        pings_received: COUNTERS.pings_received.load(Ordering::Relaxed),
         random_peers_answers: COUNTERS.random_peers_answers.load(Ordering::Relaxed),
         capabilities_answers: COUNTERS.capabilities_answers.load(Ordering::Relaxed),
         random_peers_queries_sent: COUNTERS.random_peers_queries_sent.load(Ordering::Relaxed),
@@ -312,6 +334,7 @@ pub fn protocol_stats() -> ProtocolStats {
         unique_pingers: COUNTERS.unique_pingers.load(Ordering::Relaxed),
         dht_pings_received: COUNTERS.dht_pings_received.load(Ordering::Relaxed),
         custom_messages: COUNTERS.custom_messages.load(Ordering::Relaxed),
+        pushers: COUNTERS.pushers.load(Ordering::Relaxed),
         payload_duplicates: COUNTERS.payload_duplicates.load(Ordering::Relaxed),
         fec_parts_sent: COUNTERS.fec_parts_sent.load(Ordering::Relaxed),
         fec_repair_parts_sent: COUNTERS.fec_repair_parts_sent.load(Ordering::Relaxed),

@@ -398,7 +398,7 @@ impl OverlaySession for AdnlUdpOverlaySession {
                                 }
                             }
                         };
-                        protocol_stats::record_custom_message();
+                        protocol_stats::record_custom_message_from(self.peer.as_bytes());
                         return Ok(Arc::from(data));
                     }
                 }

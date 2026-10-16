@@ -302,7 +302,8 @@ jobs:
         # (1 - p)^samples false alarm at the recorded p, and therefore real
         # evidence of a regression. Job logs require admin access, so a
         # failed gate still publishes its own diagnosis: the per-sample
-        # publish progress census with panic counts, the panic cause of a
+        # publish progress census with panic counts, the funnel counters of a
+        # silent sample (listings, pingers, pushers), the panic cause of a
         # sample that delivered but failed a later phase, the raw log tail of
         # the first timed-out sample, the final metrics line, ADNL channel
         # negotiation counts, custom-message (broadcast candidate) counters,
@@ -389,13 +390,19 @@ jobs:
               return
             fi
             if grep -q 'phase=delivery timed out' "$log"; then
-              local line peers pingers storing answers
+              local line peers pingers storing answers pings pongs listings dht_pings pushers customs
               line="$(grep -oE 'phase=delivery timed out after [0-9]+s:.*' "$log" | tail -n 1)"
               peers="$(printf '%s' "$line" | grep -oE 'registered_peers=[0-9]+' | tail -n 1 | cut -d= -f2)"
               pingers="$(printf '%s' "$line" | grep -oE 'unique_pingers: [0-9]+' | tail -n 1 | awk '{print $2}')"
               storing="$(printf '%s' "$line" | grep -oE 'address_storing_peers: [0-9]+' | tail -n 1 | awk '{print $2}')"
               answers="$(printf '%s' "$line" | grep -oE 'membership_answers: [0-9]+' | tail -n 1 | awk '{print $2}')"
-              echo "sample $i: timed out with no inbound broadcast (registered_peers=$peers unique_pingers=$pingers address_storing_peers=$storing membership_answers=$answers)"
+              pings="$(printf '%s' "$line" | grep -oE ' pings_received: [0-9]+' | tail -n 1 | awk '{print $2}')"
+              pongs="$(printf '%s' "$line" | grep -oE 'pongs_sent: [0-9]+' | tail -n 1 | awk '{print $2}')"
+              listings="$(printf '%s' "$line" | grep -oE 'membership_listing_peers: [0-9]+' | tail -n 1 | awk '{print $2}')"
+              dht_pings="$(printf '%s' "$line" | grep -oE 'dht_pings_received: [0-9]+' | tail -n 1 | awk '{print $2}')"
+              pushers="$(printf '%s' "$line" | grep -oE 'pushers: [0-9]+' | tail -n 1 | awk '{print $2}')"
+              customs="$(printf '%s' "$line" | grep -oE 'custom_messages: [0-9]+' | tail -n 1 | awk '{print $2}')"
+              echo "sample $i: timed out with no inbound broadcast (registered_peers=$peers unique_pingers=$pingers pings=$pings pongs=$pongs address_storing_peers=$storing membership_answers=$answers membership_listing_peers=$listings dht_pings=$dht_pings pushers=$pushers custom_messages=$customs)"
               return
             fi
             if grep -q 'test result: FAILED' "$log"; then
@@ -449,11 +456,12 @@ jobs:
             for i in $(seq 1 "$samples"); do
               s="$artifacts/sample-$i.log"
               [ -s "$s" ] || { echo "sample $i: no output captured"; continue; }
-              printf 'sample %s: publish_lines=%s stored_lines=%s findnode_failures=%s task_panics=%s last=[%s]\n' \
+              printf 'sample %s: publish_lines=%s stored_lines=%s findnode_failures=%s enrich_exhausted=%s task_panics=%s last=[%s]\n' \
                 "$i" \
                 "$(grep -c 'dht address publish' "$s")" \
                 "$(grep -c 'stored on' "$s")" \
                 "$(grep -c 'findNode via .* failed' "$s")" \
+                "$(grep -c 'findNode enrichment exhausted' "$s")" \
                 "$(grep 'panicked at' "$s" | grep -v 'tests/live.rs' | wc -l)" \
                 "$(grep 'dht address publish' "$s" | tail -n 1 | cut -c1-140)"
             done
