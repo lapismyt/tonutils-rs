@@ -449,6 +449,18 @@ rate (3 green of 9 arms, `p ~ 1/3`) a red gate is a `(1 - p)^8 <= ~4%` false
 alarm and therefore a real regression signal, while a single-sample gate was
 red on about two healthy runs of three.
 
+Run 38909762774 (2026-10-16, `fe0fa8b`, 300 s budget): delivered and failed a
+later phase.  Sample 1 delivered at `time_to_message=106.9s`, then died in the
+post-delivery non-seed roundtrip check: all six registry members that the phase
+drew failed to answer while the manager held live sessions to other members, so
+the phase now probes in waves (connected members first, up to three waves of
+six, stopping at the first answer).  The gate is the first where every sample
+admitted pingers (`unique_pingers=7-14`, `pings_received=26-61`, against the
+previous 0-7 band) and the first with reproducible `served_by_dht=true`
+(samples 3, 5, 7: `stored on 3 / 3 / 2 node(s)`), so the admission funnel and
+the publish path moved while the push lottery kept seven samples at
+`custom_messages=0`.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established
