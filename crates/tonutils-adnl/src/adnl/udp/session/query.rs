@@ -13,8 +13,8 @@
 use super::*;
 
 use tonutils_tl::tl::network::{
-    DhtMessage, DhtNodes, DhtNodesBoxed, DhtStored, DhtValue, DhtValueResult, OverlayNodes,
-    OverlayNodesBoxed, OverlayQuery,
+    DhtMessage, DhtNodes, DhtNodesBoxed, DhtStored, DhtValue, DhtValueBare, DhtValueResult,
+    OverlayNodes, OverlayNodesBoxed, OverlayQuery,
 };
 
 impl AdnlUdpSession {
@@ -119,9 +119,16 @@ impl AdnlUdpSession {
     /// for the key, answering `dht.stored`.  Nodes that are not
     /// responsible drop the value silently, so a store round
     /// targets the nodes closest to the key.
+    ///
+    /// The query carries the value in the bare `dht.value` form
+    /// ([`DhtValueBare`]) the concrete-constructor reference asks for;
+    /// a node that receives the boxed `dht.valueFound` form inside the
+    /// query cannot parse it and answers nothing at all.
     pub async fn dht_store(&self, value: DhtValue, timeout: Duration) -> Result<(), AdnlError> {
         let query_id = Int256::random();
-        let query = tl_proto::serialize(DhtMessage::Store { value });
+        let query = tl_proto::serialize(DhtMessage::Store {
+            value: DhtValueBare::from(value),
+        });
         let answer = self
             .inner
             .exchange(query_id, query, timeout, "DHT store")

@@ -60,6 +60,14 @@ yet; see Missing work.
   plus fields with `signature = []` (`DhtKeyDescription::unsigned_bytes`,
   `DhtValue::unsigned_bytes`). The update rule is `dht.updateRule.signature`,
   so only the key owner may replace the value.
+- `dht.store` carries the value in the **bare** `dht.value` form: after the
+  `0x34934212` query id the `key`, `value`, `ttl`, and `signature` fields follow
+  directly, with no `0x90ad27cb` prefix (upstream `dht_store::store` calls
+  `TlStoreObject::store(value_, s)`). `dht.valueFound` carries the same struct
+  boxed. A query that sends the boxed form inside `dht.store` does not parse on
+  the receiving node, which drops it silently and leaves the client with a
+  timeout - the fault behind every recorded `stored on 0 of 4` run before the
+  framing fix.
 - `value` is the boxed `adnl.addressList` serialization: one
   `adnl.address.udp` entry (IPv4 word stored as a signed little-endian `int`,
   i.e. `u32 as i32`; `port` as `int`) or one `adnl.address.udp6` entry for
@@ -85,7 +93,8 @@ yet; see Missing work.
    it is close enough to the key: upstream `store_in` compares the distance
    against its bucket radius (`k + 10`) and drops "too remote" values, then
    runs `value.check()`, which verifies both signatures and the update rule -
-   a malformed signature produces a query error instead of `dht.stored`.
+   a malformed signature, like a mis-framed value (see Wire Format), produces
+   no answer at all.
 4. `verify_dht_address_value` asks the closest known node with `dht.findValue`.
    `dht.valueFound` plus an own-key match, `verify_signature()`, and the
    expected `ip:port` in the payload means the DHT serves the value
@@ -170,13 +179,15 @@ Limits and edge cases:
   consumer side `resolve_address`.
 - `crates/tonutils-tl/src/tl/network.rs` - `DhtKey::boxed_bytes`,
   `DhtKeyDescription::unsigned_bytes`, `DhtValue::unsigned_bytes`,
-  `DhtStored`, `AddressListBoxed`.
+  `DhtValueBare` (the bare `dht.store` framing), `DhtStored`,
+  `AddressListBoxed`.
 - `crates/tonutils-mempool/src/udp_session/stun.rs` - RFC 5389 binding client:
   `binding_request`, `parse_binding_response`, and `discover_mapped_address`.
 - `crates/tonutils-adnl` - `AdnlUdpTransport::for_node` (the shared socket the
   probe reports the bound port from and the stores send through) and
   `AdnlUdpTransport::raw_exchange` (sends the binding request from that socket
   and captures its reply, which the demultiplexer would otherwise drop),
+  `AdnlUdpSession::dht_store` (frames the query over `DhtValueBare`),
   `KeyPair::sign_raw`, `now_i32`, `local_reinit_date`.
 
 ## Tests
@@ -198,6 +209,13 @@ Limits and edge cases:
 - Unit test in `tonutils-adnl`: `raw_exchange_returns_reply_and_recovers_from_timeout`
   (`adnl/udp/tests.rs`) covers reply capture on the shared socket and hook
   cleanup after a timeout.
+- Unit test in `tonutils-tl` (`network.rs`): `dht_store_carries_the_bare_value`
+  pins the store framing - the query is the `0x34934212` id followed by the
+  bare `dht.value` fields, the boxed `DhtValue` form is exactly those fields
+  behind the `0x90ad27cb` prefix, and the query round-trips. Upstream's
+  generated `dht_store::store` serializes the field the same way, so the test
+  fails on the boxed framing that dropped every store on the wire before the
+  fix.
 - Live gate: `configured_seed_delivers_valid_external_message` in
   `crates/tonutils-mempool/tests/live.rs`, run by
   `.github/workflows/live-tests.yml` on a public-IP runner where probing and
@@ -208,8 +226,11 @@ Limits and edge cases:
 
 - The QUIC path (`native_quic`) does not publish an `address` value; mainnet
   seeds expose no QUIC endpoint, so discovery there is deferred in `TODO.md`.
-- Live confirmation that the value is served (`served_by_dht=true`) and that
-  third parties resolve and ping this node through it is pending the CI run;
-  it cannot be produced from a NAT'd local host by design.
+- Live confirmation on the public DHT that the value is served
+  (`served_by_dht=true`) and that third parties resolve and ping this node
+  through it is pending the live-tests run after the `dht.store` framing fix;
+  a NAT'd local host cannot produce it. Replaying the publish bytes against a
+  local upstream `dht-server` (2026-10-16) answers `dht.stored` and serves the
+  value back through `dht.findValue`, which is what pinned the framing fault.
 - There is no SOCKS5 UDP relay yet, so a NAT'd host that must publish cannot
   do so without configuring `external_address` explicitly.

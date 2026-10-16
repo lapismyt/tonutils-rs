@@ -298,8 +298,12 @@ pub enum DhtMessage {
     #[tl(id = 0xcbeb3f18)]
     Ping { random_id: u64 },
     /// dht.store value:dht.value = dht.Stored;
+    ///
+    /// References the concrete `dht.value` constructor, so the stored value
+    /// is serialized in its bare form ([`DhtValueBare`]); the boxed
+    /// [`DhtValue`] form is what `dht.valueFound` carries.
     #[tl(id = 0x34934212)]
-    Store { value: DhtValue },
+    Store { value: DhtValueBare },
     /// dht.findNode key:int256 k:int = dht.Nodes;
     #[tl(id = 0x6ce2ce6b)]
     FindNode { key: Int256, k: i32 },
@@ -451,6 +455,42 @@ pub struct DhtValue {
     pub signature: Vec<u8>,
 }
 
+/// Bare `dht.value` form carried by the `dht.store` query.
+///
+/// `dht.store value:dht.value = dht.Stored;` references the concrete
+/// `dht.value` constructor, so upstream serializes the value without the
+/// `0x90ad27cb` prefix (`TlStoreObject::store(value_, s)` in the generated
+/// `dht_store::store`).  [`DhtValue`] carries the prefix and is the form
+/// `dht.valueFound` uses and the value signature covers.  A store query
+/// that adds the prefix does not parse on the receiving node, which drops
+/// it without answering.
+#[derive(TlRead, TlWrite, Derivative)]
+#[derivative(Debug, Clone, PartialEq, Eq)]
+pub struct DhtValueBare {
+    /// dht.value key:dht.keyDescription value:bytes ttl:int signature:bytes = dht.Value;
+    pub key: DhtKeyDescription,
+    pub value: Vec<u8>,
+    pub ttl: i32,
+    pub signature: Vec<u8>,
+}
+
+impl From<&DhtValue> for DhtValueBare {
+    fn from(value: &DhtValue) -> Self {
+        Self {
+            key: value.key.clone(),
+            value: value.value.clone(),
+            ttl: value.ttl,
+            signature: value.signature.clone(),
+        }
+    }
+}
+
+impl From<DhtValue> for DhtValueBare {
+    fn from(value: DhtValue) -> Self {
+        Self::from(&value)
+    }
+}
+
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
 pub struct TonNodeExternalMessage {
@@ -540,6 +580,57 @@ mod tests {
             DhtMessage::FindNode {
                 key: Int256([7; 32]),
                 k: 8
+            }
+        );
+    }
+
+    #[test]
+    fn dht_store_carries_the_bare_value() {
+        let value = DhtValue {
+            key: DhtKeyDescription {
+                key: DhtKey {
+                    id: Int256([1; 32]),
+                    name: b"address".to_vec(),
+                    idx: 0,
+                },
+                id: PublicKey::Ed25519 {
+                    key: Int256([2; 32]),
+                },
+                update_rule: DhtUpdateRule::Signature,
+                signature: vec![3; 64],
+            },
+            value: vec![4; 12],
+            ttl: 5,
+            signature: vec![6; 64],
+        };
+        let store = serialize(DhtMessage::Store {
+            value: DhtValueBare::from(&value),
+        });
+        // `dht.store value:dht.value = dht.Stored;` references the concrete
+        // `dht.value` constructor: upstream `dht_store::store` stores the
+        // value with `TlStoreObject::store(value_, s)`, i.e. the bare fields
+        // and no `0x90ad27cb` prefix after the query id.  A store query that
+        // adds the prefix does not parse on the receiving node.
+        assert_eq!(&store[..4], &0x34934212u32.to_le_bytes());
+        assert_ne!(&store[4..8], &0x90ad27cbu32.to_le_bytes());
+        assert_eq!(
+            &store[4..],
+            serialize(DhtValueBare::from(&value)).as_slice()
+        );
+        // The boxed `DhtValue` form is the bare fields behind the
+        // constructor id - the form `dht.valueFound` carries and the form
+        // the value signature covers.
+        assert_eq!(&serialize(value.clone())[..4], &0x90ad27cbu32.to_le_bytes());
+        assert_eq!(
+            &serialize(value.clone())[4..],
+            serialize(DhtValueBare::from(&value)).as_slice()
+        );
+        // The store query round-trips.
+        let decoded: DhtMessage = deserialize(&store).unwrap();
+        assert_eq!(
+            decoded,
+            DhtMessage::Store {
+                value: DhtValueBare::from(&value)
             }
         );
     }
