@@ -437,6 +437,18 @@ is the cleanest recorded evidence that a live delivery outcome is a per-run
 result of the upstream neighbour draw and push fan-out above, not a
 client-state difference.
 
+Run 38865936964 (2026-10-16, `cbf6b4a`, 300 s budget): timeout arm again
+(`custom_messages=0`, `overlay_packets=0`, `registered_peers=89`,
+`unique_pingers=10`, `address_storing_peers=131`, `membership_answers=2522`,
+`random_peers_queries_sent=3230`) - the third hardened timeout arm, again
+zero inbound broadcasts at healthy admission counters. The CI gate therefore
+stopped sampling once: the `live-delivery` job now runs
+`TON_MEMPOOL_LIVE_DELIVERY_SAMPLES` (default 8) independent 300 s samples in
+parallel and passes when at least one delivers. With the recorded per-window
+rate (3 green of 9 arms, `p ~ 1/3`) a red gate is a `(1 - p)^8 <= ~4%` false
+alarm and therefore a real regression signal, while a single-sample gate was
+red on about two healthy runs of three.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established
