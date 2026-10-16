@@ -437,6 +437,26 @@ jobs:
             echo "sample $i: stun_reports=[$reports] stun_failed=$failed stun_verdict=${verdict:-none}"
           done
 
+          # Publish progress lines: the step summary carries them on both
+          # paths, and on the green path they also reach the job log so a
+          # passed gate still shows whether every sample published.
+          publish_progress() {
+            echo "-- publish progress (all samples, hex elided) --"
+            local i s
+            for i in $(seq 1 "$samples"); do
+              s="$artifacts/sample-$i.log"
+              [ -s "$s" ] || { echo "sample $i: no output captured"; continue; }
+              printf 'sample %s: publish_lines=%s stored_lines=%s findnode_failures=%s enrich_exhausted=%s task_panics=%s last=[%s]\n' \
+                "$i" \
+                "$(grep -c 'dht address publish' "$s")" \
+                "$(grep -c 'stored on' "$s")" \
+                "$(grep -c 'findNode via .* failed' "$s")" \
+                "$(grep -c 'findNode enrichment exhausted' "$s")" \
+                "$(grep 'panicked at' "$s" | grep -v 'tests/live.rs' | wc -l)" \
+                "$(grep 'dht address publish' "$s" | tail -n 1 | cut -c1-140)"
+            done
+          }
+
           if [ -n "$winner" ]; then
             {
               echo '### Mempool delivery acceptance passed'
@@ -446,7 +466,10 @@ jobs:
               echo '```'
               cat "$summary"
               echo '```'
+              echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
+            publish_progress | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -481,19 +504,7 @@ jobs:
           {
             echo "-- delivery samples (k=$samples) --"
             cat "$summary"
-            echo "-- publish progress (all samples, hex elided) --"
-            for i in $(seq 1 "$samples"); do
-              s="$artifacts/sample-$i.log"
-              [ -s "$s" ] || { echo "sample $i: no output captured"; continue; }
-              printf 'sample %s: publish_lines=%s stored_lines=%s findnode_failures=%s enrich_exhausted=%s task_panics=%s last=[%s]\n' \
-                "$i" \
-                "$(grep -c 'dht address publish' "$s")" \
-                "$(grep -c 'stored on' "$s")" \
-                "$(grep -c 'findNode via .* failed' "$s")" \
-                "$(grep -c 'findNode enrichment exhausted' "$s")" \
-                "$(grep 'panicked at' "$s" | grep -v 'tests/live.rs' | wc -l)" \
-                "$(grep 'dht address publish' "$s" | tail -n 1 | cut -c1-140)"
-            done
+            publish_progress
             echo "-- task panics (all samples, harness assertion excluded) --"
             for i in $(seq 1 "$samples"); do
               s="$artifacts/sample-$i.log"
