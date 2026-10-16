@@ -6,6 +6,7 @@
 use super::*;
 
 use super::growth::query_overlay_random_peers;
+use futures::StreamExt;
 use tonutils_tl::tl::network::DhtValue;
 
 /// Returns the shared-transport session for one lookup hop.
@@ -31,14 +32,14 @@ pub(crate) async fn shared_session(
     Ok(transport.session_for_peer(remote, remote_addr))
 }
 
-/// Stop resolving DHT `address` records for one seed once this many overlay
-/// candidates resolved.  Seed discovery queries every configured seed in
-/// parallel, so a handful of peers per seed already saturates the peer pool.
-const ADDRESS_LOOKUP_TARGET: usize = 4;
-
-/// Give up on a seed's `address` records after this many consecutive misses,
-/// so a lagging peer cannot consume the whole discovery deadline.
-const ADDRESS_LOOKUP_MISSES: usize = 3;
+/// How many candidate `address` records one seed resolves concurrently.
+///
+/// Every candidate behind the overlay-node value is resolved before the
+/// caller's deadline, not just the first few: the value is the overlay's
+/// full-node phonebook, and a member whose address this node never resolves
+/// can never verify it.  The bound keeps one seed from opening more parallel
+/// DHT dialogs than the transport can carry.
+const ADDRESS_LOOKUP_CONCURRENCY: usize = 12;
 
 /// DHT nodes queried in parallel after one `dht.valueNotFound`.
 ///
@@ -532,59 +533,68 @@ async fn query_overlay_seed(
                         candidates.push(overlay_public);
                     }
                     // The `address` record of every candidate is another DHT
-                    // round trip, so they are resolved over the very session
-                    // that just answered instead of one fresh socket per
-                    // candidate; see `query_dht_value_on_session`.
-                    let mut result = Vec::new();
-                    let mut misses = 0usize;
+                    // round trip.  Every candidate is resolved over the very
+                    // session that just answered instead of one fresh socket
+                    // per candidate (see `query_dht_value_on_session`), and the
+                    // resolutions run concurrently: one seed's value can list
+                    // the whole overlay member set, and skipping entries would
+                    // trade a burst of DHT lookups for members this node can
+                    // never verify.  The caller's deadline ends the round, not
+                    // an entry cap.
                     let Some(peer_address) = peer_address else {
                         log::debug!("query_overlay_seed: unusable seed address {}", seed.address);
                         continue;
                     };
-                    for overlay_public in candidates {
-                        if tokio::time::Instant::now() >= deadline {
-                            log::debug!("query_overlay_seed: address resolution hit its deadline");
-                            break;
-                        }
-                        let address_key =
-                            dht_key_id(AdnlAddress::from(&overlay_public).to_bytes(), b"address");
-                        let Some(resolved) = resolve_address_on_session(
-                            local_addr,
-                            &local_keypair,
-                            peer_address,
-                            &session,
-                            address_key,
-                            per_query_timeout,
-                            deadline,
-                            endpoints,
-                        )
-                        .await
-                        else {
-                            misses += 1;
-                            if misses >= ADDRESS_LOOKUP_MISSES {
-                                log::debug!(
-                                    "query_overlay_seed: giving up on {} after {} address misses",
-                                    seed.address,
-                                    misses
+                    let candidate_count = candidates.len();
+                    let lookups =
+                        futures::stream::iter(candidates.into_iter().map(|overlay_public| {
+                            let session = &session;
+                            let local_keypair = &local_keypair;
+                            async move {
+                                if tokio::time::Instant::now() >= deadline {
+                                    return None;
+                                }
+                                let address_key = dht_key_id(
+                                    AdnlAddress::from(&overlay_public).to_bytes(),
+                                    b"address",
                                 );
-                                break;
+                                resolve_address_on_session(
+                                    local_addr,
+                                    local_keypair,
+                                    peer_address,
+                                    session,
+                                    address_key,
+                                    per_query_timeout,
+                                    deadline,
+                                    endpoints,
+                                )
+                                .await
                             }
-                            continue;
-                        };
-                        misses = 0;
+                        }))
+                        .buffer_unordered(ADDRESS_LOOKUP_CONCURRENCY);
+                    let resolved = lookups.collect::<Vec<Option<SeedPeer>>>().await;
+                    let mut result = Vec::new();
+                    for resolved in resolved.into_iter().flatten() {
                         if result
                             .iter()
                             .all(|candidate: &SeedPeer| candidate.peer != resolved.peer)
                         {
                             result.push(resolved);
                         }
-                        if result.len() >= ADDRESS_LOOKUP_TARGET {
+                        if result.len() >= max_records {
                             break;
                         }
                     }
                     if !result.is_empty() {
+                        log::debug!(
+                            "query_overlay_seed: resolved {} of {candidate_count} member address(es) from {address}",
+                            result.len()
+                        );
                         return Some(result);
                     }
+                    log::debug!(
+                        "query_overlay_seed: resolved none of the {candidate_count} member address(es) from {address}"
+                    );
                 }
                 DhtValueResult::NotFound { nodes } => {
                     log::debug!(

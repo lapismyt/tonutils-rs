@@ -253,6 +253,12 @@ impl MempoolScannerBuilder {
         let discovery_timeout = self.discovery_timeout;
         let overlay = self.overlay_id;
         let external_address = self.external_address;
+        // The overlay-node DHT value is this overlay's full-node
+        // phonebook: every entry can verify this node and then broadcast
+        // to it, so bootstrap discovery resolves as many entries as the
+        // session pool can hold instead of a small fixed sample.
+        // `overlay_max_peers(0)` disables managed discovery entirely.
+        let discovery_records = usize::try_from(self.overlay_max_peers).unwrap_or(usize::MAX);
         let session_factory = overlay_factory_with_endpoints(
             local_addr,
             local_keypair,
@@ -272,7 +278,7 @@ impl MempoolScannerBuilder {
                 local_keypair,
                 overlay,
                 overlay_key,
-                16,
+                discovery_records,
                 discovery_timeout,
                 member_endpoints,
             )),

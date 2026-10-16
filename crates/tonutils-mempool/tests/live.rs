@@ -388,7 +388,9 @@ async fn configured_seed_delivers_valid_external_message() {
 
     // Pre-wait growth burst: run 4 aggressive growth rounds back-to-back
     // to seed neighbour slots on full nodes before the passive wait window.
-    // Uses the same UDP overlay lookup that the builder's growth task uses.
+    // Uses the same UDP overlay lookup that the builder's growth task uses,
+    // and resolves the whole published overlay-node member set per round
+    // (the lookup bounds the round by its deadline, not by a record cap).
     for burst in 1..=4 {
         eprintln!("live mempool phase=growth-burst round={burst}");
         let burst_lookup = udp_overlay_lookup_with_endpoints(
@@ -396,7 +398,7 @@ async fn configured_seed_delivers_valid_external_message() {
             local_key,
             overlay,
             overlay_bytes,
-            32,
+            256,
             Duration::from_secs(30),
             member_endpoints.clone(),
         );
