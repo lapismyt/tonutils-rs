@@ -23,6 +23,7 @@
 //! otherwise, so storing on the closest known nodes is what makes
 //! the value retrievable.
 
+use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -65,8 +66,8 @@ const VALUE_TTL_SECS: i32 = 3600;
 pub const PUBLISH_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
 /// A DHT node a publish round can store the value on.
-#[derive(Clone)]
-struct DhtCandidate {
+#[derive(Clone, Debug)]
+pub(in crate::udp_session) struct DhtCandidate {
     /// The node's position in the DHT keyspace: its ADNL short id.
     id: [u8; 32],
     public_key: AdnlPublicKey,
@@ -226,8 +227,10 @@ pub async fn detect_external_udp_address(
 /// node's `address` key and stores the signed value on the closest
 /// of them.
 ///
-/// Returns the number of `dht.stored` answers.  A single store on
-/// a responsible node makes the value retrievable through
+/// Returns the nodes that answered `dht.stored`: the nodes that
+/// actually hold the value, which is what
+/// [`verify_dht_address_value`] has to ask first.  A single store
+/// on a responsible node makes the value retrievable through
 /// `dht.findValue`, which is what overlay peers use to resolve
 /// this node's address before pinging it.
 #[allow(clippy::large_types_passed_by_value)]
@@ -237,7 +240,7 @@ pub async fn publish_dht_address_value(
     external: SocketAddr,
     dht_nodes: &[SeedPeer],
     timeout: Duration,
-) -> usize {
+) -> Vec<DhtCandidate> {
     let value = address_dht_value(&local_keypair, external);
     let store_query = tl_proto::serialize(DhtMessage::Store {
         value: DhtValueBare::from(&value),
@@ -260,6 +263,7 @@ pub async fn publish_dht_address_value(
     let target_count = candidates.len().min(PUBLISH_TARGETS);
     let stores = candidates.iter().take(target_count).map(|candidate| {
         let value = value.clone();
+        let candidate = candidate.clone();
         async move {
             let session = match shared_session(
                 local_addr,
@@ -275,7 +279,7 @@ pub async fn publish_dht_address_value(
                         "dht address publish: session to {} failed: {error}",
                         candidate.address
                     );
-                    return 0usize;
+                    return None;
                 }
             };
             if let Err(error) = session.dht_store(value, timeout).await {
@@ -283,13 +287,20 @@ pub async fn publish_dht_address_value(
                     "dht address publish: store on {} failed: {error}",
                     candidate.address
                 );
-                return 0;
+                return None;
             }
-            1
+            Some(candidate)
         }
     });
-    let stored: usize = futures::future::join_all(stores).await.into_iter().sum();
-    log::debug!("dht address publish: stored on {stored} of {target_count} candidate node(s)");
+    let stored: Vec<DhtCandidate> = futures::future::join_all(stores)
+        .await
+        .into_iter()
+        .flatten()
+        .collect();
+    log::debug!(
+        "dht address publish: stored on {} of {target_count} candidate node(s)",
+        stored.len()
+    );
     stored
 }
 
@@ -314,13 +325,24 @@ fn known_candidates(dht_nodes: &[SeedPeer]) -> Vec<DhtCandidate> {
     candidates
 }
 
-/// Asks the closest known node for the DHT nodes closest to the
+/// How many known nodes one enrichment step asks before giving up.
+///
+/// The closest known seed is not guaranteed to answer: live runs lost
+/// the enrichment round on a silent closest seed seven times out of
+/// eight, which degraded the store placement to the unenriched seed
+/// list.  Retrying the next-closest seeds recovers the placement at
+/// the cost of one bounded round each.
+const ENRICH_ATTEMPTS: usize = 3;
+
+/// Asks the closest known nodes for the DHT nodes closest to the
 /// `address` key and merges them into `candidates`.
 ///
 /// The known set is usually the static seed list, which is rarely
 /// the part of the keyspace a fresh node id lands in; one
 /// `findNode` round is what reaches the nodes that are actually
-/// responsible for the key.
+/// responsible for the key.  The closest seed is asked first; when
+/// it stays silent or errors out, the next-closest seeds are tried
+/// the same way, and the first round that answers ends the step.
 #[allow(clippy::large_types_passed_by_value)]
 async fn enrich_with_find_node(
     local_addr: SocketAddr,
@@ -329,57 +351,61 @@ async fn enrich_with_find_node(
     candidates: &mut Vec<DhtCandidate>,
     timeout: Duration,
 ) {
-    let Some(closest) = candidates
-        .iter()
-        .min_by(|a, b| xor_distance(&a.id, key_id).cmp(&xor_distance(&b.id, key_id)))
-        .cloned()
-    else {
-        return;
-    };
-    let Ok(session) = shared_session(
-        local_addr,
-        local_keypair,
-        closest.public_key,
-        closest.address,
-    )
-    .await
-    else {
-        return;
-    };
-    let nodes = match session
-        .dht_find_node(Int256(*key_id), FIND_NODE_K, timeout)
+    let mut order: Vec<usize> = (0..candidates.len()).collect();
+    order.sort_by_key(|&index| xor_distance(&candidates[index].id, key_id));
+    for &index in order.iter().take(ENRICH_ATTEMPTS) {
+        let Some(closest) = candidates.get(index).cloned() else {
+            return;
+        };
+        let Ok(session) = shared_session(
+            local_addr,
+            local_keypair,
+            closest.public_key,
+            closest.address,
+        )
         .await
-    {
-        Ok(DhtNodesBoxed { nodes }) => nodes,
-        Err(error) => {
+        else {
             log::debug!(
-                "dht address publish: findNode via {} failed: {error}",
+                "dht address publish: findNode session to {} failed, trying the next seed",
                 closest.address
             );
-            return;
-        }
-    };
-    let now = now_i32();
-    let mut found = 0usize;
-    for node in nodes {
-        if !node.is_valid(now) {
             continue;
-        }
-        if let Some(candidate) = candidate_from_dht_node(&node)
-            && !candidates
-                .iter()
-                .any(|existing| existing.id == candidate.id)
+        };
+        let nodes = match session
+            .dht_find_node(Int256(*key_id), FIND_NODE_K, timeout)
+            .await
         {
-            found += 1;
-            candidates.push(candidate);
+            Ok(DhtNodesBoxed { nodes }) => nodes,
+            Err(error) => {
+                log::debug!(
+                    "dht address publish: findNode via {} failed: {error}",
+                    closest.address
+                );
+                continue;
+            }
+        };
+        let now = now_i32();
+        let mut found = 0usize;
+        for node in nodes {
+            if !node.is_valid(now) {
+                continue;
+            }
+            if let Some(candidate) = candidate_from_dht_node(&node)
+                && !candidates
+                    .iter()
+                    .any(|existing| existing.id == candidate.id)
+            {
+                found += 1;
+                candidates.push(candidate);
+            }
         }
-    }
-    if found > 0 {
         log::debug!(
             "dht address publish: findNode via {} returned {found} closer node(s)",
             closest.address
         );
+        return;
     }
+    log::debug!("dht address publish: findNode enrichment exhausted {ENRICH_ATTEMPTS} attempt(s)");
 }
 
 /// Extracts a publish candidate from a `dht.node` record.
@@ -405,55 +431,19 @@ fn candidate_from_dht_node(node: &DhtNode) -> Option<DhtCandidate> {
     })
 }
 
-/// Verifies that the `address` value is retrievable from the DHT
-/// after a publish round, logging the outcome.
+/// How many walk rounds the verify performs in total and how many
+/// nodes each round asks concurrently.
 ///
-/// This is the check that tells a store apart from a publish: a
-/// `dht.stored` answer only means one node accepted the value,
-/// while a `dht.valueFound` answer to `findValue` means the value
-/// is reachable through the DHT, which is what overlay peers rely
-/// on.
-#[allow(clippy::large_types_passed_by_value)]
-pub async fn verify_dht_address_value(
-    local_addr: SocketAddr,
-    local_keypair: KeyPair,
-    external: SocketAddr,
-    dht_nodes: &[SeedPeer],
-    timeout: Duration,
-) -> bool {
-    let key_id = dht_key_id(short_id(&local_keypair.public_key), b"address");
-    let candidates = known_candidates(dht_nodes);
-    let Some(closest) = candidates
-        .iter()
-        .min_by(|a, b| xor_distance(&a.id, &key_id.0).cmp(&xor_distance(&b.id, &key_id.0)))
-        .cloned()
-    else {
-        return false;
-    };
-    let Ok(session) = shared_session(
-        local_addr,
-        local_keypair,
-        closest.public_key,
-        closest.address,
-    )
-    .await
-    else {
-        return false;
-    };
-    let result = match session.dht_find_value(key_id, 1, timeout).await {
-        Ok(result) => result,
-        Err(error) => {
-            log::debug!(
-                "dht address verify: findValue via {} failed: {error}",
-                closest.address
-            );
-            return false;
-        }
-    };
-    let DhtValueResult::Found { value } = result else {
-        log::debug!("dht address verify: value for this node is not in the DHT yet");
-        return false;
-    };
+/// The first round asks the store targets (or, when the store
+/// failed everywhere, the closest known seeds); each later round
+/// follows the closer nodes from the `dht.valueNotFound` answers.
+const VERIFY_WALK_ROUNDS: usize = 3;
+const VERIFY_WALK_BRANCH: usize = 4;
+
+/// Whether a retrieved value is the current `address` value of this
+/// node: owned by this key pair, signed, and carrying the
+/// externally reachable address the round published.
+fn value_matches(value: &DhtValue, local_keypair: &KeyPair, external: SocketAddr) -> bool {
     let TlPublicKey::Ed25519 { key } = &value.key.id else {
         return false;
     };
@@ -465,22 +455,134 @@ pub async fn verify_dht_address_value(
         log::debug!("dht address verify: retrieved value is not an address list");
         return false;
     };
-    let published_address =
-        address_list
-            .addrs
-            .iter()
-            .any(|address| match (address, external.ip()) {
-                (Address::Udp { ip, port }, IpAddr::V4(expected)) => {
-                    *ip == u32::from(expected) as i32 && *port == i32::from(external.port())
-                }
-                _ => false,
-            });
-    if published_address {
-        log::debug!("dht address verify: the DHT serves this node's address value");
+    address_list
+        .addrs
+        .iter()
+        .any(|address| match (address, external.ip()) {
+            (Address::Udp { ip, port }, IpAddr::V4(expected)) => {
+                *ip == u32::from(expected) as i32 && *port == i32::from(external.port())
+            }
+            _ => false,
+        })
+}
+
+/// Verifies that the `address` value is retrievable from the DHT
+/// after a publish round, logging the outcome.
+///
+/// This is the check that tells a store apart from a publish: a
+/// `dht.stored` answer only means one node accepted the value,
+/// while a `dht.valueFound` answer to `findValue` means the value
+/// is reachable through the DHT, which is what overlay peers rely
+/// on.
+///
+/// The nodes that answered `dht.stored` hold the value, so they are
+/// asked first, concurrently.  When none of them serves it (or the
+/// store failed everywhere and the list is empty), the walk starts
+/// from the closest known seeds and follows the closer nodes from
+/// every `dht.valueNotFound` answer - the same search
+/// [`resolve_address`](super::lookup) uses to resolve a peer - so a
+/// node that did not receive the store can still lead the walk to
+/// one that did.
+#[allow(clippy::large_types_passed_by_value)]
+pub async fn verify_dht_address_value(
+    local_addr: SocketAddr,
+    local_keypair: KeyPair,
+    external: SocketAddr,
+    dht_nodes: &[SeedPeer],
+    stored_targets: &[DhtCandidate],
+    timeout: Duration,
+) -> bool {
+    let key_id = dht_key_id(short_id(&local_keypair.public_key), b"address");
+    let mut pending = if stored_targets.is_empty() {
+        known_candidates(dht_nodes)
     } else {
-        log::debug!("dht address verify: the DHT serves a stale address value");
+        stored_targets.to_vec()
+    };
+    if pending.is_empty() {
+        log::debug!("dht address verify: no nodes to ask");
+        return false;
     }
-    published_address
+    pending.sort_by_key(|candidate| xor_distance(&candidate.id, &key_id.0));
+    let mut tried = HashSet::new();
+
+    for round in 1..=VERIFY_WALK_ROUNDS {
+        let mut batch = Vec::new();
+        let mut rest = Vec::new();
+        for candidate in pending.drain(..) {
+            if !tried.insert(candidate.address) {
+                continue;
+            }
+            if batch.len() < VERIFY_WALK_BRANCH {
+                batch.push(candidate);
+            } else {
+                rest.push(candidate);
+            }
+        }
+        if batch.is_empty() {
+            break;
+        }
+        let results = futures::future::join_all(batch.into_iter().map(|candidate| {
+            let key_id = key_id.clone();
+            async move {
+                let session = shared_session(
+                    local_addr,
+                    local_keypair,
+                    candidate.public_key,
+                    candidate.address,
+                )
+                .await
+                .ok()?;
+                let result = session.dht_find_value(key_id, 1, timeout).await.ok()?;
+                Some((candidate, result))
+            }
+        }))
+        .await;
+
+        let mut answered = 0usize;
+        for (candidate, result) in results.into_iter().flatten() {
+            answered += 1;
+            match result {
+                DhtValueResult::Found { value } => {
+                    let served = value_matches(&value, &local_keypair, external);
+                    if served {
+                        log::debug!(
+                            "dht address verify: the DHT serves this node's address value (round {round}, node {})",
+                            candidate.address
+                        );
+                    } else {
+                        log::debug!(
+                            "dht address verify: the DHT serves a stale address value (round {round}, node {})",
+                            candidate.address
+                        );
+                    }
+                    return served;
+                }
+                DhtValueResult::NotFound { nodes } => {
+                    let now = now_i32();
+                    for node in nodes.nodes {
+                        if !node.is_valid(now) {
+                            continue;
+                        }
+                        if let Some(closer) = candidate_from_dht_node(&node)
+                            && !tried.contains(&closer.address)
+                        {
+                            rest.push(closer);
+                        }
+                    }
+                }
+            }
+        }
+        if answered == 0 {
+            log::debug!("dht address verify: walk round {round} got no answers");
+            break;
+        }
+        pending = rest;
+        if pending.is_empty() {
+            break;
+        }
+    }
+    log::debug!("dht address verify: value for this node is not in the DHT yet");
+    false
 }
 
 /// Publisher of this node's DHT `address` value for the native
@@ -533,11 +635,20 @@ pub fn address_publisher(
             let stored =
                 publish_dht_address_value(local_addr, local_keypair, external, &nodes, timeout)
                     .await;
-            let served =
-                verify_dht_address_value(local_addr, local_keypair, external, &nodes, timeout)
-                    .await;
-            log::info!("dht address publish: stored on {stored} node(s), served_by_dht={served}");
-            stored
+            let served = verify_dht_address_value(
+                local_addr,
+                local_keypair,
+                external,
+                &nodes,
+                &stored,
+                timeout,
+            )
+            .await;
+            log::info!(
+                "dht address publish: stored on {} node(s), served_by_dht={served}",
+                stored.len()
+            );
+            stored.len()
         })
     })
 }
@@ -668,5 +779,33 @@ mod tests {
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].id, short_id(&keypair.public_key));
         assert_eq!(candidates[0].address.to_string(), "8.8.8.8:5000");
+    }
+
+    #[test]
+    fn value_matches_only_the_current_published_address() {
+        let keypair = KeyPair::generate(&mut rand::rngs::OsRng);
+        let external: SocketAddr = "8.8.8.8:443".parse().unwrap();
+        let value = address_dht_value(&keypair, external);
+        assert!(value_matches(&value, &keypair, external));
+        // The same node at another address is a stale value.
+        assert!(!value_matches(
+            &value,
+            &keypair,
+            "8.8.8.8:444".parse().unwrap()
+        ));
+        // Another identity's value never matches.
+        let other = KeyPair::generate(&mut rand::rngs::OsRng);
+        assert!(!value_matches(&value, &other, external));
+    }
+
+    #[test]
+    fn value_matches_rejects_a_tampered_payload() {
+        let keypair = KeyPair::generate(&mut rand::rngs::OsRng);
+        let external: SocketAddr = "8.8.8.8:443".parse().unwrap();
+        let mut value = address_dht_value(&keypair, external);
+        // The signature covers the boxed unsigned bytes, so a payload
+        // edit without re-signing must fail the signature check.
+        value.value.push(0);
+        assert!(!value_matches(&value, &keypair, external));
     }
 }
