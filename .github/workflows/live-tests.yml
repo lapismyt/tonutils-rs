@@ -302,12 +302,14 @@ jobs:
         # (1 - p)^samples false alarm at the recorded p, and therefore real
         # evidence of a regression. Job logs require admin access, so a
         # failed gate still publishes its own diagnosis: the per-sample
-        # classification, the final metrics line, ADNL channel negotiation
-        # counts, custom-message (broadcast candidate) counters, the inbound
-        # query census by constructor, and the growth/publishing lines go to
-        # a check annotation (GitHub caps annotations at 4 KiB, so the
-        # compact view comes first) and to the step summary, both readable
-        # on a public repo without admin rights.
+        # publish progress census with panic counts, the raw log tail of the
+        # first timed-out sample, the final metrics line, ADNL channel
+        # negotiation counts, custom-message (broadcast candidate) counters,
+        # the inbound query census by constructor, and the growth/publishing
+        # lines go to a check annotation (GitHub caps annotations at 4 KiB,
+        # so the decisive evidence leads and long hex blobs are elided) and
+        # to the step summary, both readable on a public repo without admin
+        # rights.
         run: |
           set -o pipefail
           samples="${TON_MEMPOOL_LIVE_DELIVERY_SAMPLES:-8}"
@@ -432,13 +434,40 @@ jobs:
           log="$artifacts/sample-$ref.log"
 
           set +e
+          elide_hex() {
+            sed -E 's/([0-9a-f]{48})[0-9a-f]{16,}/\1[hex elided]/g'
+          }
           diag="$artifacts/delivery-diag.txt"
+          annot="$artifacts/delivery-annotation.txt"
           {
             echo "-- delivery samples (k=$samples) --"
             cat "$summary"
+            echo "-- publish progress (all samples, hex elided) --"
+            for i in $(seq 1 "$samples"); do
+              s="$artifacts/sample-$i.log"
+              [ -s "$s" ] || { echo "sample $i: no output captured"; continue; }
+              printf 'sample %s: publish_lines=%s stored_lines=%s findnode_failures=%s task_panics=%s last=[%s]\n' \
+                "$i" \
+                "$(grep -c 'dht address publish' "$s")" \
+                "$(grep -c 'stored on' "$s")" \
+                "$(grep -c 'findNode via .* failed' "$s")" \
+                "$(grep 'panicked at' "$s" | grep -v 'tests/live.rs' | wc -l)" \
+                "$(grep 'dht address publish' "$s" | tail -n 1 | cut -c1-140)"
+            done
+            echo "-- task panics (all samples, harness assertion excluded) --"
+            for i in $(seq 1 "$samples"); do
+              s="$artifacts/sample-$i.log"
+              [ -s "$s" ] || continue
+              p="$(grep 'panicked at' "$s" | grep -v 'tests/live.rs' | head -n 1 | cut -c1-200)"
+              if [ -n "$p" ]; then
+                printf 'sample %s: %s\n' "$i" "$p"
+              fi
+            done
+            echo "-- log tail (sample $ref, waiting metrics elided, hex elided) --"
+            grep -v 'phase=waiting metrics=' "$log" | tail -n 12 | elide_hex | cut -c1-170
             echo "-- diagnostics from sample $ref --"
             echo "-- final delivery --"
-            grep 'phase=delivery' "$log" | tail -n 1
+            grep 'phase=delivery' "$log" | tail -n 1 | elide_hex | cut -c1-600
             echo "-- channel negotiation --"
             printf 'requested=%s confirmed=%s installed=%s\n' \
               "$(grep -c 'ADNL channel requested' "$log")" \
@@ -467,12 +496,16 @@ jobs:
             echo "-- growth address resolution --"
             grep -E 'udp_peer_growth:|udp_overlay_lookup:' "$log" | tail -n 6
             echo "-- dht address publishing --"
-            grep 'dht address publish' "$log" | tail -n 6
+            grep 'dht address publish' "$log" | elide_hex | tail -n 10
             echo "-- non-seed connectivity --"
             grep 'phase=non-seed' "$log" | tail -n 8
-            echo "-- log tail (waiting metrics elided) --"
-            grep -v 'phase=waiting metrics=' "$log" | tail -n 25
+            echo "-- log tail (full, waiting metrics elided) --"
+            grep -v 'phase=waiting metrics=' "$log" | tail -n 60 | elide_hex
           } > "$diag"
+          # GitHub caps a check-run annotation at 4096 chars; the decisive
+          # evidence leads the digest so the cap only trims known-good
+          # sections, while the step summary carries the full digest.
+          head -c 3800 "$diag" > "$annot"
           {
             echo '### Mempool delivery test failed: no sample delivered'
             echo
@@ -482,10 +515,10 @@ jobs:
             echo '<details><summary>Full log tail (sample '"$ref"')</summary>'
             echo
             echo '```'
-            tail -n 60 "$log"
+            tail -n 60 "$log" | elide_hex
             echo '```'
             echo '</details>'
           } >> "$GITHUB_STEP_SUMMARY"
-          msg=$(awk 'BEGIN{ORS="%0A"}1' "$diag")
+          msg=$(awk 'BEGIN{ORS="%0A"}1' "$annot")
           echo "::error title=Mempool delivery test failed::$msg"
           exit 1
