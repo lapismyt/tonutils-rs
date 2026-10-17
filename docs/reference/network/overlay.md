@@ -554,6 +554,25 @@ probe on it): the member's recorded endpoint must carry traffic for this
 node's identity, and the endpoint-staleness lottery of the wave ladder is
 all that remains.
 
+Run 39008789830 (2026-10-17, `3a791ac`, the phase fix): red on the pure
+delivery lottery - all 8 samples timed out at 600 s with healthy counters
+(max `unique_pingers=17`, `pings_received=75`; all 8 resolved an
+endpoint-independent mapping; three samples recorded
+`membership_listing_peers=1`), so the phase fix was not exercised by the
+draw.  The classified re-run of the same job then died inside the
+classification itself: the runner executes the step with `bash -e`, and a
+`field="$(grep ... | ...)"` extraction whose grep finds no match aborts the
+whole step, which a split metrics line (interleaved writes from the test's
+threads) triggers - header printed, no diagnosis, exit 1.  The script now
+disables errexit before any diagnostics, keeps a degraded prefix when the
+structured census line cannot be parsed, and uploads the raw per-sample
+logs as an artifact on red draws; the failure was reproduced against a
+split-line fixture before the fix and cleared after it.  Sixteen 600 s
+samples have now delivered once (332.7 s), and the admission counters show
+why the rate moves per draw (30 pingers on one gate, 17 on the next), so
+the ~15 %/sample window estimate stays an upper bound until more draws
+accumulate.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established

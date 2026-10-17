@@ -382,6 +382,16 @@ jobs:
             done
           fi
 
+          # Everything below only reports: the verdict is decided by the
+          # winner flag above.  The runner invokes this script as bash -e,
+          # and a grep that finds no match inside an assignment aborts the
+          # whole step silently - the re-run of 39008789830 failed exactly
+          # that way, right after the classification header, with no
+          # diagnosis at all.  Sample logs come from a multi-threaded
+          # process, so any long line can interleave and break an
+          # extraction; diagnostics must degrade, never die.
+          set +e
+
           classify() {
             local i="$1" log="$artifacts/sample-$i.log"
             if [ ! -s "$log" ]; then
@@ -405,6 +415,9 @@ jobs:
             if grep -q 'phase=delivery timed out' "$log"; then
               local line peers pingers storing answers pings pongs listings dht_pings pushers customs
               line="$(grep -oE 'phase=delivery timed out after [0-9]+s:.*' "$log" | tail -n 1)"
+              # An interleaved stderr write can split the metrics line; keep
+              # the usable prefix instead of degrading to empty fields.
+              [ -n "$line" ] || line="$(grep -oE 'phase=delivery timed out.*' "$log" | tail -n 1)"
               peers="$(printf '%s' "$line" | grep -oE 'registered_peers=[0-9]+' | tail -n 1 | cut -d= -f2)"
               pingers="$(printf '%s' "$line" | grep -oE 'unique_pingers: [0-9]+' | tail -n 1 | awk '{print $2}')"
               storing="$(printf '%s' "$line" | grep -oE 'address_storing_peers: [0-9]+' | tail -n 1 | awk '{print $2}')"
@@ -508,7 +521,6 @@ jobs:
           [ -n "$ref" ] || ref=1
           log="$artifacts/sample-$ref.log"
 
-          set +e
           elide_hex() {
             sed -E 's/([0-9a-f]{48})[0-9a-f]{16,}/\1[hex elided]/g'
           }
@@ -586,3 +598,17 @@ jobs:
           msg=$(awk 'BEGIN{ORS="%0A"}1' "$annot")
           echo "::error title=Mempool delivery test failed::$msg"
           exit 1
+
+      - name: Upload delivery sample logs
+        # The check annotation is capped at 4 KiB and job logs need admin
+        # rights, so a red draw also keeps the raw per-sample logs as an
+        # artifact: they are what turns a silent classification into a root
+        # cause (the re-run of run 39008789830 died mid-classification under
+        # the runner's bash -e and left an empty diagnosis).
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v7
+        with:
+          name: delivery-sample-logs
+          path: ${{ runner.temp }}/delivery
+          retention-days: 7
+          if-no-files-found: ignore
