@@ -281,7 +281,7 @@ jobs:
 
       - name: Run configured seed-only mempool live test
         env:
-          TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS || '300' }}
+          TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS || '600' }}
           TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS: '256'
           TON_MEMPOOL_LIVE_DELIVERY_SAMPLES: ${{ vars.TON_MEMPOOL_LIVE_DELIVERY_SAMPLES || '8' }}
         # The delivery outcome is a per-run sample of the upstream push
@@ -312,6 +312,19 @@ jobs:
         # so the decisive evidence leads and long hex blobs are elided) and
         # to the step summary, both readable on a public repo without admin
         # rights.
+        # Policy update 2026-10-17: the per-sample window is 600 s (env block
+        # above; a TON_MEMPOOL_LIVE_TIMEOUT_SECS repo variable can still
+        # override it).  The post-fix record - two green gates delivering at
+        # 269.9 s and 274.8 s of the 300 s window, then a red draw at the
+        # strongest admission counters recorded (run 39005547863:
+        # unique_pingers=16, pings_received=64 answered 1:1, a served
+        # published address, no broadcast) - showed the residual failure mode
+        # is the upstream neighbour-slot lottery and no client-side lever
+        # reaches it.  A longer window is the cheapest lever: at the observed
+        # ~8 % per sample in 300 s the constant-hazard extrapolation is
+        # ~15 % at 600 s with a k=8 gate green rate of ~74 %, without the
+        # CPU/DHT contention a larger k would add.  Numbers and mechanics:
+        # TODO item 440 and docs/reference/network/overlay.md.
         run: |
           set -o pipefail
           samples="${TON_MEMPOOL_LIVE_DELIVERY_SAMPLES:-8}"

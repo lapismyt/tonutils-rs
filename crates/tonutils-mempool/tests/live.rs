@@ -363,8 +363,9 @@ async fn configured_seed_delivers_valid_external_message() {
         .overlay_max_peers(overlay_max_peers)
         .member_endpoints(member_endpoints.clone())
         // Enable quality eviction with aggressive churn so managed slots rotate
-        // during the 300 s wait, letting growth continuously add fresh full-node
-        // contacts (each eviction -> growth round -> new admission ticket).
+        // throughout the delivery wait, letting growth continuously add fresh
+        // full-node contacts (each eviction -> growth round -> new admission
+        // ticket).
         .peer_quality(PeerQualityConfig {
             churn_interval: Duration::from_secs(3),
             sweep_interval: Duration::from_secs(1),

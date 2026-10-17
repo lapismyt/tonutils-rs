@@ -443,7 +443,7 @@ Run 38865936964 (2026-10-16, `cbf6b4a`, 300 s budget): timeout arm again
 `random_peers_queries_sent=3230`) - the third hardened timeout arm, again
 zero inbound broadcasts at healthy admission counters. The CI gate therefore
 stopped sampling once: the `live-delivery` job now runs
-`TON_MEMPOOL_LIVE_DELIVERY_SAMPLES` (default 8) independent 300 s samples in
+`TON_MEMPOOL_LIVE_DELIVERY_SAMPLES` (default 8) independent samples in
 parallel and passes when at least one delivers. With the recorded per-window
 rate (3 green of 9 arms, `p ~ 1/3`) a red gate is a `(1 - p)^8 <= ~4%` false
 alarm and therefore a real regression signal, while a single-sample gate was
@@ -524,6 +524,15 @@ peer per second in random order from a queue capped at 100, and
 every `U(30,120)` s from up to 100 random draws over the holder's peer table -
 and no client-side lever reaches it (announce cadence, reach, publish
 correctness, and the pong path are all verified working in this run).
+
+Follow-up policy (2026-10-17): the per-sample delivery window is now 600 s
+(the `live-delivery` workflow fallback; k=8 unchanged, the
+`TON_MEMPOOL_LIVE_TIMEOUT_SECS` repo-variable override is kept).  The
+decision followed this red draw: with no client-side lever left against the
+upstream neighbour-slot lottery, a longer window raises the per-sample
+probability without the CPU and DHT contention a larger sample count would
+add - at the recorded ~8 % per 300 s the constant-hazard extrapolation is
+~15 % at 600 s, and the k=8 gate green rate moves from ~35-50 % to ~74 %.
 
 ### Address routing: channels versus stored lists
 
