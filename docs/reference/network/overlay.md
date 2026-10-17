@@ -506,6 +506,25 @@ timed-out samples kept healthy admission (`unique_pingers=2-9`,
 `pings_received=7-34`, `membership_answers=1097-1378`).  Both post-fix gates
 delivered at `~270s` of the 300 s budget.
 
+Run 39005547863 (2026-10-17, `5861a89`, 300 s budget): red, all eight samples
+timed out at the strongest admission counters recorded so far - sample 7 alone
+answered `pings_received=64` from `unique_pingers=16` (pongs = pings in every
+sample, `custom_messages=0`), sample 6 reached 12 pingers, three samples
+recorded `membership_listing_peers=1`, and every sample resolved an
+endpoint-independent mapping.  Publication split: samples 7/8 stored on 3
+nodes and verified (`served_by_dht=true`; the sample with the most admitted
+holders was published and still saw no broadcast), samples 2/3 stored on 2
+without a serving responsible node, and samples 1/4/5/6 hit six `findNode`
+failures with two enrichment exhaustions and stored nothing even after the
+retry.  Nothing in the window's own counters separates this red draw from the
+two green ones: the remaining failure mode is the upstream neighbour-slot
+lottery - `process_pending_peers_rate_limiter_{60.0, 60}` services one pending
+peer per second in random order from a queue capped at 100, and
+`update_neighbours(2)` swaps two neighbours plus five plumtree neighbours
+every `U(30,120)` s from up to 100 random draws over the holder's peer table -
+and no client-side lever reaches it (announce cadence, reach, publish
+correctness, and the pong path are all verified working in this run).
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established
