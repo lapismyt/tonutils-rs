@@ -534,6 +534,26 @@ probability without the CPU and DHT contention a larger sample count would
 add - at the recorded ~8 % per 300 s the constant-hazard extrapolation is
 ~15 % at 600 s, and the k=8 gate green rate moves from ~35-50 % to ~74 %.
 
+Run 39007384341 (2026-10-17, `a018ab3`, 600 s budget): red, and the wider
+window paid off on its first run - sample 4 delivered at
+`time_to_message=332.7s`, past the old 300 s deadline, then failed the
+post-delivery non-seed roundtrip phase with all 18 probes (3 waves of 6)
+unanswered.  The other seven samples timed out at the strongest admission
+counters recorded so far (sample 2 answered `pings_received=136` from
+`unique_pingers=30`, sample 1 `114`/`18`, sample 8 `126`/`14`), and every
+sample resolved an endpoint-independent mapping again.  The roundtrip phase
+turned out to be the only dial in the tree that opened a second socket with
+a foreign keypair: every other path - manager sessions, DHT lookups, address
+resolution, growth - resolves through `AdnlUdpTransport::for_node` and
+shares the node's single source address and identity, the rule the transport
+documents so a peer never stores a dead one-shot port.  Registry members
+answer that identity and almost every foreign one goes silent, which is the
+0-of-18 outcome.  The phase now probes through the same construction
+(`for_node` + `session_for_peer`, so a member with a live session answers its
+probe on it): the member's recorded endpoint must carry traffic for this
+node's identity, and the endpoint-staleness lottery of the wave ladder is
+all that remains.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established

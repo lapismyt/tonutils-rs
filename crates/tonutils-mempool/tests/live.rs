@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use futures::future::join_all;
-use tonutils_adnl::{AdnlUdpSession, KeyPair, PublicKey};
+use tonutils_adnl::{AdnlUdpSession, AdnlUdpTransport, KeyPair, PublicKey};
 use tonutils_mempool::MempoolScannerBuilder;
 use tonutils_mempool::{
     MempoolConfig, MempoolEvent, OverlayMemberEndpoints, PeerQualityConfig, known_member_seeds,
@@ -500,11 +500,17 @@ async fn configured_seed_delivers_valid_external_message() {
     // Round-trip proof against non-seed members: open direct
     // ADNL/UDP sessions to registry members the discovery path
     // resolved - never configured seeds - and ask them for
-    // random peers, the same query the growth path uses. A
-    // member's recorded endpoint can go stale between discovery
-    // and this check (NAT rebinding) and any single member can
-    // be transiently unresponsive, so the registry is probed in
-    // waves of a few members and at least one must answer.
+    // random peers, the same query the growth path uses and,
+    // since the all-silent foreign-identity probes of run
+    // 39007384341, on the same shared transport and node
+    // identity that path uses: the recorded endpoint must carry
+    // traffic from this node's identity, and a second socket
+    // with a foreign key is the one-shot port the shared
+    // transport exists to avoid. A member's recorded endpoint
+    // can go stale between discovery and this check (NAT
+    // rebinding) and any single member can be transiently
+    // unresponsive, so the registry is probed in waves of a few
+    // members and at least one must answer.
     let mut non_seed_members: Vec<(PeerId, SocketAddr)> = known_member_seeds(&member_endpoints)
         .into_iter()
         .filter(|(peer, _)| !seed_ids.contains(peer))
@@ -543,32 +549,32 @@ async fn configured_seed_delivers_valid_external_message() {
                     return 0usize;
                 }
             };
-            let roundtrip_key = KeyPair::generate(&mut rand::rngs::OsRng);
-            let session = match tokio::time::timeout(
-                Duration::from_secs(30),
-                AdnlUdpSession::connect(
-                    "0.0.0.0:0".parse().expect("wildcard address must parse"),
-                    member_addr,
-                    roundtrip_key,
-                    member_key,
-                ),
+            // Probe on the node's shared transport, the same socket
+            // and identity the growth path and every other dial
+            // uses: a second socket with a foreign key is the
+            // one-shot port the transport docs warn against, and
+            // registry members answer this node's identity while
+            // almost every unknown one goes silent (run 39007384341:
+            // all 18 foreign-identity probes unanswered minutes after
+            // the same samples had delivered broadcasts).
+            let transport = match AdnlUdpTransport::for_node(
+                "0.0.0.0:0".parse().expect("wildcard address must parse"),
+                local_key,
             )
             .await
             {
-                Ok(Ok(session)) => session,
-                Ok(Err(error)) => {
+                Ok(transport) => transport,
+                Err(error) => {
                     eprintln!(
                         "live mempool phase=non-seed udp roundtrip target={member_addr} result=connect_error error={error}"
                     );
                     return 0;
                 }
-                Err(_) => {
-                    eprintln!(
-                        "live mempool phase=non-seed udp roundtrip target={member_addr} result=connect_timeout"
-                    );
-                    return 0;
-                }
             };
+            // A member with a live session is queried on it, so its
+            // recorded endpoint is exercised by the same traffic the
+            // manager already runs on that session.
+            let session = transport.session_for_peer(member_key, member_addr);
             let nodes = match tokio::time::timeout(
                 Duration::from_secs(15),
                 session.overlay_get_random_peers(Int256(overlay.as_bytes()), Duration::from_secs(10)),
