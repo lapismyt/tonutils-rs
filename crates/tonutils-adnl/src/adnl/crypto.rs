@@ -94,6 +94,44 @@ impl KeyPair {
     pub fn compute_shared_secret(&self, other_public_key: &PublicKey) -> [u8; 32] {
         self.secret_key.compute_shared_secret(other_public_key)
     }
+
+    /// Returns the Ed25519 private key as a PKCS8 DER-encoded structure.
+    ///
+    /// The structure embeds the original 32-byte Ed25519 seed, so a key
+    /// provider loading it (for example `rustls` in the QUIC TLS layer)
+    /// derives exactly the public key this pair carries.
+    #[cfg(feature = "quic")]
+    pub fn private_key_der(&self) -> rustls_pki_types::PrivateKeyDer<'static> {
+        let seed = self.secret_key.seed;
+        let pkcs8 = build_ed25519_pkcs8(&seed);
+        rustls_pki_types::PrivateKeyDer::Pkcs8(rustls_pki_types::PrivatePkcs8KeyDer::from(pkcs8))
+    }
+}
+
+/// Builds a PKCS8 DER structure for an Ed25519 private key.
+#[cfg(feature = "quic")]
+pub(crate) fn build_ed25519_pkcs8(seed: &[u8; 32]) -> Vec<u8> {
+    // Ed25519 PKCS8 private keyInfo structure:
+    // SEQUENCE {
+    //   INTEGER 0
+    //   SEQUENCE {
+    //     OID 1.3.101.112 (Ed25519)
+    //   }
+    //   OCTET STRING (32 bytes, encapsulated private key)
+    // }
+    let mut der = Vec::with_capacity(48);
+    // Outer SEQUENCE
+    der.extend_from_slice(&[0x30, 0x2e]);
+    // INTEGER 0
+    der.extend_from_slice(&[0x02, 0x01, 0x00]);
+    // Inner SEQUENCE (AlgorithmIdentifier)
+    der.extend_from_slice(&[0x30, 0x05]);
+    // OID 1.3.101.112 (Ed25519)
+    der.extend_from_slice(&[0x06, 0x03, 0x2b, 0x65, 0x70]);
+    // OCTET STRING wrapping the 32-byte seed
+    der.extend_from_slice(&[0x04, 0x22, 0x04, 0x20]);
+    der.extend_from_slice(seed);
+    der
 }
 
 impl From<ExpandedSecretKey> for KeyPair {
@@ -312,17 +350,29 @@ impl<'de> serde::Deserialize<'de> for PublicKey {
     }
 }
 
+/// An Ed25519 signing key in expanded form.
+///
+/// Keeps the original 32-byte seed alongside the clamped scalar and the
+/// signature nonce so a byte-identical PKCS#8 (RFC 8410) encoding of the
+/// same identity can be rebuilt later - [`KeyPair::private_key_der`] feeds
+/// it to `rustls`, which must derive the same public key this pair carries.
 #[derive(Copy, Clone)]
 pub struct ExpandedSecretKey {
     key: Scalar,
     key_bytes: [u8; 32],
     nonce: [u8; 32],
+    seed: [u8; 32],
 }
 
 impl ExpandedSecretKey {
     #[inline(always)]
     pub fn nonce(&'_ self) -> &'_ [u8; 32] {
         &self.nonce
+    }
+
+    #[inline(always)]
+    pub fn key_bytes(&'_ self) -> &'_ [u8; 32] {
+        &self.key_bytes
     }
 
     pub fn sign_tl<T: tl_proto::TlWrite>(&self, message: T, public_key: &PublicKey) -> [u8; 64] {
@@ -397,6 +447,7 @@ impl From<&'_ SecretKey> for ExpandedSecretKey {
             key: Scalar::from_bytes_mod_order(key_bytes),
             key_bytes,
             nonce,
+            seed: secret_key.0,
         }
     }
 }

@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use tonutils_liteclient::{
     boc::{DecodedAccountState, DecodedBocRoots},
     client::LiteClient,
     method_name_to_id,
+    types::LiteError,
 };
 use tonutils_network_config::ConfigGlobal;
 use tonutils_tl::Int256;
@@ -35,6 +38,41 @@ async fn connect() -> Option<LiteClient> {
         Ok(client) => Some(client),
         Err(error) => panic!("live liteserver connection failed: {error}"),
     }
+}
+
+/// Upstream `common/errorcode.h` defines `notready = 651`: the transient class
+/// a liteserver answers with while the masterchain block it advertises in
+/// `getMasterchainInfo` is not stored in its own archive yet
+/// (`validator/db/archive-manager.cpp` answers `block handle not in db`,
+/// `validator/impl/liteserver.cpp` prefixes `cannot load block <id>`).
+/// Observed live in CI run 38579887480, where block 98989255 trailed the
+/// advertised tip (98989254) by one block.
+const LITE_SERVER_NOT_READY_CODE: i32 = 651;
+
+/// Five one-second attempts keep the sub-second archive race invisible while
+/// bounding a persistent `notready` failure to ~4 s of extra test time.
+const NOT_READY_ATTEMPTS: u32 = 5;
+
+fn is_liteserver_not_ready(error: &LiteError) -> bool {
+    matches!(error, LiteError::ServerError(server) if server.code == LITE_SERVER_NOT_READY_CODE)
+}
+
+#[test]
+fn liteserver_not_ready_error_matches_upstream_code() {
+    let not_ready = LiteError::ServerError(tonutils_tl::response::Error {
+        code: LITE_SERVER_NOT_READY_CODE,
+        message: "cannot load block (-1,8000000000000000,98989255):<root>:<file_hash> : \
+                  block handle not in db (last known masterchain block: 98989254)"
+            .into(),
+    });
+    assert!(is_liteserver_not_ready(&not_ready));
+
+    let failed = LiteError::ServerError(tonutils_tl::response::Error {
+        code: 601,
+        message: "failure".into(),
+    });
+    assert!(!is_liteserver_not_ready(&failed));
+    assert!(!is_liteserver_not_ready(&LiteError::UnexpectedMessage));
 }
 
 #[tokio::test]
@@ -101,7 +139,7 @@ async fn live_run_get_method_smoke() {
         )
         .await
         .expect("run_get_method(seqno) must return a successful stack");
-    assert!(!stack.is_empty());
+    assert_ne!(stack, []);
 }
 
 #[tokio::test]
@@ -114,10 +152,30 @@ async fn live_list_latest_masterchain_transactions_batch() {
         .get_masterchain_info()
         .await
         .expect("getMasterchainInfo must return the latest masterchain block");
-    let response = client
-        .list_block_transactions_ext_decoded(info.last.clone(), 256, None, false, false)
-        .await
-        .expect("listBlockTransactionsExt must return the latest masterchain transactions");
+
+    // The advertised tip can race its archive write, so retry only the
+    // upstream `notready` (651) answer on the same block; every other error
+    // fails immediately with the liteserver's message.
+    let mut attempt = 1;
+    let response = loop {
+        match client
+            .list_block_transactions_ext_decoded(info.last.clone(), 256, None, false, false)
+            .await
+        {
+            Ok(decoded) => break decoded,
+            Err(error) if is_liteserver_not_ready(&error) && attempt < NOT_READY_ATTEMPTS => {
+                eprintln!(
+                    "liteserver has not stored the latest block yet \
+                     (attempt {attempt}/{NOT_READY_ATTEMPTS}): {error}"
+                );
+                attempt += 1;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Err(error) => panic!(
+                "listBlockTransactionsExt must return the latest masterchain transactions: {error}"
+            ),
+        }
+    };
 
     assert_eq!(response.raw.id, info.last);
     assert!(response.raw.req_count > 0);
