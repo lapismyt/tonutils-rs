@@ -35,6 +35,10 @@ impl SessionInner {
                     if state.peer_channel_key == Some(key.0) && !state.channels.is_empty() {
                         // Already negotiated with this peer channel key;
                         // re-negotiating would desynchronise both sides.
+                        log::debug!(
+                            "ADNL createChannel repeating the negotiated peer key ignored: remote_id={}",
+                            hex::encode(self.remote_id),
+                        );
                         continue;
                     }
                     self.install_channel(state, key.0, *date)?;
@@ -77,7 +81,7 @@ impl SessionInner {
                         continue;
                     }
                     let Some(pending_date) = state.pending_channel else {
-                        log::trace!(
+                        log::debug!(
                             "ADNL confirmChannel without a pending request ignored: remote_id={}",
                             hex::encode(self.remote_id),
                         );
@@ -96,6 +100,10 @@ impl SessionInner {
                     }
                     if state.peer_channel_key == Some(key.0) && !state.channels.is_empty() {
                         state.pending_channel = None;
+                        log::debug!(
+                            "ADNL confirmChannel repeating the negotiated peer key accepted: remote_id={}",
+                            hex::encode(self.remote_id),
+                        );
                         continue;
                     }
                     log::debug!(

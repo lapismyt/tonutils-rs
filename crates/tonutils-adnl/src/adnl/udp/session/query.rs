@@ -240,12 +240,14 @@ impl AdnlUdpSession {
                 nodes: vec![self.local_overlay_node(overlay)],
             },
         }));
+        let query_id_hex = query_id.to_hex();
         let outgoing = AdnlMessage::Query { query_id, query };
-        let (message, messages) = {
+        let (message, messages, channels, control) = {
             let mut state = self.inner.state.lock().await;
+            let channels = state.channels.len();
             match self.inner.create_channel_message(&mut state) {
-                Some(control) => (None, Some(vec![control, outgoing])),
-                None => (Some(outgoing), None),
+                Some(control) => (None, Some(vec![control, outgoing]), channels, true),
+                None => (Some(outgoing), None, channels, false),
             }
         };
         let contents = PacketContents {
@@ -266,10 +268,30 @@ impl AdnlUdpSession {
             signature: None,
             rand2: vec![0; 7],
         };
-        match dest {
+        let destination = dest.unwrap_or_else(|| self.remote_addr());
+        let sent = match dest {
             Some(dest) => self.inner.send_contents_to(contents, dest).await,
             None => self.send_contents(contents).await,
-        }
+        };
+        // Answer attribution for live runs: the receive side logs every
+        // inbound answer with its query id, so recording the send-side
+        // id, peer, destination, and channel state here is what lets a
+        // captured log join a query to its answer instead of guessing.
+        log::debug!(
+            "ADNL overlay getRandomPeers sent: peer={:?} query_id={} dest={} origin={} channels={} control={} ok={}",
+            self.inner.remote_id,
+            query_id_hex,
+            destination,
+            if dest.is_some() {
+                "explicit"
+            } else {
+                "session"
+            },
+            channels,
+            control,
+            sent.is_ok(),
+        );
+        sent
     }
 
     /// Returns this session's signed `overlay.node` record for `overlay`.

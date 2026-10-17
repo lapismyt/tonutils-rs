@@ -602,6 +602,53 @@ construction is unchanged, and the offline regression test
 `tonutils_adnl::adnl::udp::tests::probe_sessions_keep_the_adopted_address`
 pins the contract.
 
+Run 39027490505 (2026-10-17, `7fcdbaf`, 600 s budget): red - 2 of 8 samples
+delivered (the best at `time_to_message=24.9s`), and both delivered samples
+failed the post-delivery non-seed roundtrip phase with 0 of 18 probes
+(panic at `live.rs:622`).  Every probe failed in the inner wait
+(`overlay getRandomPeers timed out after 10s`): the query was sent and no
+answer arrived within the window.  The captured sample closes every
+whole-path theory:
+
+- The probe destination equals the keepalive destination.  Each of the 18
+  probed targets has exactly one adopted address across every
+  `overlay UDP session established` line of the run (the duplicate connects
+  of four targets repeat the same address), it is the address the registry
+  holds and the phase printed, and the live test's `native_udp(..., None)`
+  keeps the factory on plain `connect_for_overlay`, so no silent
+  `with_channel` adoption exists.  Session, channel state, and packet shape
+  of a probe and a keepalive are identical.
+- The recurring `createChannel` clusters (`channel requested` every
+  ~10-20 s) are the six configured seeds, not overlay members: each cluster
+  repeats one per-seed channel key and never confirms.  The seeds are the
+  growth fallback's DHT nodes (`query_overlay_seed`), so the loops are
+  retry noise and non-causal for the phase.
+- No transport or session stall spans the phase.  Inbound-answer diags, the
+  address-view diags, and `overlay getRandomPeers answer` lines keep their
+  steady per-bucket density through every wave window (answer diags 19-49
+  per 250 lines across lines 7500-9500) while members answer hundreds of
+  queries, and the sample carries exactly one inbound custom datagram, so
+  no ingest or demultiplexer pressure exists either.
+- The probe rides the manager's warm session: `session_for_probe` upgrades
+  the same `SessionInner` (`session_for_inner` with `adopt = false`), no
+  fresh `channel requested` line appears for any probed target at wave
+  time, and registration precedes the send (`register_pending` before
+  `send_overlay_get_random_peers_with_id`), so neither a second session nor
+  a registration race can explain the timeout.
+
+The same members answer fire-and-forget `overlay.getRandomPeers` queries
+through the same windows while every probed query id goes unanswered, and a
+captured log cannot yet say whether the members answer the probed ids at
+all: the receive side logs every answer with its query id, but the send
+side never logged the ids it sends.  `send_overlay_get_random_peers_with_id`
+now logs peer, query id, effective destination, origin (`explicit` probe
+versus `session` address), channel count, and whether a `createChannel`
+rode along, and the three previously silent channel-control branches
+(repeated `createChannel`, `confirmChannel` without a pending request or
+with the negotiated key) log at debug, so the next classified gate's
+query-id join can attribute each probe answer (answered, answered late,
+never answered) against the keepalive control stream.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established
