@@ -571,13 +571,23 @@ async fn configured_seed_delivers_valid_external_message() {
                     return 0;
                 }
             };
-            // A member with a live session is queried on it, so its
-            // recorded endpoint is exercised by the same traffic the
-            // manager already runs on that session.
-            let session = transport.session_for_peer(member_key, member_addr);
+            // The probe dials the recorded endpoint without adopting
+            // it: a live session keeps the address its manager
+            // established, and the query carries the endpoint under
+            // test itself.  Adopting it here made one wave of six
+            // concurrent probes repoint the shared session at
+            // whichever endpoint adopted last, after which the
+            // manager's keepalives and every later probe went to
+            // that - often dead - port while the member listened on
+            // the recorded one.
+            let session = transport.session_for_probe(member_key, member_addr);
             let nodes = match tokio::time::timeout(
                 Duration::from_secs(15),
-                session.overlay_get_random_peers(Int256(overlay.as_bytes()), Duration::from_secs(10)),
+                session.overlay_get_random_peers_to(
+                    member_addr,
+                    Int256(overlay.as_bytes()),
+                    Duration::from_secs(10),
+                ),
             )
             .await
             {

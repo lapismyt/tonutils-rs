@@ -149,8 +149,11 @@ pub(super) async fn query_overlay_random_peers(
     };
     let per_query = timeout.min(Duration::from_secs(5));
     log::debug!("query_overlay_random_peers: sending overlay.getRandomPeers to {address}");
+    // The candidate endpoint rides on the query: an existing session
+    // keeps the address its manager established, so probing a stale
+    // port cannot strand the keepalives of a live member.
     let nodes = match session
-        .overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()), per_query)
+        .overlay_get_random_peers_to(address, tonutils_tl::Int256(overlay.as_bytes()), per_query)
         .await
     {
         Ok(nodes) => nodes,

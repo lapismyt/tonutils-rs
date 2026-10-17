@@ -703,3 +703,49 @@ async fn raw_exchange_returns_reply_and_recovers_from_timeout() {
         .await;
     assert!(matches!(again, Err(AdnlError::Timeout { .. })));
 }
+
+/// One peer advertises several endpoints; a probe of one of them must
+/// not repoint the session at it.
+#[tokio::test]
+async fn probe_sessions_keep_the_adopted_address() {
+    use crate::AdnlUdpTransport;
+
+    let transport = AdnlUdpTransport::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        KeyPair::generate(&mut rand::rngs::OsRng),
+    )
+    .await
+    .expect("transport must bind");
+    let peer = KeyPair::generate(&mut rand::rngs::OsRng);
+    let established: std::net::SocketAddr = "127.0.0.1:41001".parse().unwrap();
+    let candidate: std::net::SocketAddr = "127.0.0.1:41002".parse().unwrap();
+
+    let session = transport.session_for_peer(peer.public_key, established);
+    assert_eq!(session.remote_addr(), established);
+
+    // A dial-only caller gets the same session and must not repoint it:
+    // a concurrent sweep over candidate endpoints used to strand the
+    // manager's keepalives on whichever candidate adopted last.
+    let probe = transport.session_for_probe(peer.public_key, candidate);
+    assert_eq!(
+        probe.remote_addr(),
+        established,
+        "a probe must not adopt a candidate endpoint"
+    );
+
+    // An addressed send keeps the adopted address too: the destination
+    // rides on that packet only.
+    probe
+        .send_overlay_get_random_peers_to(candidate, Int256([7; 32]))
+        .await
+        .expect("an addressed send must reach the socket layer");
+    assert_eq!(
+        session.remote_addr(),
+        established,
+        "an addressed send must not adopt its destination"
+    );
+
+    // The deliberate adopt path keeps working for the manager.
+    transport.session_for_peer(peer.public_key, candidate);
+    assert_eq!(session.remote_addr(), candidate);
+}

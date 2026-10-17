@@ -17,8 +17,17 @@ use tonutils_tl::tl::network::DhtValue;
 /// node's single source address instead of a second port the
 /// peer would keep in its connection table only until the query
 /// returns.  The session is per peer id: a peer that already
-/// holds a live session is queried on it, and a peer that does
-/// not get a fresh one that ends with the query.
+/// holds a live session is queried on it at the address the
+/// manager established, and a peer that does not get a fresh one
+/// bound to `remote_addr` that ends with the query.
+///
+/// The lookup never adopts `remote_addr` on an established
+/// session.  The endpoints one member advertises are candidates,
+/// and a sweep over them used to repoint the session's single
+/// send address at whichever candidate adopted last - the
+/// manager's keepalives included.  Probes that dial one specific
+/// endpoint carry it on the query instead
+/// (`AdnlUdpSession::overlay_get_random_peers_to`).
 #[allow(clippy::large_types_passed_by_value)]
 pub(crate) async fn shared_session(
     local_addr: std::net::SocketAddr,
@@ -29,7 +38,7 @@ pub(crate) async fn shared_session(
     let transport = AdnlUdpTransport::for_node(local_addr, local_keypair)
         .await
         .map_err(|error| error.to_string())?;
-    Ok(transport.session_for_peer(remote, remote_addr))
+    Ok(transport.session_for_probe(remote, remote_addr))
 }
 
 /// How many candidate `address` records one seed resolves concurrently.

@@ -573,6 +573,35 @@ why the rate moves per draw (30 pingers on one gate, 17 on the next), so
 the ~15 %/sample window estimate stays an upper bound until more draws
 accumulate.
 
+Run 39011060928 (2026-10-17, `aec38f6`, 600 s budget): red - 2 of 8 samples
+delivered (the best at `time_to_message=360.2s`), and the delivered sample
+failed the post-delivery non-seed UDP roundtrip phase with 0 of 18 probes
+(panic at `live.rs:612`).  The phase failure was neither endpoint staleness
+nor member-side: the identity fix from 39007384341 dialed through `for_node` +
+`session_for_peer`, and `session_for_peer` adopts the requested address on the
+shared session unconditionally.  A growth round or probe wave fires all of a
+member's recorded endpoints concurrently, so whichever candidate adopted last
+- a dead recorded port, five of six in the captured member's list - became
+the session's single send address; the manager's keepalives, growth queries,
+and every later probe were then addressed to it while the member listened on
+its live port, and only queries sent near a re-adopt of the live port were
+answered.  The captured member's shape fits exactly: 51 answers spread over
+the run, none for a growth query that followed a dead-port adopt, and a lone
+exchange to the live port under the same manager-like keepalive stream
+answered in 73 ms.  A local replica of the sweep (six concurrent probes plus
+the keepalive stream) reproduced the black-hole deterministically: all six
+probes timed out and every subsequent keepalive went to the dead port for the
+rest of the run.  The fix separates dialing from ownership: a session's
+address changes only through a deliberate adopt (`session_for_peer`, used by
+the manager, bootstrap, and reconnect paths), dial-only callers get the same
+session through `session_for_probe` without repointing it, and probes that
+dial one endpoint carry it on the query itself
+(`overlay_get_random_peers_to`, `send_overlay_get_random_peers_to`).  The
+growth path and the phase now use both, the phase's `for_node` identity
+construction is unchanged, and the offline regression test
+`tonutils_adnl::adnl::udp::tests::probe_sessions_keep_the_adopted_address`
+pins the contract.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established
@@ -602,6 +631,20 @@ observed source address every peer learns from this node's own datagrams
 (`AdnlPeerPairImpl::receive_packet_checked` accepts the datagram source when
 the address list is empty); publishing a per-destination mapping would only
 advertise an address that a peer other than the observer cannot deliver to.
+
+A peer id may advertise several endpoints, but the transport keeps one
+session per peer id with one send address and one address list version.  That
+address is owned by the caller that dials for steady-state traffic
+(`AdnlUdpTransport::session_for_peer`: the manager at add time, bootstrap and
+reconnect paths); dial-only callers (`session_for_probe`) never repoint an
+established session and carry the endpoint they probe on the query itself
+(`AdnlUdpSession::overlay_get_random_peers_to`,
+`send_overlay_get_random_peers_to`).  The distinction is load-bearing: a
+growth round or probe wave fires all recorded endpoints of one member
+concurrently, and an adopting sweep leaves the session sending at whichever
+candidate adopted last - usually a dead recorded port - so the manager's
+keepalives and every later query are black-holed while the member answers on
+its live port (CI run 39011060928).
 
 ## Reference and unfinished work
 

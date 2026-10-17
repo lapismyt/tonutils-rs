@@ -12,23 +12,47 @@ impl SessionInner {
     /// numbers.
     pub(super) async fn send_contents(&self, contents: PacketContents) -> Result<usize, AdnlError> {
         let mut state = self.state.lock().await;
-        self.send_locked(&mut state, contents).await
+        self.send_locked(&mut state, contents, None).await
+    }
+
+    /// Encodes and sends one packet to `dest` instead of the session's
+    /// adopted address.
+    ///
+    /// A probe dials candidate endpoints of a peer whose steady-state
+    /// traffic must keep the established address: the peer keys its
+    /// answers to the source address it saw last, so adopting a
+    /// candidate would repoint the manager's keepalives and broadcasts
+    /// at an endpoint that may be stale, and one concurrent sweep over
+    /// the recorded endpoints could leave the whole session pinned to a
+    /// dead one.  Everything else matches [`Self::send_contents`]; the
+    /// adopted address is left untouched.
+    pub(super) async fn send_contents_to(
+        &self,
+        contents: PacketContents,
+        dest: SocketAddr,
+    ) -> Result<usize, AdnlError> {
+        let mut state = self.state.lock().await;
+        self.send_locked(&mut state, contents, Some(dest)).await
     }
 
     /// Encodes and sends a packet with the session state lock held.
+    ///
+    /// `dest` carries this packet to an explicit address; `None` sends
+    /// to the session's adopted address.
     pub(super) async fn send_locked(
         &self,
         state: &mut SessionState,
         contents: PacketContents,
+        dest: Option<SocketAddr>,
     ) -> Result<usize, AdnlError> {
         self.note_sent_queries(state, &contents);
         if state.channels.is_empty() {
-            return self.send_direct_locked(state, contents).await;
+            return self.send_direct_locked(state, contents, dest).await;
         }
         let contents = self.seal_seqno(state, contents);
+        let dest = self.destination(dest);
         log::trace!(
-            "send_channel: to={} seqno={:?} confirm={:?}",
-            self.remote_addr.lock().unwrap(),
+            "send_channel: to={dest} seqno={:?} confirm={:?}",
             contents.seqno,
             contents.confirm_seqno,
         );
@@ -37,20 +61,25 @@ impl SessionInner {
             .first_mut()
             .expect("channel presence was checked above")
             .encode(contents)?;
-        self.send_packet(&packet).await
+        self.send_packet(&packet, dest).await
     }
 
-    /// Sends a raw packet to the peer's current source address.
-    /// Sends a raw packet to the peer's current source address.
-    async fn send_packet(&self, packet: &[u8]) -> Result<usize, AdnlError> {
-        let addr = *self.remote_addr.lock().unwrap();
-        self.source.send_to(packet, addr).await
+    /// Resolves the address one packet is sent to: the explicit probe
+    /// destination when given, the session's adopted address otherwise.
+    fn destination(&self, dest: Option<SocketAddr>) -> SocketAddr {
+        dest.unwrap_or_else(|| *self.remote_addr.lock().unwrap())
+    }
+
+    /// Sends a raw packet to `dest`.
+    async fn send_packet(&self, packet: &[u8], dest: SocketAddr) -> Result<usize, AdnlError> {
+        self.source.send_to(packet, dest).await
     }
 
     pub(super) async fn send_direct_locked(
         &self,
         state: &mut SessionState,
         mut contents: PacketContents,
+        dest: Option<SocketAddr>,
     ) -> Result<usize, AdnlError> {
         contents.from = Some(TlPublicKey::Ed25519 {
             key: tonutils_tl::Int256(self.local.public_key.to_bytes()),
@@ -62,9 +91,9 @@ impl SessionInner {
             .dst_reinit_date
             .get_or_insert(peer_reinit_date(&self.remote_id));
         self.fill_address(state, &mut contents);
+        let dest = self.destination(dest);
         log::trace!(
-            "send_direct: to={} seqno={:?} confirm={:?} reinit={:?} dst_reinit={:?}",
-            self.remote_addr.lock().unwrap(),
+            "send_direct: to={dest} seqno={:?} confirm={:?} reinit={:?} dst_reinit={:?}",
             contents.seqno,
             contents.confirm_seqno,
             contents.reinit_date,
@@ -81,7 +110,7 @@ impl SessionInner {
         if packet.len() > MAX_UDP_PACKET_SIZE {
             return Err(AdnlError::TooLongPacket);
         }
-        self.send_packet(&packet).await
+        self.send_packet(&packet, dest).await
     }
 
     /// Assigns the peer pair's shared sequence numbers to an outgoing

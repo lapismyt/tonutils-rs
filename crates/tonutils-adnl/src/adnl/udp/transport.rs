@@ -223,17 +223,69 @@ impl AdnlUdpTransport {
     /// All callers that talk to one peer id get the same session, so
     /// the peer sees exactly one source address and one address list
     /// version for this node id.  A session whose peer moved to a new
-    /// address adopts the address on the next `session_for` call.
+    /// address adopts the address on the next `session_for` call; that
+    /// deliberate repoint belongs to the caller that owns the peer's
+    /// steady-state traffic.  Dial-only callers use
+    /// [`Self::session_for_probe`] instead, which never repoints.
     pub fn session_for(
         &self,
         remote_id: [u8; 32],
         remote_addr: SocketAddr,
         remote: PublicKey,
     ) -> super::AdnlUdpSession {
+        self.session_for_inner(remote_id, remote_addr, remote, true)
+    }
+
+    /// Returns the session for `remote`, deriving its ADNL id.
+    pub fn session_for_peer(
+        &self,
+        remote: PublicKey,
+        remote_addr: SocketAddr,
+    ) -> super::AdnlUdpSession {
+        let remote_id = AdnlAddress::from(&remote).to_bytes();
+        self.session_for(remote_id, remote_addr, remote)
+    }
+
+    /// Returns the peer's session without changing the address it
+    /// sends to.
+    ///
+    /// Lookups and probes dial many candidate endpoints of the same
+    /// peer, and a peer keys its answers to the source address it saw
+    /// last, so the session needs one stable, manager-chosen address:
+    /// adopting a candidate here would repoint the manager's keepalives
+    /// and broadcasts at an endpoint that may be stale, and one
+    /// concurrent sweep over the recorded endpoints could leave the
+    /// whole session pinned to a dead one.  Probes therefore carry
+    /// their own destination per query, see
+    /// [`AdnlUdpSession::overlay_get_random_peers_to`](super::AdnlUdpSession::overlay_get_random_peers_to).
+    /// A peer without a session yet gets one bound to `remote_addr`,
+    /// the only address known for it.
+    pub fn session_for_probe(
+        &self,
+        remote: PublicKey,
+        remote_addr: SocketAddr,
+    ) -> super::AdnlUdpSession {
+        let remote_id = AdnlAddress::from(&remote).to_bytes();
+        self.session_for_inner(remote_id, remote_addr, remote, false)
+    }
+
+    /// Shared implementation of [`Self::session_for`] and
+    /// [`Self::session_for_probe`]: upgrades the cached session for
+    /// `remote_id` or spawns one bound to `remote_addr`.  `adopt`
+    /// repoints an existing session at `remote_addr`.
+    fn session_for_inner(
+        &self,
+        remote_id: [u8; 32],
+        remote_addr: SocketAddr,
+        remote: PublicKey,
+        adopt: bool,
+    ) -> super::AdnlUdpSession {
         self.inner.start_demux();
         let mut sessions = self.inner.sessions.lock().unwrap();
         if let Some(session) = sessions.get(&remote_id).and_then(Weak::upgrade) {
-            session.adopt_address(remote_addr);
+            if adopt {
+                session.adopt_address(remote_addr);
+            }
             return session.into();
         }
         let session = Arc::new(SessionInner::shared(
@@ -246,16 +298,6 @@ impl AdnlUdpTransport {
         session.clone().spawn();
         sessions.insert(remote_id, Arc::downgrade(&session));
         session.into()
-    }
-
-    /// Returns the session for `remote`, deriving its ADNL id.
-    pub fn session_for_peer(
-        &self,
-        remote: PublicKey,
-        remote_addr: SocketAddr,
-    ) -> super::AdnlUdpSession {
-        let remote_id = AdnlAddress::from(&remote).to_bytes();
-        self.session_for(remote_id, remote_addr, remote)
     }
 }
 

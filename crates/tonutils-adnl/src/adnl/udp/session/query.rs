@@ -147,7 +147,39 @@ impl AdnlUdpSession {
         let query_id = Int256::random();
         let rx = self.inner.register_pending(query_id.clone());
         let sent = self
-            .send_overlay_get_random_peers_with_id(overlay, query_id.clone())
+            .send_overlay_get_random_peers_with_id(overlay, query_id.clone(), None)
+            .await;
+        if let Err(error) = sent {
+            self.inner.unregister_pending(&query_id.0);
+            return Err(error);
+        }
+        let answer = self
+            .inner
+            .await_pending_answer(query_id, timeout, "overlay getRandomPeers", rx)
+            .await?;
+        tl_proto::deserialize(&answer)
+            .map_err(|error| AdnlError::MalformedPacket(error.to_string()))
+    }
+
+    /// Queries `dest` for its random peers without adopting `dest` as
+    /// the session's address.
+    ///
+    /// The candidate endpoints of one peer are probed through that
+    /// peer's session rather than a second dial: the query carries the
+    /// same identity and, once a channel exists, the same channel the
+    /// steady-state traffic uses.  The destination rides on the query
+    /// itself, so a sweep over the recorded endpoints cannot repoint the
+    /// manager's keepalives at a stale one.
+    pub async fn overlay_get_random_peers_to(
+        &self,
+        dest: SocketAddr,
+        overlay: Int256,
+        timeout: Duration,
+    ) -> Result<OverlayNodesBoxed, AdnlError> {
+        let query_id = Int256::random();
+        let rx = self.inner.register_pending(query_id.clone());
+        let sent = self
+            .send_overlay_get_random_peers_with_id(overlay, query_id.clone(), Some(dest))
             .await;
         if let Err(error) = sent {
             self.inner.unregister_pending(&query_id.0);
@@ -174,7 +206,23 @@ impl AdnlUdpSession {
     /// a fire-and-forget send leaves the answer to be consumed by the
     /// session's regular receive path.
     pub async fn send_overlay_get_random_peers(&self, overlay: Int256) -> Result<usize, AdnlError> {
-        self.send_overlay_get_random_peers_with_id(overlay, Int256::random())
+        self.send_overlay_get_random_peers_with_id(overlay, Int256::random(), None)
+            .await
+    }
+
+    /// Sends `overlay.getRandomPeers` to `dest` without adopting it on
+    /// the session.
+    ///
+    /// Fire-and-forget like [`Self::send_overlay_get_random_peers`],
+    /// with the destination carried by this packet only; see
+    /// [`Self::overlay_get_random_peers_to`] for the answer-awaiting
+    /// form used by the growth path.
+    pub async fn send_overlay_get_random_peers_to(
+        &self,
+        dest: SocketAddr,
+        overlay: Int256,
+    ) -> Result<usize, AdnlError> {
+        self.send_overlay_get_random_peers_with_id(overlay, Int256::random(), Some(dest))
             .await
     }
 
@@ -182,6 +230,7 @@ impl AdnlUdpSession {
         &self,
         overlay: Int256,
         query_id: Int256,
+        dest: Option<SocketAddr>,
     ) -> Result<usize, AdnlError> {
         let mut query = tl_proto::serialize(OverlayQuery::Query {
             overlay: overlay.clone(),
@@ -199,7 +248,7 @@ impl AdnlUdpSession {
                 None => (Some(outgoing), None),
             }
         };
-        self.send_contents(PacketContents {
+        let contents = PacketContents {
             rand1: vec![0; 7],
             flags: (),
             from: None,
@@ -216,8 +265,11 @@ impl AdnlUdpSession {
             dst_reinit_date: None,
             signature: None,
             rand2: vec![0; 7],
-        })
-        .await
+        };
+        match dest {
+            Some(dest) => self.inner.send_contents_to(contents, dest).await,
+            None => self.send_contents(contents).await,
+        }
     }
 
     /// Returns this session's signed `overlay.node` record for `overlay`.

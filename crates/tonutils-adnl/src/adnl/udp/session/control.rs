@@ -64,6 +64,7 @@ impl SessionInner {
                             signature: None,
                             rand2: vec![0; 7],
                         },
+                        None,
                     )
                     .await?;
                 }
@@ -218,6 +219,7 @@ impl SessionInner {
                 signature: None,
                 rand2: vec![0; 7],
             },
+            None,
         )
         .await?;
         Ok(())
