@@ -493,6 +493,19 @@ healthy admission (`unique_pingers=4/6`, `pings_received=16/20`,
 `membership_listing_peers=2`: full nodes now resolve the published address,
 admit this node, and list it back in their own `getRandomPeers` answers.
 
+Run 38922689533 (2026-10-17, `f5f4d69`, 300 s budget): green again.  Sample 3
+delivered at `time_to_message=269.9s`; all eight samples resolved an
+endpoint-independent mapping (Cloudflare plus Google or miwifi reporting the
+same port per sample, 17408-17415).  The publish store round split four/four:
+samples 2/4/5/7 stored on 2-4 nodes and verified (`served_by_dht=true`), while
+samples 1/3/6/8 recorded six `findNode` failures and two enrichment
+exhaustions and ended at `stored on 0 node(s)` even after the retry.  The
+delivered sample 3 is one of the unpublished ones, so the window's delivery
+came from the direct-announce admission path, not from the stored value; the
+timed-out samples kept healthy admission (`unique_pingers=2-9`,
+`pings_received=7-34`, `membership_answers=1097-1378`).  Both post-fix gates
+delivered at `~270s` of the 300 s budget.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established
