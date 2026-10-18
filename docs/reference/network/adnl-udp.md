@@ -185,6 +185,20 @@ packet-level local reinit date: a greater one makes the receiver call
 ADNL channel without signalling us, after which our replay window rejects its
 restarted sequence numbers.
 
+`AdnlUdpTransport` serves one shared socket per node id and routes every
+datagram to the session that owns its 32-byte channel id or source address,
+all from a single demultiplexing task.  The session hand-off is deliberately
+non-blocking: each session has a bounded queue (64 datagrams into its
+receive loop) and a bounded inbox (64 datagrams to its consumer), and a
+datagram that arrives for a session whose queue is full is dropped like any
+other UDP loss.  Waiting for room would stall the one receive task and add
+head-of-line delay to every other session on the socket - the CI gate runs
+show exactly that shape as a uniform ~27 s inbound lag for all peers by late
+run (see `overlay.md`) - while a drop keeps both the backlog and the loss
+confined to the slow session.  The regression test
+`tonutils_adnl::adnl::udp::tests::saturated_session_does_not_stall_the_shared_demux`
+pins the property.
+
 ## Missing Work
 
 - Add packet fixtures from official nodes.

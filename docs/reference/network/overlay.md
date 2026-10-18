@@ -649,6 +649,37 @@ with the negotiated key) log at debug, so the next classified gate's
 query-id join can attribute each probe answer (answered, answered late,
 never answered) against the keepalive control stream.
 
+Run 39032749928 (2026-10-17, `5b14291`, 600 s budget): red, and the send-side
+qid log answered the previous record's open question - the members do answer
+the probed ids, only ~27 s late.  The sample captured every wave-1 probe sent
+(sends 25576-25581) and answered at 27411-27445, ~1833-1864 log lines later;
+all 25 answered probe pairs land in that band, and the join over the whole
+sample (all 2091 answer/send matches among 3766 sends and 2752 answers) shows
+the send-to-answer delta growing from 6-32 lines (sub-second, sends around
+lines 4500-4650) to a ~1800-2100-line plateau by late run.  The lag is global
+inbound, not per-member: `recv_v=Some` members and `recv_v=None` members
+answer equally late (the Some-echo target carries 67 `address view mismatch`
+diags and still answers ~1833 lines late), every peer's delta grows in
+lockstep, and member-side theories - nochannel rate limiting, address-list
+loss, channel churn - are non-causal for the delay.
+
+The mechanism was in this transport.  `AdnlUdpTransport::run` delivered each
+datagram with `route.queue.send(packet).await` into a bounded (64) session
+queue; one session whose consumer stops draining fills its queue and inbox
+(64 + 64 datagrams), and the awaited send then wedges the single shared
+receive task: every other session's datagrams stay in the kernel socket
+buffer and arrive only as fast as the stalled session's consumer drains.
+That matches the observed shape - sends prompt (each send logs after its
+socket write returns), answers late by an amount that grows with the run's
+session and subscriber count and plateaus when the socket buffer is full,
+uniformly across all peers, and a handful of local sessions never
+reproducing it.  The demux now `try_send`s and drops on a full queue, so the
+backlog and the loss stay confined to the slow session like any other UDP
+loss; the regression test
+`tonutils_adnl::adnl::udp::tests::saturated_session_does_not_stall_the_shared_demux`
+reproduces the stall on the old code (a sibling session starved past 5 s
+while an undrained session's queue is full) and passes with the fix.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established

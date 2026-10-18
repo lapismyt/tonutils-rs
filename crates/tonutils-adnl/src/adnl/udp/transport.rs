@@ -386,6 +386,13 @@ impl TransportInner {
     /// address to the session for that peer.  Everything else is
     /// dropped: it is either addressed to another node or from a peer
     /// this node has no session for.
+    ///
+    /// Enqueueing never waits.  Session queues are bounded, and a
+    /// datagram for a session whose consumer is behind is dropped:
+    /// waiting here would stall this single receive task and add
+    /// head-of-line delay to every other session on the shared
+    /// socket, while a drop costs only that session's datagram -
+    /// the loss mode UDP already has.
     async fn run(self: Arc<Self>) {
         let mut idle = self.idle.subscribe();
         let mut packet = vec![0u8; MAX_UDP_PACKET_SIZE + 1];
@@ -427,15 +434,27 @@ impl TransportInner {
                         // `raw_exchange` clears it once it has been observed.
                         log::trace!("ADNL transport captured raw reply from {peer}");
                     }
-                    if let Some(route) = route
-                        && route.queue.send(packet[..size].to_vec()).await.is_err()
-                    {
-                        // The session is gone; its Drop impl already
-                        // removed its routes, so this entry is stale.
-                        log::trace!(
-                            "ADNL transport route to session {} closed",
-                            route.session
-                        );
+                    if let Some(route) = route {
+                        match route.queue.try_send(packet[..size].to_vec()) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(_)) => {
+                                // The session's consumer is behind.  Blocking
+                                // this task until it drains would delay every
+                                // other session on the socket.
+                                log::debug!(
+                                    "ADNL transport dropping datagram: session {} queue full",
+                                    route.session
+                                );
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => {
+                                // The session is gone; its Drop impl already
+                                // removed its routes, so this entry is stale.
+                                log::trace!(
+                                    "ADNL transport route to session {} closed",
+                                    route.session
+                                );
+                            }
+                        }
                     }
                 }
                 _ = idle.changed() => {}
