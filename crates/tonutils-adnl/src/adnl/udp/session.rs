@@ -52,6 +52,15 @@ mod send;
 /// receive task applies backpressure.
 const SESSION_QUEUE: usize = 64;
 
+/// Queries whose waiter is gone keep their registration instant for
+/// this many most-recent entries, so an answer that arrives after the
+/// caller gave up can still be logged with its real age.
+const MAX_RECENT_QUERIES: usize = 4096;
+
+/// One in-flight query: the instant its waiter was registered and the
+/// channel that delivers the answer to that waiter.
+type PendingQuery = (std::time::Instant, tokio::sync::oneshot::Sender<Vec<u8>>);
+
 /// One authenticated ADNL-over-UDP peer.
 ///
 /// Cloning shares the same underlying session: all clones observe the
@@ -94,8 +103,15 @@ pub(crate) struct SessionInner {
     inbox_tx: mpsc::Sender<PacketContents>,
     /// In-flight queries by query id, so an answer is routed to the
     /// call that asked for it even when several callers share the
-    /// session.
-    pending: Mutex<HashMap<[u8; 32], tokio::sync::oneshot::Sender<Vec<u8>>>>,
+    /// session.  Each entry keeps the instant the waiter was
+    /// registered so a delivered answer can log its real age.
+    pending: Mutex<HashMap<[u8; 32], PendingQuery>>,
+    /// Queries whose waiter is gone (the caller timed out, or the send
+    /// failed), by query id with their registration instants, newest
+    /// last and bounded to [`MAX_RECENT_QUERIES`].  An answer for one
+    /// of them arrives after the caller stopped waiting, so the age
+    /// diagnostic picks it up from here.
+    recent: Mutex<VecDeque<([u8; 32], std::time::Instant)>>,
 }
 
 /// Where a session's datagrams travel.
@@ -122,7 +138,11 @@ impl Source {
     async fn send_to(&self, packet: &[u8], addr: SocketAddr) -> Result<usize, AdnlError> {
         match self {
             Source::Solo(socket) => Ok(socket.send(packet).await?),
-            Source::Shared(transport) => Ok(transport.socket.send_to(packet, addr).await?),
+            Source::Shared(transport) => {
+                let sent = transport.socket.send_to(packet, addr).await?;
+                transport.sent_datagrams.fetch_add(1, Ordering::Relaxed);
+                Ok(sent)
+            }
         }
     }
 
@@ -517,6 +537,7 @@ impl SessionInner {
             inbox: tokio::sync::Mutex::new(inbox),
             inbox_tx,
             pending: Mutex::new(HashMap::new()),
+            recent: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -548,6 +569,7 @@ impl SessionInner {
             inbox: tokio::sync::Mutex::new(inbox),
             inbox_tx,
             pending: Mutex::new(HashMap::new()),
+            recent: Mutex::new(VecDeque::new()),
         }
     }
 

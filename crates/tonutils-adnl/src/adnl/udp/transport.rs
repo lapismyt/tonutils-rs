@@ -22,6 +22,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -33,6 +34,9 @@ use crate::{AdnlAddress, AdnlError};
 
 use super::MAX_UDP_PACKET_SIZE;
 use super::session::SessionInner;
+
+/// How often the demultiplexer logs its receive-side counters.
+const DEMUX_HEARTBEAT: Duration = Duration::from_secs(10);
 
 /// Shared ADNL UDP endpoint for one local node id.
 ///
@@ -55,6 +59,9 @@ pub(super) struct TransportInner {
     pub(super) routes: Mutex<Routes>,
     /// Demultiplexer lifecycle, serialized against `session_for`.
     demux: Mutex<DemuxState>,
+    /// Datagrams this socket sent since the transport was created,
+    /// for the receive heartbeat's send-rate column.
+    pub(super) sent_datagrams: AtomicU64,
     /// One in-flight raw (non-ADNL) exchange, if any.
     raw: Mutex<Option<RawExchange>>,
     /// Set when the last session of this transport is dropped, so
@@ -113,6 +120,7 @@ impl AdnlUdpTransport {
             sessions: Mutex::new(HashMap::new()),
             routes: Mutex::new(Routes::default()),
             demux: Mutex::new(DemuxState::default()),
+            sent_datagrams: AtomicU64::new(0),
             raw: Mutex::new(None),
             idle,
         });
@@ -393,9 +401,25 @@ impl TransportInner {
     /// head-of-line delay to every other session on the shared
     /// socket, while a drop costs only that session's datagram -
     /// the loss mode UDP already has.
+    ///
+    /// Every [`DEMUX_HEARTBEAT`] the task logs what it read, sent,
+    /// dropped, and failed to route in the interval, how long the
+    /// interval really was in wall-clock terms, and - on Linux - how
+    /// many bytes the kernel still holds unread for the socket and how
+    /// many datagrams it dropped for overflow.  Together with the
+    /// per-answer age log in the session receive path, that separates
+    /// "this process read the answer late" from "the answer arrived
+    /// late", which line order in a log alone cannot.
     async fn run(self: Arc<Self>) {
         let mut idle = self.idle.subscribe();
         let mut packet = vec![0u8; MAX_UDP_PACKET_SIZE + 1];
+        let mut heartbeat = tokio::time::Instant::now() + DEMUX_HEARTBEAT;
+        let mut last_beat = std::time::Instant::now();
+        let mut last_sent = self.sent_datagrams.load(Ordering::Relaxed);
+        let mut datagrams: u64 = 0;
+        let mut dropped: u64 = 0;
+        let mut closed: u64 = 0;
+        let mut unrouted: u64 = 0;
         loop {
             if self.drain_if_idle() {
                 return;
@@ -406,6 +430,7 @@ impl TransportInner {
                         self.demux.lock().unwrap().running = false;
                         return;
                     };
+                    datagrams += 1;
                     if size > MAX_UDP_PACKET_SIZE {
                         continue;
                     }
@@ -424,11 +449,13 @@ impl TransportInner {
                     // server address never routes to a session, so a packet
                     // the demultiplexer would otherwise drop is handed to the
                     // waiter that sent for it.
+                    let mut captured = false;
                     if route.is_none()
                         && let Some(exchange) = self.raw.lock().unwrap().as_ref()
                         && peer.ip() == exchange.from_ip
                         && exchange.tx.try_send(packet[..size].to_vec()).is_ok()
                     {
+                        captured = true;
                         // The waiter returns after `try_send` succeeds, so an
                         // empty slot cannot fail.  The hook stays in place and
                         // `raw_exchange` clears it once it has been observed.
@@ -438,6 +465,7 @@ impl TransportInner {
                         match route.queue.try_send(packet[..size].to_vec()) {
                             Ok(()) => {}
                             Err(mpsc::error::TrySendError::Full(_)) => {
+                                dropped += 1;
                                 // The session's consumer is behind.  Blocking
                                 // this task until it drains would delay every
                                 // other session on the socket.
@@ -447,6 +475,7 @@ impl TransportInner {
                                 );
                             }
                             Err(mpsc::error::TrySendError::Closed(_)) => {
+                                closed += 1;
                                 // The session is gone; its Drop impl already
                                 // removed its routes, so this entry is stale.
                                 log::trace!(
@@ -455,10 +484,83 @@ impl TransportInner {
                                 );
                             }
                         }
+                    } else if !captured {
+                        unrouted += 1;
                     }
                 }
                 _ = idle.changed() => {}
+                () = tokio::time::sleep_until(heartbeat) => {
+                    let sent = self.sent_datagrams.load(Ordering::Relaxed);
+                    log::debug!(
+                        "ADNL transport rx heartbeat: datagrams={datagrams} sent={} dropped={dropped} closed={closed} unrouted={unrouted} dt_ms={} {}",
+                        sent - last_sent,
+                        last_beat.elapsed().as_millis(),
+                        match self.socket.local_addr().ok().and_then(kernel_socket_stats) {
+                            Some((queued, kernel_drops)) => {
+                                format!("queue_bytes={queued} kernel_drops={kernel_drops}")
+                            }
+                            None => "queue_bytes=- kernel_drops=-".to_string(),
+                        },
+                    );
+                    last_sent = sent;
+                    last_beat = std::time::Instant::now();
+                    heartbeat = tokio::time::Instant::now() + DEMUX_HEARTBEAT;
+                    datagrams = 0;
+                    dropped = 0;
+                    closed = 0;
+                    unrouted = 0;
+                }
             }
         }
     }
+}
+
+/// The kernel's view of one UDP socket: bytes still queued unread in
+/// its receive buffer, and datagrams it dropped for lack of room.
+///
+/// Read from `/proc/net/udp` on Linux and reported as `None` on other
+/// platforms and for IPv6 sockets.  The demultiplexer's heartbeat uses
+/// it to tell datagrams this process sat on from datagrams that
+/// arrived late.  A kernel that does not print the trailing drop
+/// column is reported as zero drops.
+#[cfg(target_os = "linux")]
+fn kernel_socket_stats(local: SocketAddr) -> Option<(u64, u64)> {
+    let SocketAddr::V4(v4) = local else {
+        return None;
+    };
+    let ip = v4.ip().octets();
+    let needle = format!(
+        "{:02X}{:02X}{:02X}{:02X}:{:04X}",
+        ip[3],
+        ip[2],
+        ip[1],
+        ip[0],
+        v4.port()
+    );
+    let table = std::fs::read_to_string("/proc/net/udp").ok()?;
+    for line in table.lines().skip(1) {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 6 || !fields[1].eq_ignore_ascii_case(&needle) {
+            continue;
+        }
+        // Field 4 is `tx_queue:rx_queue`, both hex, on modern kernels;
+        // older layouts print `tx_queue` and `rx_queue` as two
+        // whitespace-separated fields.
+        let queued = if fields[4].contains(':') {
+            u64::from_str_radix(fields[4].split(':').nth(1)?, 16).ok()?
+        } else {
+            u64::from_str_radix(fields.get(5)?, 16).ok()?
+        };
+        let drops = fields
+            .get(12)
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(0);
+        return Some((queued, drops));
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn kernel_socket_stats(_local: SocketAddr) -> Option<(u64, u64)> {
+    None
 }

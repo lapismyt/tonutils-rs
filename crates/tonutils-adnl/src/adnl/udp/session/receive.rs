@@ -126,9 +126,18 @@ impl SessionInner {
     }
 
     /// Routes answers of in-flight queries to the calls waiting for them.
+    ///
+    /// Every delivered answer logs its wall-clock age.  Registration
+    /// happens just before the query goes on the wire, so the age is
+    /// what the caller would have measured end to end.  An answer whose
+    /// waiter is already gone (the caller timed out, or the send
+    /// failed) logs the same age from the retained registration
+    /// instead - the only way to see that a peer answered, just too
+    /// late.
     fn deliver_answers(&self, contents: &PacketContents) {
         let mut pending = self.pending.lock().unwrap();
-        if pending.is_empty() {
+        let recent = self.recent.lock().unwrap();
+        if pending.is_empty() && recent.is_empty() {
             return;
         }
         for message in contents
@@ -136,10 +145,25 @@ impl SessionInner {
             .iter()
             .chain(contents.messages.iter().flatten())
         {
-            if let AdnlMessage::Answer { query_id, answer } = message
-                && let Some(waiter) = pending.remove(&query_id.0)
-            {
-                let _ = waiter.send(answer.clone());
+            if let AdnlMessage::Answer { query_id, answer } = message {
+                if let Some((registered, waiter)) = pending.remove(&query_id.0) {
+                    log::debug!(
+                        "ADNL answer age: peer={:?} query_id={} age_ms={}",
+                        self.remote_id,
+                        query_id.to_hex(),
+                        registered.elapsed().as_millis(),
+                    );
+                    let _ = waiter.send(answer.clone());
+                } else if let Some((_, registered)) =
+                    recent.iter().find(|(id, _)| id == &query_id.0)
+                {
+                    log::debug!(
+                        "ADNL late answer: peer={:?} query_id={} age_ms={} waiter gone",
+                        self.remote_id,
+                        query_id.to_hex(),
+                        registered.elapsed().as_millis(),
+                    );
+                }
             }
         }
     }
@@ -148,18 +172,40 @@ impl SessionInner {
     ///
     /// Must be called before the query goes on the wire, otherwise an
     /// immediate answer can arrive before there is a waiter for it.
+    /// The registration instant is stored with the waiter so a
+    /// delivered answer can log its real age.
     pub(super) fn register_pending(
         &self,
         query_id: Int256,
     ) -> tokio::sync::oneshot::Receiver<Vec<u8>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        self.pending.lock().unwrap().insert(query_id.0, tx);
+        self.pending
+            .lock()
+            .unwrap()
+            .insert(query_id.0, (std::time::Instant::now(), tx));
         rx
     }
 
     /// Drops the registration of a query whose answer never came.
+    ///
+    /// The registration instant moves to the bounded late-answer
+    /// tracker instead of being lost, so an answer that arrives after
+    /// the caller gave up still logs how late it was.
     pub(super) fn unregister_pending(&self, query_id: &[u8; 32]) {
-        self.pending.lock().unwrap().remove(query_id);
+        let registered = self
+            .pending
+            .lock()
+            .unwrap()
+            .remove(query_id)
+            .map(|(registered, _)| registered);
+        let Some(registered) = registered else {
+            return;
+        };
+        let mut recent = self.recent.lock().unwrap();
+        if recent.len() >= MAX_RECENT_QUERIES {
+            recent.pop_front();
+        }
+        recent.push_back((*query_id, registered));
     }
 
     /// Reads, decodes, and returns the next packet of a solo

@@ -199,6 +199,16 @@ confined to the slow session.  The regression test
 `tonutils_adnl::adnl::udp::tests::saturated_session_does_not_stall_the_shared_demux`
 pins the property.
 
+The demultiplexer also logs `ADNL transport rx heartbeat` every ten
+seconds while it runs: datagrams read and sent, datagrams dropped or
+failed to route, the interval's real wall-clock length, and - on Linux -
+the bytes the kernel still holds unread for the socket and the datagrams
+it dropped for overflow (`/proc/net/udp`).  The session receive path logs
+`ADNL answer age` for every delivered answer and `ADNL late answer` for
+an answer that arrived after its caller gave up.  The heartbeat and the
+ages separate "this process read the answer late" from "the answer
+arrived late", which line order in a log alone cannot.
+
 ## Missing Work
 
 - Add packet fixtures from official nodes.

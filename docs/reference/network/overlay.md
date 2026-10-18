@@ -680,6 +680,30 @@ loss; the regression test
 reproduces the stall on the old code (a sibling session starved past 5 s
 while an undrained session's queue is full) and passes with the fix.
 
+Run 39105081595 (2026-10-18, `3cb0e8e`, 600 s budget): red - 7 of 8 samples
+timed out with no inbound broadcast, and the delivered sample (at
+`time_to_message=303.788s`) failed the phase 0 of 18 with every probe timing
+out after 10 s.  The demux fix did not engage: zero `queue full` drops in
+all eight samples.  The signature is not the previous run's stall.  The
+probed members answered other queries during the phase window - 117 answers
+landed after the phase start, all for sends from lines 9130 to 14791 - yet
+nothing asked inside the window came back inside it, and the whole-sample
+join (1290 answered pairs among 3043 sends) shows the send-to-answer gap
+growing from a ~283-line median for the first 2000 lines to a ~3300-line
+plateau, roughly double the previous run's plateau.  The growth is uniform:
+every peer with at least six matched answers has a higher second-half than
+first-half median delta (75 of 75, median drift +1846 lines), so no peer is
+fast while others are slow.  Channel state does not discriminate either:
+channel-backed sends (`channels=1 control=false`) delay like channel-less
+ones, and only 12 of 1073 channel-backed answers arrived in under 100 lines.
+Late answers for timed-out probes were invisible in this artifact - the
+waiter is already gone and `log_stray_answers` covers only queries the
+session never sent - so the follow-up commit adds answer-age logs (delivered
+and late), a demux heartbeat (datagrams/sent/dropped/unrouted per 10 s with
+real wall-clock dt), and Linux `/proc/net/udp` socket stats (queued bytes
+and kernel overflow drops) to separate "this process read the answer late"
+from "the answer arrived late".
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established
