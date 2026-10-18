@@ -704,6 +704,151 @@ async fn raw_exchange_returns_reply_and_recovers_from_timeout() {
     assert!(matches!(again, Err(AdnlError::Timeout { .. })));
 }
 
+/// Inbound routing must not wait for the runtime's IO driver.
+///
+/// Tokio pulls its IO driver only every `event_interval` (61) task polls
+/// while the local queue stays busy.  In the live gate, eight scanner
+/// samples share four vCPUs and chains of tasks wake each other for tens
+/// of seconds at a time; the demultiplexing task sat parked on socket
+/// readiness while probe answers filled the kernel receive queue, and
+/// every sample timed out with no inbound broadcast.  The socket is now
+/// drained by a dedicated thread whose channel send wakes the
+/// demultiplexer directly, and this test pins that routing latency does
+/// not scale with the driver window.
+#[tokio::test]
+async fn inbound_routing_survives_a_busy_runtime() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    use crate::AdnlUdpTransport;
+
+    /// CPU burned by one poll of each chained task.
+    const BURN: Duration = Duration::from_millis(50);
+    /// Task polls between two IO driver turns while the chain runs.
+    const WINDOW_POLLS: u64 = 61;
+    /// Task polls inbound routing may take, out of the window above.
+    /// A driver-gated receive path needs the window itself; the fix
+    /// needs a couple of polls.
+    const BUDGET_POLLS: u64 = 12;
+
+    fn burn() {
+        let until = std::time::Instant::now() + BURN;
+        while std::time::Instant::now() < until {
+            std::hint::black_box(0u64);
+        }
+    }
+
+    let transport = AdnlUdpTransport::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        KeyPair::generate(&mut rand::rngs::OsRng),
+    )
+    .await
+    .expect("transport must bind");
+
+    // Warm the send path up while the runtime is idle: tokio reports
+    // writability through the driver on first use, and the chain below
+    // would delay the request itself for a whole driver window.  The
+    // quiet peer never answers, so the exchange times out.
+    let quiet = std::net::UdpSocket::bind("127.0.0.1:0").expect("quiet peer");
+    let quiet_addr = quiet.local_addr().expect("quiet peer address");
+    let warmup = transport
+        .raw_exchange(quiet_addr, b"warmup", Duration::from_millis(50))
+        .await;
+    assert!(warmup.is_err(), "quiet peer must time the warm-up out");
+
+    // A plain socket on its own thread answers exactly one datagram.
+    let echo = std::net::UdpSocket::bind("127.0.0.1:0").expect("echo peer");
+    let echo_addr = echo.local_addr().expect("echo peer address");
+    let echo_thread = std::thread::spawn(move || {
+        let mut request = [0u8; 64];
+        let (size, from) = echo.recv_from(&mut request).expect("echo must receive");
+        echo.send_to(&request[..size], from)
+            .expect("echo must reply");
+    });
+
+    // Two chained tasks keep the runtime's local queue busy: each wakes
+    // the other and burns `BURN` of CPU before parking, so the runtime
+    // reaches its IO driver once every `WINDOW_POLLS` polls - the
+    // mechanism that starved the demultiplexer in the live gate.  One
+    // full A/B cycle is two polls; the chain records it so the
+    // assertion below scales with the machine's actual load instead of
+    // assuming a wall-clock poll time.
+    let stop = Arc::new(AtomicBool::new(false));
+    let poll_ms = Arc::new(AtomicU64::new(BURN.as_millis() as u64));
+    let (tx_a, mut rx_a) = tokio::sync::mpsc::channel::<()>(1);
+    let (tx_b, mut rx_b) = tokio::sync::mpsc::channel::<()>(1);
+    let busy_a = tokio::spawn({
+        let stop = stop.clone();
+        let poll_ms = poll_ms.clone();
+        async move {
+            let mut last = std::time::Instant::now();
+            while !stop.load(Ordering::Relaxed) {
+                let now = std::time::Instant::now();
+                let half_cycle = (now.duration_since(last).as_millis() as u64) / 2;
+                poll_ms.fetch_max(half_cycle.max(BURN.as_millis() as u64), Ordering::Relaxed);
+                last = now;
+                burn();
+                if tx_a.try_send(()).is_err() {
+                    break;
+                }
+                if rx_b.recv().await.is_none() {
+                    break;
+                }
+            }
+        }
+    });
+    let busy_b = tokio::spawn({
+        let stop = stop.clone();
+        async move {
+            while !stop.load(Ordering::Relaxed) {
+                if rx_a.recv().await.is_none() {
+                    break;
+                }
+                burn();
+                if tx_b.try_send(()).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+
+    // Measure inside a task: the `#[tokio::test]` future itself is
+    // polled only once per `WINDOW_POLLS` task polls, which would
+    // dominate an elapsed time measured from the test body.  The
+    // exchange task releases the chain as soon as it has its number.
+    let elapsed_ms = Arc::new(AtomicU64::new(0));
+    let exchange = tokio::spawn({
+        let transport = transport.clone();
+        let elapsed_ms = elapsed_ms.clone();
+        let stop = stop.clone();
+        async move {
+            let started = std::time::Instant::now();
+            let reply = transport
+                .raw_exchange(echo_addr, b"ping", Duration::from_secs(5))
+                .await;
+            elapsed_ms.store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
+            stop.store(true, Ordering::Relaxed);
+            reply
+        }
+    });
+    let reply = exchange.await.expect("exchange task must not panic");
+    stop.store(true, Ordering::Relaxed);
+    busy_a.abort();
+    busy_b.abort();
+    echo_thread.join().expect("echo thread must finish");
+
+    let reply = reply.expect("echo reply must arrive while the runtime is busy");
+    assert_eq!(reply, b"ping");
+    let elapsed_ms = elapsed_ms.load(Ordering::Relaxed);
+    let poll_ms = poll_ms.load(Ordering::Relaxed);
+    assert!(
+        elapsed_ms < BUDGET_POLLS * poll_ms,
+        "inbound routing took {elapsed_ms} ms while the IO driver window was about {} ms \
+         ({WINDOW_POLLS} polls of {poll_ms} ms)",
+        WINDOW_POLLS * poll_ms,
+    );
+}
+
 /// One peer advertises several endpoints; a probe of one of them must
 /// not repoint the session at it.
 #[tokio::test]

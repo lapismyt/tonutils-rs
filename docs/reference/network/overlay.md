@@ -704,6 +704,50 @@ real wall-clock dt), and Linux `/proc/net/udp` socket stats (queued bytes
 and kernel overflow drops) to separate "this process read the answer late"
 from "the answer arrived late".
 
+Run 39107770528 (2026-10-18, `0990ae3`, 600 s budget): red with the same
+no-inbound-broadcast arm in all eight samples (`membership_answers` of
+1668-2127 while `pushers`, `dht_pings`, and `custom_messages` stayed zero),
+and the heartbeat the previous record added puts the delay in this crate's
+receive path.  Beat gaps run 10-78 s of real wall clock (`dt_ms`, per-sample
+medians 19.6-35.8 s); an early beat still reads 174 datagrams, but every
+stalled beat delivers exactly 124-128 datagrams - the 128-unit cooperative
+budget of one task poll - or 253-256, two polls.  That caps inbound reads at
+about 6/s while the kernel receive queue sits pinned near its ~1 MB limit
+and overflows (`kernel_drops` up to 2694, 50-270 per beat), so answers reach
+the process with ages of p90 33 s / max 80 s (`ADNL late answer` counts
+376-518 per sample) and members that answered other queries all along never
+appear inside the phase window.
+
+The mechanism is the cadence of tokio's IO driver.  A current-thread runtime
+pulls the driver only every `event_interval` (61) task polls or when the
+local run queue empties, and while the queue stays busy - eight scanner
+samples on four shared vCPUs, with each poll carrying heavy work (debug
+logging with hex formatting, hashing, allocation) that CPU oversubscription
+stretches further - the window grows with the wall time of those 61 polls.
+Two local measurements pin the window at this transport: with eight samples
+pinned to two CPUs the demultiplexer's own scheduling gap covers the beat
+(`gap_max_ms` 24.8 s inside a 26.1 s beat, `iters` a few dozen over the
+datagram count), and a synthetic chain of two CPU-heavy tasks that keep the
+local queue busy (each wakes the other and burns 100 ms before parking) held
+a 10 ms timer for 6102 ms - exactly 61 polls of a 100 ms task.  Any task
+parked on socket readiness waits for that window, and the demultiplexer was
+one: probe answers sat in the kernel queue while the same peers answered
+other queries, which is why every per-peer theory failed to explain the
+uniform delay.
+
+`AdnlUdpTransport` now reads the shared socket on a dedicated OS thread that
+feeds a bounded (1024) channel; the channel send wakes the demultiplexer
+through an ordinary task waker, and the drain is polled unconstrained so a
+receive does not charge cooperative budget - both the wakeup and the re-arm
+of the old path needed a driver or park turn.  The thread never waits: a
+full channel drops the datagram and counts an `overrun`, the loss mode UDP
+already has, and it stops when the demultiplexer exits (idle) or the
+transport drops.  The regression test
+`tonutils_adnl::adnl::udp::tests::inbound_routing_survives_a_busy_runtime`
+keeps the driver window open with the same CPU-burning chain and times a raw
+exchange against it: 2951 ms of a 3050 ms window on the old code, a couple
+of polls with the fix.
+
 ### Address routing: channels versus stored lists
 
 A peer needs a routable address for this node only when it has no established

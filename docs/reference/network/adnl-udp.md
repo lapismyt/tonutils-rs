@@ -187,7 +187,25 @@ restarted sequence numbers.
 
 `AdnlUdpTransport` serves one shared socket per node id and routes every
 datagram to the session that owns its 32-byte channel id or source address,
-all from a single demultiplexing task.  The session hand-off is deliberately
+all from a single demultiplexing task.  Reading the socket is deliberately
+not done by that task: a dedicated OS thread drains the kernel receive
+queue into a bounded channel (1024 datagrams) and the channel's send wakes
+the demultiplexing task through an ordinary task waker, bypassing the
+runtime's IO driver.  The thread exists because tokio pulls that driver
+only every `event_interval` (61) task polls or when the run queue empties;
+a runtime that stays busy with CPU-heavy polls - the live gate runs eight
+scanner samples on four shared vCPUs - left the window open for tens of
+seconds, so a demultiplexer parked on socket readiness was never woken
+while probe answers filled the kernel receive queue (runs 39032749928 and
+39107770528).  The thread never waits: a full channel drops the datagram
+and counts an overrun, the same loss mode UDP already has.  The
+regression test
+`tonutils_adnl::adnl::udp::tests::inbound_routing_survives_a_busy_runtime`
+pins the property by chaining two tasks that keep the event loop's local
+queue busy and timing a raw-exchange round trip against the 61-poll driver
+window.
+
+The session hand-off is deliberately
 non-blocking: each session has a bounded queue (64 datagrams into its
 receive loop) and a bounded inbox (64 datagrams to its consumer), and a
 datagram that arrives for a session whose queue is full is dropped like any
@@ -200,8 +218,12 @@ confined to the slow session.  The regression test
 pins the property.
 
 The demultiplexer also logs `ADNL transport rx heartbeat` every ten
-seconds while it runs: datagrams read and sent, datagrams dropped or
-failed to route, the interval's real wall-clock length, and - on Linux -
+seconds while it runs: datagrams read and sent, datagrams dropped because a
+session queue was full, datagrams whose route was already closed, datagrams
+that matched no route, datagrams the receive thread dropped for a full
+channel (`overrun`), the demultiplexing loop's iterations and the longest
+gap between them (`iters`, `gap_max_ms`, which is this task's own
+scheduling latency), the interval's real wall-clock length, and - on Linux -
 the bytes the kernel still holds unread for the socket and the datagrams
 it dropped for overflow (`/proc/net/udp`).  The session receive path logs
 `ADNL answer age` for every delivered answer and `ADNL late answer` for

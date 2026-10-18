@@ -13,6 +13,15 @@
 //! session that owns the channel id it carries or the peer address it
 //! arrived from.
 //!
+//! Reading the socket is deliberately not done by that async task: a
+//! dedicated OS thread drains the kernel receive queue into a bounded
+//! channel, because tokio pulls its IO driver only every
+//! `event_interval` (61) task polls or when the run queue empties, and
+//! a busy runtime can leave that window open for tens of seconds.  The
+//! channel's send wakes the routing task through the ordinary task
+//! waker, so inbound latency does not depend on the driver's cadence.
+//! See `TransportInner::run` and the `receive_loop` function.
+//!
 //! The transport is deliberately additive: [`AdnlUdpSession::connect`]
 //! keeps its signature and still gives every call its own connected
 //! socket, so existing callers keep working unchanged, while callers
@@ -22,7 +31,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
@@ -38,6 +47,26 @@ use super::session::SessionInner;
 /// How often the demultiplexer logs its receive-side counters.
 const DEMUX_HEARTBEAT: Duration = Duration::from_secs(10);
 
+/// Capacity of the socket-to-demultiplexer channel.
+///
+/// The receive thread never waits: a full channel drops the datagram
+/// (the loss mode UDP already has) and counts it as an overrun.  The
+/// capacity is sized to smooth multi-hundred-datagram bursts without
+/// letting the demultiplexer fall far behind; a scheduling window of a
+/// contended runtime produces at most a few hundred datagrams.
+const DEMUX_CHANNEL_CAPACITY: usize = 1024;
+
+/// How long the receive thread naps while the socket has nothing to
+/// read.
+///
+/// The thread exists so that draining the kernel receive queue does
+/// not depend on the async runtime's IO driver, which tokio only pulls
+/// every `event_interval` (61) task polls or when the run queue
+/// empties.  A nap of one millisecond keeps that thread idle-cheap
+/// while inbound latency stays in the single-digit-millisecond range,
+/// far below the seconds-scale budgets of the live probes.
+const RECV_IDLE_NAP: Duration = Duration::from_millis(1);
+
 /// Shared ADNL UDP endpoint for one local node id.
 ///
 /// Cloning shares the socket and the session table, so a process
@@ -49,6 +78,14 @@ pub struct AdnlUdpTransport {
 
 pub(super) struct TransportInner {
     pub(super) socket: UdpSocket,
+    /// Nonblocking duplicate of the descriptor behind `socket` that the
+    /// receive thread drains.
+    ///
+    /// `O_NONBLOCK` belongs to the open file description, so the
+    /// duplicate and the async sends share it.  Reading the kernel
+    /// queue from this descriptor keeps inbound latency independent of
+    /// the runtime's IO driver cadence.
+    recv_socket: std::net::UdpSocket,
     pub(super) local: KeyPair,
     pub(super) local_id: [u8; 32],
     /// Live sessions by remote ADNL id.  Weak handles keep the table
@@ -62,6 +99,13 @@ pub(super) struct TransportInner {
     /// Datagrams this socket sent since the transport was created,
     /// for the receive heartbeat's send-rate column.
     pub(super) sent_datagrams: AtomicU64,
+    /// Datagrams the receive thread dropped because the
+    /// socket-to-demultiplexer channel was full.
+    rx_overruns: Arc<AtomicU64>,
+    /// Set when every handle of this transport is gone, so the receive
+    /// thread exits even if the demultiplexing task was dropped
+    /// without running its own cleanup (runtime shutdown).
+    shutdown: Arc<AtomicBool>,
     /// One in-flight raw (non-ADNL) exchange, if any.
     raw: Mutex<Option<RawExchange>>,
     /// Set when the last session of this transport is dropped, so
@@ -101,6 +145,16 @@ pub(super) struct Route {
     pub(super) queue: mpsc::Sender<Vec<u8>>,
 }
 
+impl Drop for TransportInner {
+    fn drop(&mut self) {
+        // The receive thread holds only a duplicate descriptor and this
+        // flag.  Setting it here releases the thread even when the
+        // demultiplexing task is dropped without running its cleanup,
+        // which is what a runtime shutdown does.
+        self.shutdown.store(true, Ordering::Relaxed);
+    }
+}
+
 impl AdnlUdpTransport {
     /// Binds the shared socket.
     ///
@@ -111,16 +165,27 @@ impl AdnlUdpTransport {
     /// as soon as its last handle is dropped.
     pub async fn bind(local_addr: SocketAddr, local: KeyPair) -> Result<Self, AdnlError> {
         let socket = UdpSocket::bind(local_addr).await?;
+        // Split the socket into one handle for the async sends and one
+        // duplicate the receive thread drains.  `try_clone` duplicates
+        // the descriptor, so both handles share the receive queue and
+        // the source address, and `O_NONBLOCK` belongs to the open file
+        // description, so the duplicate is nonblocking too.
+        let std_socket = socket.into_std()?;
+        let recv_socket = std_socket.try_clone()?;
+        let socket = UdpSocket::from_std(std_socket)?;
         let local_id = AdnlAddress::from(&local.public_key).to_bytes();
         let (idle, _) = watch::channel(false);
         let inner = Arc::new(TransportInner {
             socket,
+            recv_socket,
             local,
             local_id,
             sessions: Mutex::new(HashMap::new()),
             routes: Mutex::new(Routes::default()),
             demux: Mutex::new(DemuxState::default()),
             sent_datagrams: AtomicU64::new(0),
+            rx_overruns: Arc::new(AtomicU64::new(0)),
+            shutdown: Arc::new(AtomicBool::new(false)),
             raw: Mutex::new(None),
             idle,
         });
@@ -387,20 +452,21 @@ impl TransportInner {
 
     /// Demultiplexes every incoming datagram to its session.
     ///
-    /// Channel packets carry their 32-byte channel id in the clear,
-    /// so they route by the registry sessions publish on channel
-    /// install.  Direct packets carry the destination ADNL id in the
-    /// clear; anything addressed to this node routes by the source
-    /// address to the session for that peer.  Everything else is
-    /// dropped: it is either addressed to another node or from a peer
-    /// this node has no session for.
+    /// Routing and the never-wait enqueueing rules live in
+    /// [`Self::dispatch`]; this loop moves datagrams from the receive
+    /// thread's channel - or from the socket itself, when the thread
+    /// could not start - into it, and logs the heartbeat.
     ///
-    /// Enqueueing never waits.  Session queues are bounded, and a
-    /// datagram for a session whose consumer is behind is dropped:
-    /// waiting here would stall this single receive task and add
-    /// head-of-line delay to every other session on the shared
-    /// socket, while a drop costs only that session's datagram -
-    /// the loss mode UDP already has.
+    /// The socket is drained by a dedicated thread, not by this task:
+    /// tokio pulls its IO driver only every `event_interval` (61) task
+    /// polls or when the run queue empties, and a runtime that stays
+    /// busy with CPU-heavy polls - eight scanner samples on four shared
+    /// CI vCPUs - left that window open for tens of seconds.  Datagrams
+    /// then sat in the kernel receive queue long after they arrived and
+    /// every probe answered late.  The thread forwards datagrams over a
+    /// bounded channel whose send wakes this task through the ordinary
+    /// task waker, so inbound routing no longer waits for a driver
+    /// turn.
     ///
     /// Every [`DEMUX_HEARTBEAT`] the task logs what it read, sent,
     /// dropped, and failed to route in the interval, how long the
@@ -416,84 +482,95 @@ impl TransportInner {
         let mut heartbeat = tokio::time::Instant::now() + DEMUX_HEARTBEAT;
         let mut last_beat = std::time::Instant::now();
         let mut last_sent = self.sent_datagrams.load(Ordering::Relaxed);
-        let mut datagrams: u64 = 0;
-        let mut dropped: u64 = 0;
-        let mut closed: u64 = 0;
-        let mut unrouted: u64 = 0;
+        let mut last_overruns = self.rx_overruns.load(Ordering::Relaxed);
+        let mut stats = DemuxStats::default();
+        let mut iters: u64 = 0;
+        let mut gap_max_ms: u128 = 0;
+        let mut last_iter = std::time::Instant::now();
+        // A receive thread that cannot be started falls back to reading
+        // the socket from this task, which keeps routing correct (at
+        // the cost of the driver-cadence latency the thread exists to
+        // avoid).
+        let (tx, mut rx) = mpsc::channel::<(Vec<u8>, SocketAddr)>(DEMUX_CHANNEL_CAPACITY);
+        let stop = Arc::new(AtomicBool::new(false));
+        let use_thread = match self.recv_socket.try_clone() {
+            Ok(socket) => {
+                let tx = tx.clone();
+                let stop = stop.clone();
+                let shutdown = self.shutdown.clone();
+                let overruns = self.rx_overruns.clone();
+                match std::thread::Builder::new()
+                    .name("adnl-udp-recv".to_string())
+                    .spawn(move || receive_loop(socket, tx, stop, shutdown, overruns))
+                {
+                    Ok(_) => true,
+                    Err(error) => {
+                        log::warn!("ADNL transport receive thread failed to start: {error}");
+                        false
+                    }
+                }
+            }
+            Err(error) => {
+                log::warn!("ADNL transport receive socket clone failed: {error}");
+                false
+            }
+        };
+        // Only the thread's clone may keep the channel open: a dead
+        // thread must be visible as an exhausted receiver instead of a
+        // pending one.
+        drop(tx);
         loop {
+            let iter_now = std::time::Instant::now();
+            let gap = iter_now.duration_since(last_iter).as_millis();
+            if gap > gap_max_ms {
+                gap_max_ms = gap;
+            }
+            last_iter = iter_now;
+            iters += 1;
             if self.drain_if_idle() {
-                return;
+                break;
             }
             tokio::select! {
-                result = self.socket.recv_from(&mut packet) => {
+                // The channel drain is deliberately unconstrained: a
+                // channel receive charges cooperative budget, and a
+                // budget-exhausted receive parks the task on the
+                // runtime's deferred list, which is only flushed at a
+                // park - the same driver window this thread exists to
+                // bypass.  The channel is bounded, so one unconstrained
+                // drain stays small.
+                maybe = tokio::task::unconstrained(rx.recv()), if use_thread => {
+                    match maybe {
+                        Some((datagram, peer)) => {
+                            self.dispatch(&datagram, peer, &mut stats);
+                        }
+                        None => {
+                            // The receive thread exited on its own; stop so
+                            // the next `session_for` restarts the demux.
+                            log::error!("ADNL transport receive thread stopped unexpectedly");
+                            self.demux.lock().unwrap().running = false;
+                            return;
+                        }
+                    }
+                }
+                result = self.socket.recv_from(&mut packet), if !use_thread => {
                     let Ok((size, peer)) = result else {
                         self.demux.lock().unwrap().running = false;
                         return;
                     };
-                    datagrams += 1;
-                    if size > MAX_UDP_PACKET_SIZE {
-                        continue;
-                    }
-                    let route = {
-                        let routes = self.routes.lock().unwrap();
-                        let mut route = None;
-                        if let Ok(prefix) = <[u8; 32]>::try_from(&packet[..size.min(32)]) {
-                            route = routes.by_channel_id.get(&prefix).cloned();
-                            if route.is_none() && prefix == self.local_id {
-                                route = routes.by_peer_addr.get(&peer).cloned();
-                            }
-                        }
-                        route
-                    };
-                    // A raw exchange installs its hook before sending, and a
-                    // server address never routes to a session, so a packet
-                    // the demultiplexer would otherwise drop is handed to the
-                    // waiter that sent for it.
-                    let mut captured = false;
-                    if route.is_none()
-                        && let Some(exchange) = self.raw.lock().unwrap().as_ref()
-                        && peer.ip() == exchange.from_ip
-                        && exchange.tx.try_send(packet[..size].to_vec()).is_ok()
-                    {
-                        captured = true;
-                        // The waiter returns after `try_send` succeeds, so an
-                        // empty slot cannot fail.  The hook stays in place and
-                        // `raw_exchange` clears it once it has been observed.
-                        log::trace!("ADNL transport captured raw reply from {peer}");
-                    }
-                    if let Some(route) = route {
-                        match route.queue.try_send(packet[..size].to_vec()) {
-                            Ok(()) => {}
-                            Err(mpsc::error::TrySendError::Full(_)) => {
-                                dropped += 1;
-                                // The session's consumer is behind.  Blocking
-                                // this task until it drains would delay every
-                                // other session on the socket.
-                                log::debug!(
-                                    "ADNL transport dropping datagram: session {} queue full",
-                                    route.session
-                                );
-                            }
-                            Err(mpsc::error::TrySendError::Closed(_)) => {
-                                closed += 1;
-                                // The session is gone; its Drop impl already
-                                // removed its routes, so this entry is stale.
-                                log::trace!(
-                                    "ADNL transport route to session {} closed",
-                                    route.session
-                                );
-                            }
-                        }
-                    } else if !captured {
-                        unrouted += 1;
-                    }
+                    self.dispatch(&packet[..size], peer, &mut stats);
                 }
                 _ = idle.changed() => {}
                 () = tokio::time::sleep_until(heartbeat) => {
                     let sent = self.sent_datagrams.load(Ordering::Relaxed);
+                    let overruns = self.rx_overruns.load(Ordering::Relaxed);
                     log::debug!(
-                        "ADNL transport rx heartbeat: datagrams={datagrams} sent={} dropped={dropped} closed={closed} unrouted={unrouted} dt_ms={} {}",
+                        "ADNL transport rx heartbeat: datagrams={} sent={} dropped={} closed={} unrouted={} overrun={} iters={iters} gap_max_ms={gap_max_ms} dt_ms={} {}",
+                        stats.datagrams,
                         sent - last_sent,
+                        stats.dropped,
+                        stats.closed,
+                        stats.unrouted,
+                        overruns - last_overruns,
                         last_beat.elapsed().as_millis(),
                         match self.socket.local_addr().ok().and_then(kernel_socket_stats) {
                             Some((queued, kernel_drops)) => {
@@ -503,13 +580,142 @@ impl TransportInner {
                         },
                     );
                     last_sent = sent;
+                    last_overruns = overruns;
                     last_beat = std::time::Instant::now();
                     heartbeat = tokio::time::Instant::now() + DEMUX_HEARTBEAT;
-                    datagrams = 0;
-                    dropped = 0;
-                    closed = 0;
-                    unrouted = 0;
+                    stats = DemuxStats::default();
+                    iters = 0;
+                    gap_max_ms = 0;
                 }
+            }
+        }
+        // The demultiplexer drained; release the receive thread.  It
+        // observes the flag within one nap.
+        stop.store(true, Ordering::Relaxed);
+    }
+
+    /// Routes one datagram to the session queue or raw-exchange hook
+    /// that owns it and counts the outcome.
+    ///
+    /// Channel packets carry their 32-byte channel id in the clear, so
+    /// they route by the registry sessions publish on channel install.
+    /// Direct packets carry the destination ADNL id in the clear;
+    /// anything addressed to this node routes by the source address to
+    /// the session for that peer.  Everything else is dropped: it is
+    /// either addressed to another node or from a peer this node has no
+    /// session for.
+    ///
+    /// Enqueueing never waits.  Session queues are bounded, and a
+    /// datagram for a session whose consumer is behind is dropped:
+    /// waiting would add head-of-line delay to every other session on
+    /// the shared socket, while a drop costs only that session's
+    /// datagram - the loss mode UDP already has.
+    fn dispatch(&self, packet: &[u8], peer: SocketAddr, stats: &mut DemuxStats) {
+        stats.datagrams += 1;
+        if packet.len() > MAX_UDP_PACKET_SIZE {
+            return;
+        }
+        let route = {
+            let routes = self.routes.lock().unwrap();
+            let mut route = None;
+            if let Ok(prefix) = <[u8; 32]>::try_from(&packet[..packet.len().min(32)]) {
+                route = routes.by_channel_id.get(&prefix).cloned();
+                if route.is_none() && prefix == self.local_id {
+                    route = routes.by_peer_addr.get(&peer).cloned();
+                }
+            }
+            route
+        };
+        // A raw exchange installs its hook before sending, and a server
+        // address never routes to a session, so a packet the
+        // demultiplexer would otherwise drop is handed to the waiter
+        // that sent for it.
+        let mut captured = false;
+        if route.is_none()
+            && let Some(exchange) = self.raw.lock().unwrap().as_ref()
+            && peer.ip() == exchange.from_ip
+            && exchange.tx.try_send(packet.to_vec()).is_ok()
+        {
+            captured = true;
+            // The waiter returns after `try_send` succeeds, so an empty
+            // slot cannot fail.  The hook stays in place and
+            // `raw_exchange` clears it once it has been observed.
+            log::trace!("ADNL transport captured raw reply from {peer}");
+        }
+        if let Some(route) = route {
+            match route.queue.try_send(packet.to_vec()) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    stats.dropped += 1;
+                    // The session's consumer is behind.  Blocking this
+                    // task until it drains would delay every other
+                    // session on the socket.
+                    log::debug!(
+                        "ADNL transport dropping datagram: session {} queue full",
+                        route.session
+                    );
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    stats.closed += 1;
+                    // The session is gone; its Drop impl already removed
+                    // its routes, so this entry is stale.
+                    log::trace!("ADNL transport route to session {} closed", route.session);
+                }
+            }
+        } else if !captured {
+            stats.unrouted += 1;
+        }
+    }
+}
+
+/// Receive-side counters of one demultiplexer heartbeat interval.
+#[derive(Default)]
+struct DemuxStats {
+    /// Datagrams the receive thread forwarded to the demultiplexer.
+    datagrams: u64,
+    /// Datagrams dropped because a session queue was full.
+    dropped: u64,
+    /// Datagrams whose session queue was already closed.
+    closed: u64,
+    /// Datagrams that matched no session route and no raw exchange.
+    unrouted: u64,
+}
+
+/// Drains the shared socket into the demultiplexer channel.
+///
+/// Runs on its own thread so the kernel receive queue is read as soon
+/// as datagrams arrive: the async runtime only pulls its IO driver
+/// every `event_interval` (61) task polls, and a runtime busy with
+/// CPU-heavy polls can leave that window open for tens of seconds,
+/// piling datagrams up in the kernel buffer behind an unread socket.
+/// The thread owns a nonblocking duplicate of the socket descriptor,
+/// takes no locks, and never waits on the demultiplexer: a full channel
+/// drops the datagram - the loss mode UDP already has - and counts it.
+///
+/// It exits when the demultiplexer drains (`stop`) or when every handle
+/// of the transport is gone (`shutdown`), so a runtime that shuts down
+/// without running the demultiplexer's cleanup still releases it.
+fn receive_loop(
+    socket: std::net::UdpSocket,
+    tx: mpsc::Sender<(Vec<u8>, SocketAddr)>,
+    stop: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
+    overruns: Arc<AtomicU64>,
+) {
+    let mut packet = vec![0u8; MAX_UDP_PACKET_SIZE + 1];
+    while !stop.load(Ordering::Relaxed) && !shutdown.load(Ordering::Relaxed) {
+        match socket.recv_from(&mut packet) {
+            Ok((size, peer)) => {
+                if tx.try_send((packet[..size].to_vec(), peer)).is_err() {
+                    overruns.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(RECV_IDLE_NAP);
+            }
+            Err(error) => {
+                log::warn!("ADNL transport receive error: {error}");
+                std::thread::sleep(RECV_IDLE_NAP);
             }
         }
     }
