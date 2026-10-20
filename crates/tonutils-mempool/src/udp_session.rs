@@ -66,7 +66,9 @@ mod stun;
 
 pub use growth::{udp_peer_growth, udp_peer_growth_with_resolvers};
 pub use lookup::*;
-pub use publish::{DhtAddressPublisher, PUBLISH_INTERVAL, address_publisher};
+pub use publish::{
+    DhtAddressPublisher, PUBLISH_FIRST_ROUND_STAGGER_MAX, PUBLISH_INTERVAL, address_publisher,
+};
 
 struct FecAssembly {
     decoder: Decoder,

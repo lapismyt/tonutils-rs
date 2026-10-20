@@ -222,6 +222,17 @@ additionally includes the waiting caller's own runtime wake, which no
 transport change can schedule, so the test deliberately does not gate on
 it.
 
+The last application-runtime hop was a send: tokio's readiness
+registration for the socket belongs to the runtime that polls the
+driver, so a send issued from the inbound thread that finds the kernel
+send buffer full would wait for the application runtime to turn its IO
+driver.  Sends issued on the inbound thread therefore take the
+synchronous non-blocking path (`try_send_to`), where a full buffer is
+ordinary UDP loss and is counted in the heartbeat's `tx_drop` column;
+the thread marker that routes them (`on_inbound_thread`, set once when
+the `adnl-udp-inbound` thread starts) is pinned by
+`adnl::udp::inbound::tests::the_marker_is_set_only_on_the_inbound_thread`.
+
 The session hand-off is deliberately
 non-blocking: each session has a bounded queue (64 datagrams into its
 receive loop) and a bounded inbox (64 datagrams to its consumer), and a
@@ -250,9 +261,23 @@ consumer is off it.  `udp/tests/fast_answer.rs` pins both the registered
 answer and the declined-query fallthrough; the mempool path is pinned by
 `overlay_inbound::tests` and the `udp_session` integration test.
 
+The lane also survives consumer backpressure: when the consumer's inbox
+is full, the receive loop parks the decoded packet that could not be
+handed off and keeps reading the session queue, so the registered
+answers of later datagrams still leave inside the peer's five-second
+admission window instead of queueing behind the backpressure (pin5
+measured such queue waits of 1-8 s on the old blocking path).  A second
+consumer-bound packet seen in that state is dropped with ordinary UDP
+loss semantics and counted, and `AdnlUdpSession::inbox_drops` exposes
+the total.
+`udp/tests/fast_answer.rs::registered_answers_leave_while_the_consumer_inbox_is_full`
+pins the lane by flooding the inbox to a park and asserting the
+registered answer still arrives.
+
 The demultiplexer also logs `ADNL transport rx heartbeat` every ten
 seconds while it runs: datagrams read and sent, datagrams dropped because a
-session queue was full, datagrams whose route was already closed, datagrams
+session queue was full, datagrams dropped on a synchronous inbound-thread
+send because the kernel send buffer was full (`tx_drop`), datagrams whose route was already closed, datagrams
 that matched no route, datagrams the receive thread dropped for a full
 channel (`overrun`), the longest wait between the receive thread reading a
 datagram off the socket and this task dispatching it (`wait_max_ms`, the
@@ -286,19 +311,5 @@ a log alone cannot.
 
 ## Missing Work
 
-- A session receive loop blocked on a full consumer inbox (64 packets)
-  also holds up the next datagrams of that session, so a ping waiting for
-  its registered answer can queue behind that backpressure.  Pin5 measured
-  session-queue waits of 1-8 s on such datagrams while the pongs still
-  left within 784 ms, so the edge exists but did not bite; give registered
-  answers their own lane in the receive loop if a future gate shows it.
-- Route sends issued from the inbound runtime - registered fast answers,
-  session answers, channel control, retries - through the transport's own
-  socket instead of the shared tokio socket, whose readiness registration
-  belongs to the application runtime: a send from the inbound runtime that
-  finds the kernel send buffer full waits for the application runtime to
-  turn its IO driver.  Not observed under the gate's load (answers are
-  small and the buffer is large), but it is the one remaining app-runtime
-  hop on the inbound path.
 - Add packet fixtures from official nodes.
 - Add deterministic simulated UDP tests.

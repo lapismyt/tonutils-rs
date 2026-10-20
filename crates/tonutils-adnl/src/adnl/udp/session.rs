@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -126,6 +126,12 @@ pub(crate) struct SessionInner {
     /// Decoded packets for the session's consumer.
     inbox: tokio::sync::Mutex<mpsc::Receiver<PacketContents>>,
     inbox_tx: mpsc::Sender<PacketContents>,
+    /// Consumer-bound packets the receive loop dropped because the
+    /// inbox was full and one packet was already parked: during
+    /// backpressure the loop keeps reading datagrams so their
+    /// registered answers leave on time, and a second packet that
+    /// needs the consumer is dropped with UDP loss semantics.
+    inbox_drops: AtomicU64,
     /// In-flight queries by query id, so an answer is routed to the
     /// call that asked for it even when several callers share the
     /// session.  Each entry keeps the instant the waiter was
@@ -181,7 +187,25 @@ impl Source {
         match self {
             Source::Solo(socket) => Ok(socket.send(packet).await?),
             Source::Shared(transport) => {
-                let sent = transport.socket.send_to(packet, addr).await?;
+                // Sends issued on the inbound executor thread take the
+                // synchronous non-blocking path: the tokio socket's
+                // readiness registration belongs to the application
+                // runtime, so an awaited send that finds the kernel
+                // send buffer full would wait for a driver this
+                // runtime does not poll.  A full buffer is ordinary
+                // UDP loss and is counted as such.
+                let sent = if super::inbound::on_inbound_thread() {
+                    transport
+                        .socket
+                        .try_send_to(packet, addr)
+                        .inspect_err(|error| {
+                            if error.kind() == std::io::ErrorKind::WouldBlock {
+                                transport.tx_drops.fetch_add(1, Ordering::Relaxed);
+                            }
+                        })?
+                } else {
+                    transport.socket.send_to(packet, addr).await?
+                };
                 transport.sent_datagrams.fetch_add(1, Ordering::Relaxed);
                 Ok(sent)
             }
@@ -381,6 +405,20 @@ impl AdnlUdpSession {
         self.inner.send_answer_to(&query_id, answer).await
     }
 
+    /// Consumer-bound packets this session's receive loop dropped
+    /// because its inbox was full while another packet was already
+    /// parked for it.
+    ///
+    /// This is the loss side of the registered-answer lane: while the
+    /// consumer stops draining its inbox, the receive loop keeps
+    /// reading datagrams so their registered answers leave inside the
+    /// peer's admission window, and a second consumer-bound packet
+    /// seen during that window is dropped with UDP loss semantics.
+    #[must_use]
+    pub fn inbox_drops(&self) -> u64 {
+        self.inner.inbox_drops.load(Ordering::Relaxed)
+    }
+
     /// Registers a synchronous answer for inbound queries whose outer
     /// TL constructor word is `id`, replacing any earlier registration.
     ///
@@ -397,6 +435,9 @@ impl AdnlUdpSession {
     /// an answer the consumer builds can queue behind application work
     /// for longer than that: the live gate measured `overlay.ping`
     /// answers taking seconds while the application runtime was busy.
+    /// The receive loop keeps servicing these registrations even while
+    /// the consumer's inbox is applying backpressure (see
+    /// [`Self::inbox_drops`]).
     pub fn register_query_answer(
         &self,
         id: u32,
@@ -592,6 +633,7 @@ impl SessionInner {
                     .parse()
                     .expect("loopback fallback address parses"),
             ),
+            inbox_drops: AtomicU64::new(0),
             confirm_channels: AtomicBool::new(true),
             state: tokio::sync::Mutex::new(SessionState::new()),
             queue: tokio::sync::Mutex::new(queue),
@@ -626,6 +668,7 @@ impl SessionInner {
             remote_id,
             remote,
             remote_addr: Mutex::new(remote_addr),
+            inbox_drops: AtomicU64::new(0),
             confirm_channels: AtomicBool::new(true),
             state: tokio::sync::Mutex::new(SessionState::new()),
             queue: tokio::sync::Mutex::new(queue),

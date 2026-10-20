@@ -53,9 +53,9 @@ pub use quic_session::{
     quic_overlay_lookup, quic_overlay_lookup_with_endpoints,
 };
 pub use udp_session::{
-    AdnlUdpOverlaySession, DhtAddressPublisher, PUBLISH_INTERVAL, address_publisher,
-    channel_factory, direct_factory, overlay_factory, overlay_factory_with_endpoints,
-    udp_dht_lookup, udp_iterative_dht_lookup, udp_overlay_lookup,
+    AdnlUdpOverlaySession, DhtAddressPublisher, PUBLISH_FIRST_ROUND_STAGGER_MAX, PUBLISH_INTERVAL,
+    address_publisher, channel_factory, direct_factory, overlay_factory,
+    overlay_factory_with_endpoints, udp_dht_lookup, udp_iterative_dht_lookup, udp_overlay_lookup,
     udp_overlay_lookup_with_endpoints, udp_peer_growth, udp_peer_growth_with_resolvers,
 };
 

@@ -523,3 +523,52 @@ p90 40 s ages; the delta between the two runs is `f0c7790`
 (`fix(adnl): answer peer probes off the application runtime`), whose
 pinned local re-run measured p50 0 ms pong answers, p50 1 ms
 read-to-dispatch, and heartbeats on time in every beat.
+
+Run 39458941631 (2026-10-20, `3ea3706`, 600 s budget): green, the
+docs-pointer follow-up of the same fix lineage.  Sample 7 delivered at
+`time_to_message=29.4s` - the fastest recorded arm - and stopped the
+remaining seven samples healthy (`task_panics=0`; `dht address publish:
+stored ... served_by_dht=true` in samples 1, 3, 7, and 8).  With
+39457557758 (104.1s / 127.7s) this is the second consecutive green gate
+on `f0c7790`, against the red `pushers=0` baseline of 39114243866.
+
+Local capture and churn runs (2026-10-20, `3ea3706` plus the working tree,
+pin5 harness on this host, not CI): three local mainnet runs armed the new
+opt-in receive-thread capture (`ADNL_UDP_CAPTURE_FILE`,
+`ADNL_UDP_CAPTURE_MAX`) and fed both the fixture work and the peer-quality
+decision.  A 2x150 s run (cap 4096) delivered in sample 2 at
+`time_to_message=142.6s` (`accepted: 1`, `overlay_packets: 1`) and timed
+out in sample 1 (`registered_peers=48`); a 2x300 s run (cap 16384, never
+reached: 8567 and 4828 records) delivered in sample 2 at `140.0s`
+(`accepted: 1`, `rejected: 1`, `invalid_warnings: 1`,
+`overlay_packets: 2`) and timed out in sample 1 (`registered_peers=51`);
+a churn-forcing 2x240 s run with the managed budget cut to 24
+(`TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS=24`, 3009 and 2979 records) delivered
+nothing (`accepted: 0` everywhere).  Together the runs recorded 27,575
+capture records - raw wire datagrams, canonical `packetContents`
+re-serializations, and three verbatim broadcast customs (one live
+`overlay.broadcastFec` (`0xbad7c36a`), two `overlay.broadcast`
+(`0xb15a2b6b`)) - which became the `live_wire` fixture files pinned
+offline by `crates/tonutils-tl/src/tl/live_wire.rs`.  The transport
+counters held (`overrun=0`, `kernel_drops=0`, heartbeats at
+`dt_ms=1000x`), so these runs add no regression signal of their own.
+
+The peer-quality census (`peer quality: snapshot ...`, printed on both
+gate paths) reported `tracked=1 first=1 on_time=0 late=0 misses=0
+evictions=0 best_score=2.00 worst_score=2.00` in each of the two
+delivering windows and `tracked=0 ... evictions=0` in the four
+non-delivering ones: delivery observations are the only source of quality
+evidence, so an undelivered window arms nothing.  The churn run produced
+the first live number for the over-budget condition quality eviction
+enforces: the budget-24 roster ended the window at `registered_peers=28`
+(last growth log: `added 6 session(s), registered_peers=22`), i.e. six
+sessions re-registered above the cap after the last growth round - a
+lost peer's reconnect re-registers without the growth gate, which is the
+natural path that can arm eviction.  With `tracked=0`, no peer reached
+`min_observations`, so `peer quality: evicting` stayed absent and
+`evictions=0` in every window; the default decision and the numbers live
+in TODO.md (quality items closed 2026-10-20).
+
+Sample delivery ratio across the three runs: 2 of 6 windows delivered
+(142.6 s and 140.0 s), consistent with the sampling lottery recorded
+above rather than with any transport change.

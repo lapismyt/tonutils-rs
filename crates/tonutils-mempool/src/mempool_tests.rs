@@ -200,7 +200,7 @@ async fn builder_connects_validated_peers_through_factory() {
 }
 
 #[tokio::test]
-async fn builder_retains_explicit_seeds_when_discovery_succeeds() {
+async fn builder_keeps_bootstrap_seeds_out_of_membership_when_discovery_succeeds() {
     let seed_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let discovered_key = KeyPair::generate(&mut rand::rngs::OsRng);
     let seed = SeedPeer::from_public_key(seed_key.public_key.to_bytes(), "127.0.0.1:30303");
@@ -227,7 +227,35 @@ async fn builder_retains_explicit_seeds_when_discovery_succeeds() {
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(1)).await;
-    assert_eq!(manager.peer_count().await, 2);
+    // Bootstrap seeds are DHT contacts: once discovery returned members,
+    // no session is registered for the seed set (TODO item 411).
+    assert_eq!(manager.peer_count().await, 1);
+    manager.shutdown();
+}
+
+#[tokio::test]
+async fn builder_falls_back_to_bootstrap_seeds_when_discovery_finds_nothing() {
+    let seed_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let seed = SeedPeer::from_public_key(seed_key.public_key.to_bytes(), "127.0.0.1:30303");
+    let factory: OverlaySessionFactory = Arc::new(move |candidate| {
+        Box::pin(async move {
+            Ok(Box::new(PendingSession {
+                peer: candidate.peer,
+            }) as Box<dyn OverlaySession>)
+        })
+    });
+    let lookup: SeedDiscoveryLookup = Arc::new(move |_| Box::pin(async move { Vec::new() }));
+    let (_scanner, manager, _events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .seed(seed)
+        .seed_discovery_lookup(lookup)
+        .session_factory(factory)
+        .start()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    assert_eq!(manager.peer_count().await, 1);
     manager.shutdown();
 }
 

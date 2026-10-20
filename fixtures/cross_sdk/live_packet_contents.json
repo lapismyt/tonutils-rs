@@ -1,0 +1,142 @@
+{
+ "cases": [
+  {
+   "name": "live-packet-contents-01",
+   "captured_at_unix": 1792527790,
+   "peer": "45.63.101.172:42137",
+   "length": 248,
+   "message_ctor_hex": "1684ac0f",
+   "raw_hex": "89cd42d10fc3d28109b3399739b9c8199e6d30f2c40100001684ac0fb58998692659744e2d71fc49a5f9b29612532b0b87d391abce7b5a49192bd2f194680562a201000000c6b41348e844c50a817ac78bee5ebe94ae53a87a097708f02f248a806af18944ac749c9601000000e7a60d67a1b8db0d31750000f0a1d66af0a1d66a0000000000000000aecdd76a40ad41fac78e3292552ee4932172fd5167304f2a299c4f8535e14db06e8ded5f81fe62b23b07249a3794dd9754bdccf68bc01eae37d237287393f5891855418f0800000000000003000000000000000300000000000000aecdd76a0f94e27ac91b63a184aab48174e5eb8e",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-02",
+   "captured_at_unix": 1792527790,
+   "peer": "45.63.101.172:42137",
+   "length": 364,
+   "message_ctor_hex": "1684ac0f",
+   "raw_hex": "89cd42d10fa3dec895c9a4aa3078c0b86eae0851c40100001684ac0f8e26704c5348afe81611567f36ab2dbf6317d7ece11acdc2d3c8c4834fa19257fe10010074f70ce4cb27ad9064970cc608293979d16f81203a150e257ed084cbbb59aa4b43a9d01118a38228076164647265737300000000c6b413486a3545ce293b8a793e4556da337849754eef2f608e88b34a082c9edd31694e22f7319fcc40ae3ea4d93f6c6ed7de3fc66f859a1f33a07e53df25fae23a21a75972298e1ff2c77f5ec3a2df75717fb52b93d71e5ed4c8f80cf02a4b2434d231b95fa71fa40f0000002458e6272201000000e7a60d67ac97243629ad00002686d76a2686d76a00000000000000000000009ddbd76a4086900cc28e31072ab2b7f35024f3a413b6ea831b135f775886351d6448ce5dbba54b43441ea24177e57e305992418e707428dff7e04b29093612f0130213980500000005000000000000000700000000000000aecdd76a076e53c31849848f",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-03",
+   "captured_at_unix": 1792529074,
+   "peer": "82.23.163.70:9610",
+   "length": 112,
+   "message_ctor_hex": "392d45fd",
+   "raw_hex": "89cd42d10f43c4f4ee5b966b23ef1048ca84047dc4000000392d45fd84e39097ebea825061c5d51ee4fc52a99980ae91c2ce4a697f989217010f143c1c050000140500000888aa16ec0200000000000020000000000000004c000000000000000f607032ae29276790e9a17ea117e4b8",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-04",
+   "captured_at_unix": 1792527811,
+   "peer": "54.36.151.172:16707",
+   "length": 240,
+   "message_ctor_hex": "392d45fd",
+   "raw_hex": "89cd42d1072c30e5678b2844c4000000392d45fdadc3c1658a2d36e65cdcff6b17b8b8f0f47eda0334df86e26ceeab5169dbc5139004000000040000900b000000c6b413485ae538a87cd9a89d47d22ad7d27c89c690a6bd46493e3853e197eb7fca383fbe12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649c5cdd76a40778a556f8340f65a6ab8bc724dc7e45ead51d6646fd1823968db83943a7653933e80a1793e957177c3d64d9a2f27d8471944844eebe71d2947e3286dd46dfe08000000000000050000000000000002000000000000000f32c109a161e09b91b4c9bd7c7eef32",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-05",
+   "captured_at_unix": 1792527811,
+   "peer": "88.216.182.47:44191",
+   "length": 276,
+   "message_ctor_hex": "691ddd60",
+   "raw_hex": "89cd42d107c3093bfaab5c94d60d000074d66feb86fdab221877342df642a969b43b953769cd7092769e718b50b123ef691ddd607d2d8840438f0aa7ecd9c5324603c6c4795dc3a4a2de0d30cec756b0554727b50da9bded68603a104aa8cce520b12725f5a0f0346bc3baf7ae34e7d437bf8e8ac9cdd76a02000000e7a60d672fb6d8589fac0000537201782fb6d85887b00000ced9c46aced9c46a000000000094357702000000000000000100000000000000c3cdd76aced9c46aaecdd76a407945464694aeea48de21564060e6b656cd41b82f140f3595e14d6afc7e3220fdc672d82cb32fa61c2cb5bae3ae20a166ff24059a9439b0c5010d21fdb0c5ae0a0000000f841828a5b5b3ccc8fb1a655d05fd1e",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-06",
+   "captured_at_unix": 1792527811,
+   "peer": "88.216.182.47:44191",
+   "length": 292,
+   "message_ctor_hex": "691ddd60",
+   "raw_hex": "89cd42d10f859aac6e09653383a3d9e3b92127e3da0d000074d66feb86fdab221877342df642a969b43b953769cd7092769e718b50b123ef02000000691ddd607d2d8840438f0aa7ecd9c5324603c6c4795dc3a4a2de0d30cec756b0554727b50da9bded68603a104aa8cce520b12725f5a0f0346bc3baf7ae34e7d437bf8e8ac9cdd76adadff81702000000e7a60d672fb6d8589fac0000537201782fb6d85887b00000ced9c46aced9c46a000000000094357701000000000000000100000000000000c3cdd76aced9c46aaecdd76a40f88b521a4a4ebb07cab024a6543c2501c89a5608e54c778091e03af1d846d9442140a2be0bdbf1590c7ee601b562ad7194fa65315350007d6087351f1c088d030000000fedeff7ec1d41648d92dffe7efce737",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-07",
+   "captured_at_unix": 1792527889,
+   "peer": "88.216.182.55:44252",
+   "length": 132,
+   "message_ctor_hex": "7af98bb4",
+   "raw_hex": "89cd42d10f7e6cf809fb081a0a2df57669d3e40dc40100007af98bb4519da1630062a31da8c5748b20fd07d624528c27c85ce26ede9bfd60861215d9284384fdcc12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b255864981b40c690000002f0000000000000011000000000000000fced76a07365a7f0fcd3bc0",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-08",
+   "captured_at_unix": 1792527935,
+   "peer": "198.13.134.196:18644",
+   "length": 284,
+   "message_ctor_hex": "7af98bb4",
+   "raw_hex": "89cd42d10f10612ac5e4e5237e307b3a81999481c40100007af98bb4a4ff0e59693caec19383cd60f0380720d01ed5b00acbf9eef4d898122f157350b84384fdcc12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649ab64ee4801000000c6b41348ff6f29162f1d9b5a24e837a81b101a0de70e9a2c76e5228ec108f703b5aaa7c812b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b255864938ced76a4035bdf1e57ed266545ad744066619dba25b7b2635afefd99859c61ae70d1bed9d46df63a92f48c66d64f6c1e856b361a8aa682b9eabb240fb973feb02082f780d0000000000002f0000000000000037000000000000003cced76a0fdff14126a81c0b1a0a33915e187fe5",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-09",
+   "captured_at_unix": 1792527790,
+   "peer": "45.63.101.172:42137",
+   "length": 240,
+   "message_ctor_hex": "bbc373e6",
+   "raw_hex": "89cd42d10fdbf7edd1187646a7bc0ff7c68b4f57da0d0000ab92cc84ab0b5a3875f56c713fb0a7dbc863a8eb6e1d6d35398dd65422d8c5fe02000000bbc373e687a9ec61c88909192e7061a1e21aa826358c106076720fadf4f0d8020d7eaef5b4cdd76adadff81701000000e7a60d67ac653f2d99a40000b0eda46ab0eda46a000000000000000001000000000000000100000000000000aecdd76ab0eda46aaecdd76a40919c8123d1564c5dc044dd110e4ed97a6fa8a9e01f3afe4664aec771dfa831cd5ceb2bd6e36cb9b221bd270cf6704a355387c0db2883c91f2b5a63f4a156df04000000071caa376ec2d051",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-10",
+   "captured_at_unix": 1792527796,
+   "peer": "37.27.138.42:51668",
+   "length": 424,
+   "message_ctor_hex": "bbc373e6",
+   "raw_hex": "89cd42d10f8543c46a7b585bde770d75d80cb0f6da0d0000c8ef2ba7ca02e59175c748bb6618268879471dc4064806f05eb4c11c08138eb902000000bbc373e64c035971baa02bf05c51fe74a399828faa56e135fbd870b611c30a4d9dce33adbacdd76a1684ac0f866c177e84c350b7f354e9484ad1ab3663a1111b1e9d05edbba9b41a70df2bfa94680562a201000000c6b4134882ef32fb7e8561e4dc6b7e39401c37f98ef138501fbaa805cb0252079d770d0a01000000e7a60d67df202054daec00003acdd76a3acdd76a00000000000000009dcdd76a406d7172035d44ef1182a71ddf08e7d78a2374ef7ade6a2662a51a243bc5fcdccf863d57acb99cc5ae47f46123ff366e49a72be15b61d98e4f2d481b7239039b0600000000000001000000e7a60d672a8a1b25d4c900002f409a6a2f409a6a000000000000000002000000000000000100000000000000b3cdd76a2f409a6aaecdd76a405c8c6a83a9883efd24f68096c5489f98db1354a00016c35505b04e61d3d99eba9ac5ce3760252ffe2b165eb8db17a7862e6594dcd655fd5a9f7791d33eeb710f00000007ccbde46f8fc23e",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-11",
+   "captured_at_unix": 1792527795,
+   "peer": "78.141.205.142:59725",
+   "length": 64,
+   "message_ctor_hex": "dadff817",
+   "raw_hex": "89cd42d10fe6670590906dc9d39eba3d9af91183c4010000dadff81705000000000000000300000000000000b3cdd76a0fd3e448ba4b178b22280143404bc637",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-12",
+   "captured_at_unix": 1792529130,
+   "peer": "82.23.163.70:9610",
+   "length": 420,
+   "message_ctor_hex": "f5184820",
+   "raw_hex": "89cd42d10ffd72787ce3301a3555026396001597c4000000f5184820fe6c01002024257512b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b25586496b2b5ab1c6b413484871fbbe789a245d25d5e880f2ad1fb8d9eff4f6f23da74e0594b1bcf27e14c9cfbcda3200000000cc67181b3dc6b5ee9c724101020100b70001e18801f7a8acdc84f17f0550d53bf4f643112ed52a205720c4c5aa7f34d3ae88750be605624f1ae1ccce7a1d583d289d8c45ef3164c794cdf0d3e52667a896be75df5aa52093d8bbf36c0e879bb17ecf10bc16a9f4eb3e69ccbd6884fecef15502fe00714d4d18bb56beaa3000000820001c01008242004edbc5f4b57fbd61164b819c72436c25a9c0c70c32d17f096b8e62410ca69844a177b640400000000000000000000000000000000000313036373537323438e002301200000000f0d2d76a4024a5e338dd502859b17af3ca8b4e9a8f5f46f2609236a025c5efccb57c38a84688e286681280b938105cc66730a0a7982e0360ebe51a6b45129c3b2fb0a5490d00000034000000000000007000000000000000074424592fadf17f",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-13",
+   "captured_at_unix": 1792529159,
+   "peer": "82.23.163.70:9610",
+   "length": 564,
+   "message_ctor_hex": "f5184820",
+   "raw_hex": "89cd42d107d0bde781032f3dc4000000f5184820fefc01002024257512b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b25586496b2b5ab1c6b413485bddc38aa5438b256ea7c4e9f09ee912230b22e30f5e1bd96dc6066a2a7c2388cfbcda3200000000fe5c010067181b3dfe520100b5ee9c72010204010001460003e188010a8c1e152b7f721426b5ad9110fcb28b20ac611f39b9be5649111944a6aa991a119144bf296dfb7db1b807c33498fc4a5ed0581c8f8a9d5e706f407ea6d441ea4488208c675a694f4ef61c08df2083c44bef9e68dceea19e335c2c85453d764441818c264effffffffe0000000007001020300deff0020dd2082014c97ba218201339cbab19f71b0ed44d0d31fd31f31d70bffe304e0a4f2608308d71820d31fd31fd31ff82313bbf263ed44d0d31fd31fd3ffd15132baf2a15144baf2a204f901541055f910f2a3f8009320d74a96d307d402fb00e8d101a4c8cb1fcb1fcbffc9ed540050000000000c6132773d9b775637c922de437a40d3318ebc0be30b648f6e98c2357fa02072acf87a330066620012c96bdbf719403a2f668231c0c5845011a6933d8dfe695c865c2629116919de180c35000000000000000000000000000000000dd3d76a40ba1022b1e527ddaed1204429814239199b072d386620341be410b1782914a0d63eea79fc0008f807376d90b4fa6bc10e8c376b00092eb2a6d2327f803310ce0e0000003b0000000000000087000000000000000fc267e1fab3a3fafce42cdef34d6ca2",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-14",
+   "captured_at_unix": 1792527791,
+   "peer": "88.99.103.42:51207",
+   "length": 60,
+   "message_ctor_hex": null,
+   "raw_hex": "89cd42d10f406ba4bead2fb94f51a815cb3f41c0c001000005000000000000000300000000000000aecdd76a0f2269f06a50d293597095f5aaf24515",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  },
+  {
+   "name": "live-packet-contents-15",
+   "captured_at_unix": 1792527790,
+   "peer": "70.34.215.235:53014",
+   "length": 244,
+   "message_ctor_hex": null,
+   "raw_hex": "89cd42d10f4d079c49744f892531fd8e8f55999ad90d0000c6b4134873bf8977a30f1557c0bac9a70fed615fa03689ccc6659fe4644446890425c9c302000000bbc373e6ab1cc567d22f018e6073181dcc88d8688ea6247464cd6638bd05a90158aed4d8b4cdd76adadff81701000000e7a60d67ebd7224616cf0000d59da36ad59da36a000000000000000001000000000000000100000000000000aecdd76ad59da36aaecdd76a40948dfe82fde02016ef9520bb53d64ed5119f2689667f4ccf70098e879e43fe992fbf045edffa6daaae868d76a7f7010e937121db180562d6d91ab206a15ee10200000007755feb982cdef7",
+   "source": ".agents/logs/pin5/run-capture.sh: two configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with ADNL_UDP_CAPTURE_FILE armed"
+  }
+ ],
+ "title": "Live mainnet adnl.packetContents bodies.",
+ "note": "Decrypted packetContents bodies from official mainnet nodes, recorded as our decoder's canonical re-serialization at capture time. Offline tests pin that our decoder maps every observed constructor to the variant that re-serializes to the same bytes.",
+ "captured_on": "2026-10-20"
+}

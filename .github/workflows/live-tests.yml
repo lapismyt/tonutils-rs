@@ -447,6 +447,26 @@ jobs:
             classify "$i" | tee -a "$summary"
           done
 
+          # The bootstrap digest: what discovery reached before the growth
+          # cadence.  TODO item 381 watches whether the bootstrap attempt
+          # set reaches the whole overlay-node value union; the census is
+          # the only place the digest reaches the job log on a green run.
+          for i in $(seq 1 "$samples"); do
+            s="$artifacts/sample-$i.log"
+            [ -s "$s" ] || continue
+            digest="$(grep -oE 'mempool::start: seeds=[0-9]+ discovery_results=[0-9]+ peers=[0-9]+ attempting [0-9]+ session\(s\)' "$s" | tail -n 1)"
+            echo "sample $i: bootstrap=${digest:-none}"
+          done
+
+          # The delivery-quality census: the live evidence behind the
+          # scoring thresholds and the churn default (TODO items 491/492).
+          for i in $(seq 1 "$samples"); do
+            s="$artifacts/sample-$i.log"
+            [ -s "$s" ] || continue
+            quality="$(grep -oE 'peer quality: snapshot .*' "$s" | tail -n 1)"
+            echo "sample $i: ${quality:-peer quality: snapshot not reached}"
+          done
+
           # The STUN observations behind each sample's address publication.
           # Distinct servers reporting different ports are the signature of
           # a per-destination NAT, which correctly publishes nothing; the

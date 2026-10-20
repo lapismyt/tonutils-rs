@@ -33,6 +33,7 @@
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
@@ -159,6 +160,9 @@ struct RegistryState {
 pub struct PeerQualityRegistry {
     config: PeerQualityConfig,
     state: RwLock<RegistryState>,
+    /// Peers removed by quality churn since this registry was created,
+    /// surfaced by the live census so churn is measurable per run.
+    evictions: AtomicU64,
 }
 
 impl PeerQualityRegistry {
@@ -172,7 +176,19 @@ impl PeerQualityRegistry {
                 connected: Arc::new(Vec::new()),
                 last_sweep: Instant::now(),
             }),
+            evictions: AtomicU64::new(0),
         }
+    }
+
+    /// Records one peer removed by quality churn.
+    pub fn record_eviction(&self) {
+        self.evictions.fetch_add(1, AtomicOrdering::Relaxed);
+    }
+
+    /// Total peers evicted by quality churn since this registry was created.
+    #[must_use]
+    pub fn evictions(&self) -> u64 {
+        self.evictions.load(AtomicOrdering::Relaxed)
     }
 
     /// Returns the immutable configuration this registry was built with.
@@ -460,6 +476,7 @@ pub(crate) fn spawn_quality_tasks(
                     "peer quality: evicting {peer:?}, the worst delivery score over the limit"
                 );
                 manager.remove_session(peer).await;
+                registry.record_eviction();
             }
         }
     });

@@ -59,6 +59,14 @@ const FIXTURE_FILES: [(&str, &str); 6] = [
 ];
 const MANIFEST: &str = include_str!("../../../../fixtures/cross_sdk/manifest.json");
 
+/// Every fixture the manifest must list: the offline cross-SDK fixtures
+/// plus the live wire fixtures captured from official nodes.
+fn all_fixture_files() -> impl Iterator<Item = (&'static str, &'static str)> {
+    FIXTURE_FILES
+        .into_iter()
+        .chain(super::live_wire::LIVE_WIRE_FIXTURE_FILES)
+}
+
 #[test]
 fn cross_sdk_manifest_matches_bundled_fixtures() {
     let manifest: Value =
@@ -69,9 +77,8 @@ fn cross_sdk_manifest_matches_bundled_fixtures() {
         .iter()
         .map(|entry| entry["path"].as_str().expect("fixture path").to_owned())
         .collect();
-    let mut bundled: Vec<String> = FIXTURE_FILES
-        .iter()
-        .map(|(name, _)| (*name).to_owned())
+    let mut bundled: Vec<String> = all_fixture_files()
+        .map(|(name, _)| name.to_owned())
         .collect();
     listed.sort();
     bundled.sort();
@@ -80,7 +87,7 @@ fn cross_sdk_manifest_matches_bundled_fixtures() {
         "manifest fixture list must match the bundled fixture files"
     );
 
-    for (file, content) in FIXTURE_FILES {
+    for (file, content) in all_fixture_files() {
         let fixture: Value = serde_json::from_str(content)
             .unwrap_or_else(|error| panic!("fixtures/cross_sdk/{file} must parse: {error}"));
         for case in fixture["cases"].as_array().expect("fixture cases") {

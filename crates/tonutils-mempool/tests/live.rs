@@ -7,8 +7,8 @@ use futures::future::join_all;
 use tonutils_adnl::{AdnlUdpSession, AdnlUdpTransport, KeyPair, PublicKey};
 use tonutils_mempool::MempoolScannerBuilder;
 use tonutils_mempool::{
-    MempoolConfig, MempoolEvent, OverlayMemberEndpoints, PeerQualityConfig, known_member_seeds,
-    udp_overlay_lookup, udp_overlay_lookup_with_endpoints,
+    MempoolConfig, MempoolEvent, MempoolScanner, OverlayMemberEndpoints, PeerQualityConfig,
+    known_member_seeds, udp_overlay_lookup, udp_overlay_lookup_with_endpoints,
 };
 use tonutils_network_config::extract_dht_addresses;
 use tonutils_overlay::{OverlayId, PeerId, PeerStatus, SeedPeer};
@@ -29,6 +29,32 @@ fn configured_seed(variable: &str) -> SocketAddr {
     value
         .parse()
         .unwrap_or_else(|_| panic!("{variable} must contain an IP:port seed"))
+}
+
+/// One compact delivery-quality census line: aggregate outcome counts,
+/// the churn eviction total, and the score range.  TODO item 491 uses
+/// it to judge the quality thresholds (500 ms late, 3 s miss, 10
+/// observations, 60 s half-life) against live overlay traffic.
+fn quality_census(scanner: &MempoolScanner) -> String {
+    let snapshot = scanner.quality().snapshot();
+    let (first, on_time, late, misses) = snapshot.iter().fold(
+        (0u64, 0u64, 0u64, 0u64),
+        |(first, on_time, late, misses), entry| {
+            (
+                first + entry.first_deliveries,
+                on_time + entry.on_time_deliveries,
+                late + entry.late_deliveries,
+                misses + entry.misses,
+            )
+        },
+    );
+    let best = snapshot.first().map(|entry| entry.score).unwrap_or(0.0);
+    let worst = snapshot.last().map(|entry| entry.score).unwrap_or(0.0);
+    format!(
+        "peer quality: snapshot tracked={} first={first} on_time={on_time} late={late} misses={misses} evictions={} best_score={best:.2} worst_score={worst:.2}",
+        snapshot.len(),
+        scanner.quality().evictions(),
+    )
 }
 
 #[tokio::test]
@@ -355,17 +381,21 @@ async fn configured_seed_delivers_valid_external_message() {
         .reconnect_attempts(2)
         .discovery_timeout(Duration::from_secs(30))
         .dht_overlay_key(dht_overlay_key)
-        // Bootstrap alone registers one session per config seed plus one per
-        // discovered member, which already exceeds the default budget of 30 and
-        // leaves the growth loop nothing to do.  A larger budget lets growth add
-        // members reached transitively, which is what raises the number of peers
-        // that can verify this node and push broadcasts to it.
+        // Bootstrap registers one session per discovered member (bootstrap
+        // seeds are DHT contacts, not members), and a larger budget than the
+        // default 30 lets growth add members reached transitively, which is
+        // what raises the number of peers that can verify this node and push
+        // broadcasts to it.
         .overlay_max_peers(overlay_max_peers)
         .member_endpoints(member_endpoints.clone())
-        // Enable quality eviction with aggressive churn so managed slots rotate
-        // throughout the delivery wait, letting growth continuously add fresh
-        // full-node contacts (each eviction -> growth round -> new admission
-        // ticket).
+        // Enable the quality-churn task with an aggressive cadence so the gate
+        // exercises the opt-in wiring on mainnet.  The gate's budget (256) sits
+        // far above the live roster (~27 peers), so the over-budget condition
+        // eviction enforces never arises here and evictions stay 0; the
+        // census line is the value this knob adds to the gate (recorded in
+        // TODO.md).  Churn evicts only when the managed roster exceeds
+        // `overlay_max_peers` and the candidate has at least
+        // `min_observations` delivery observations.
         .peer_quality(PeerQualityConfig {
             churn_interval: Duration::from_secs(3),
             sweep_interval: Duration::from_secs(1),
@@ -455,9 +485,10 @@ async fn configured_seed_delivers_valid_external_message() {
             // this bounds how long a broadcast from the live overlay
             // takes to reach this node's accept path.
             eprintln!(
-                "live mempool phase=delivery time_to_message={:?} metrics={:?}",
+                "live mempool phase=delivery time_to_message={:?} metrics={:?} {}",
                 delivery_started.elapsed(),
                 scanner.metrics(),
+                quality_census(&scanner),
             );
             event
         }
@@ -466,6 +497,7 @@ async fn configured_seed_delivers_valid_external_message() {
             let metrics = scanner.metrics();
             let protocol = scanner.protocol_stats();
             let custom_arrived = protocol.custom_messages;
+            eprintln!("{}", quality_census(&scanner));
             panic!(
                 "live mempool phase=delivery timed out after {timeout}s: registered_peers={peers} metrics={metrics:?} protocol={protocol:?}; inbound custom overlay datagrams arrived={custom_arrived} in this window; delivery requires a verified-neighbour holder to sample this node into its broadcast fan-out (upstream get_neighbours(propagate_broadcast_to() = 5)), so a red window is an upstream sampling outcome, not a client defect - mechanism and recorded arms in docs/reference/network/overlay-delivery-ledger.md"
             );

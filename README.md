@@ -20,6 +20,7 @@ network reads and submissions require an explicitly configured live provider.
 - [Examples](docs/examples.md): compile offline workflows and run live queries.
 - [TVM primitives](docs/tvm.md): cells, BoC, addresses, dictionaries, and stacks.
 - [LiteClient](docs/liteclient.md): connect to TON liteservers over LiteAPI.
+- [Mempool](docs/mempool.md): stream pending external messages from the live overlay.
 - [Wallets](docs/wallets.md): derive addresses and build signed messages offline.
 - [Documentation book](https://lapismyt.github.io/tonutils-rs/): browse all public
   guides plus the internal protocol notes.

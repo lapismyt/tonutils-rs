@@ -34,6 +34,23 @@
 
 use std::sync::OnceLock;
 
+thread_local! {
+    /// Set while executing on the inbound thread, so the shared-socket
+    /// send path can take the synchronous non-blocking send that does
+    /// not depend on the application runtime's IO driver.
+    static ON_INBOUND_THREAD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Marks the current thread as the inbound executor thread.
+pub(super) fn mark_inbound_thread() {
+    ON_INBOUND_THREAD.with(|flag| flag.set(true));
+}
+
+/// Whether the caller runs on the inbound executor thread.
+pub(super) fn on_inbound_thread() -> bool {
+    ON_INBOUND_THREAD.with(|flag| flag.get())
+}
+
 /// Handle to the inbound executor, created on its first use.
 static HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
@@ -49,6 +66,7 @@ pub(super) fn handle() -> &'static tokio::runtime::Handle {
         std::thread::Builder::new()
             .name("adnl-udp-inbound".to_owned())
             .spawn(move || {
+                mark_inbound_thread();
                 let runtime = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
                     .build()
@@ -62,4 +80,29 @@ pub(super) fn handle() -> &'static tokio::runtime::Handle {
         rx.recv()
             .expect("the ADNL inbound thread must report its handle")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The marker distinguishes the inbound executor thread from every
+    /// other thread: the shared-socket send path relies on it to take
+    /// the synchronous non-blocking send only where the application
+    /// runtime's IO driver would otherwise gate the write.
+    #[test]
+    fn the_marker_is_set_only_on_the_inbound_thread() {
+        assert!(
+            !on_inbound_thread(),
+            "ordinary threads must not report the inbound marker"
+        );
+        // A task spawned on the handle runs on the inbound runtime's
+        // own thread; `Handle::block_on` would run it here instead.
+        let (tx, rx) = std::sync::mpsc::channel();
+        handle().spawn(async move {
+            let _ = tx.send(on_inbound_thread());
+        });
+        let on_inbound = rx.recv().expect("the spawned task must report");
+        assert!(on_inbound, "the inbound thread must report its marker");
+    }
 }

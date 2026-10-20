@@ -18,6 +18,7 @@ use tonutils_tl::Message as AdnlMessage;
 
 use crate::{AdnlAesParams, AdnlCodec, AdnlError};
 
+mod capture;
 mod cipher;
 mod inbound;
 mod session;

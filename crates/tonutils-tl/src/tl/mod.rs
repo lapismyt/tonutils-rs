@@ -19,6 +19,8 @@ mod cross_sdk;
 pub mod error;
 pub mod fullnode;
 pub mod generated;
+#[cfg(test)]
+mod live_wire;
 pub mod network;
 pub mod overlay;
 pub mod request;

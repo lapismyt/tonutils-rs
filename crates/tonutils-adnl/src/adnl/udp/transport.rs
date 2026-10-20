@@ -99,6 +99,11 @@ pub(super) struct TransportInner {
     /// Datagrams this socket sent since the transport was created,
     /// for the receive heartbeat's send-rate column.
     pub(super) sent_datagrams: AtomicU64,
+    /// Datagrams dropped because the kernel send buffer was full on a
+    /// synchronous send from the inbound executor thread (UDP loss
+    /// semantics, counted so a saturated egress path stays visible in
+    /// the heartbeat).
+    pub(super) tx_drops: AtomicU64,
     /// Datagrams the receive thread dropped because the
     /// socket-to-demultiplexer channel was full.
     rx_overruns: Arc<AtomicU64>,
@@ -196,6 +201,7 @@ impl AdnlUdpTransport {
             routes: Mutex::new(Routes::default()),
             demux: Mutex::new(DemuxState::default()),
             sent_datagrams: AtomicU64::new(0),
+            tx_drops: AtomicU64::new(0),
             rx_overruns: Arc::new(AtomicU64::new(0)),
             dispatch_wait_max_ms: AtomicU64::new(0),
             shutdown: Arc::new(AtomicBool::new(false)),
@@ -510,6 +516,7 @@ impl TransportInner {
         let mut last_beat = std::time::Instant::now();
         let mut last_sent = self.sent_datagrams.load(Ordering::Relaxed);
         let mut last_overruns = self.rx_overruns.load(Ordering::Relaxed);
+        let mut last_tx_drops = self.tx_drops.load(Ordering::Relaxed);
         let mut stats = DemuxStats::default();
         let mut iters: u64 = 0;
         let mut gap_max_ms: u128 = 0;
@@ -594,10 +601,12 @@ impl TransportInner {
                 () = tokio::time::sleep_until(heartbeat) => {
                     let sent = self.sent_datagrams.load(Ordering::Relaxed);
                     let overruns = self.rx_overruns.load(Ordering::Relaxed);
+                    let tx_drops = self.tx_drops.load(Ordering::Relaxed);
                     log::debug!(
-                        "ADNL transport rx heartbeat: datagrams={} sent={} dropped={} closed={} unrouted={} overrun={} wait_max_ms={} wait_cum_max_ms={} iters={iters} gap_max_ms={gap_max_ms} dt_ms={} {}",
+                        "ADNL transport rx heartbeat: datagrams={} sent={} tx_drop={} dropped={} closed={} unrouted={} overrun={} wait_max_ms={} wait_cum_max_ms={} iters={iters} gap_max_ms={gap_max_ms} dt_ms={} {}",
                         stats.datagrams,
                         sent - last_sent,
+                        tx_drops - last_tx_drops,
                         stats.dropped,
                         stats.closed,
                         stats.unrouted,
@@ -614,6 +623,7 @@ impl TransportInner {
                     );
                     last_sent = sent;
                     last_overruns = overruns;
+                    last_tx_drops = tx_drops;
                     last_beat = std::time::Instant::now();
                     heartbeat = tokio::time::Instant::now() + DEMUX_HEARTBEAT;
                     stats = DemuxStats::default();
@@ -768,6 +778,9 @@ fn receive_loop(
         match socket.recv_from(&mut packet) {
             Ok((size, peer)) => {
                 let at = std::time::Instant::now();
+                if super::capture::armed() {
+                    super::capture::record("datagram", Some(peer), &packet[..size]);
+                }
                 if tx.try_send((at, packet[..size].to_vec(), peer)).is_err() {
                     overruns.fetch_add(1, Ordering::Relaxed);
                 }

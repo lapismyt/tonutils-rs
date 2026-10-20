@@ -72,6 +72,21 @@ pub const PUBLISH_INTERVAL: Duration = Duration::from_secs(10 * 60);
 /// retry keeps one silent node from costing the whole publish interval.
 const PUBLISH_STORE_RETRY_DELAY: Duration = Duration::from_secs(5);
 
+/// The second retry delay, longer than the first: the recorded
+/// round-wide failures (TODO item 447) stayed silent across the whole
+/// five-second window, so a second, wider beat gives a shaped or
+/// reloading path time to recover before the next interval.
+const PUBLISH_STORE_RETRY_LONG_DELAY: Duration = Duration::from_secs(15);
+
+/// Upper bound of the random first-round stagger.
+///
+/// Parallel scanners behind one NAT address (the k=8 delivery gate)
+/// start their STUN probes and store rounds within the same second,
+/// which correlates the candidate silence the retries exist for; a
+/// per-instance jitter spreads the first round over this window.
+/// Later rounds stay on the fixed [`PUBLISH_INTERVAL`] cadence.
+pub const PUBLISH_FIRST_ROUND_STAGGER_MAX: Duration = Duration::from_secs(20);
+
 /// A DHT node a publish round can store the value on.
 #[derive(Clone, Debug)]
 pub(in crate::udp_session) struct DhtCandidate {
@@ -248,6 +263,23 @@ pub async fn publish_dht_address_value(
     dht_nodes: &[SeedPeer],
     timeout: Duration,
 ) -> Vec<DhtCandidate> {
+    publish_dht_address_value_attempt(local_addr, local_keypair, external, dht_nodes, timeout, 0)
+        .await
+}
+
+/// One publish round; `attempt` selects which known nodes the
+/// enrichment asks, so a retry after a round-wide silence rotates to
+/// seeds the silent round never reached instead of re-asking the same
+/// closest nodes (TODO item 447).
+#[allow(clippy::large_types_passed_by_value)]
+async fn publish_dht_address_value_attempt(
+    local_addr: SocketAddr,
+    local_keypair: KeyPair,
+    external: SocketAddr,
+    dht_nodes: &[SeedPeer],
+    timeout: Duration,
+    attempt: usize,
+) -> Vec<DhtCandidate> {
     let value = address_dht_value(&local_keypair, external);
     let store_query = tl_proto::serialize(DhtMessage::Store {
         value: DhtValueBare::from(&value),
@@ -262,7 +294,15 @@ pub async fn publish_dht_address_value(
     );
     let key_id = dht_key_id(short_id(&local_keypair.public_key), b"address").0;
     let mut candidates = known_candidates(dht_nodes);
-    enrich_with_find_node(local_addr, local_keypair, &key_id, &mut candidates, timeout).await;
+    enrich_with_find_node(
+        local_addr,
+        local_keypair,
+        &key_id,
+        &mut candidates,
+        timeout,
+        attempt,
+    )
+    .await;
     candidates.sort_by_key(|candidate| xor_distance(&candidate.id, &key_id));
 
     // The stores are independent of each other, so run them
@@ -357,10 +397,12 @@ async fn enrich_with_find_node(
     key_id: &[u8; 32],
     candidates: &mut Vec<DhtCandidate>,
     timeout: Duration,
+    attempt: usize,
 ) {
-    let mut order: Vec<usize> = (0..candidates.len()).collect();
-    order.sort_by_key(|&index| xor_distance(&candidates[index].id, key_id));
-    for &index in order.iter().take(ENRICH_ATTEMPTS) {
+    for &index in enrichment_order(candidates, key_id, attempt)
+        .iter()
+        .take(ENRICH_ATTEMPTS)
+    {
         let Some(closest) = candidates.get(index).cloned() else {
             return;
         };
@@ -413,6 +455,21 @@ async fn enrich_with_find_node(
         return;
     }
     log::debug!("dht address publish: findNode enrichment exhausted {ENRICH_ATTEMPTS} attempt(s)");
+}
+
+/// The candidate indexes one enrichment walk asks, in distance order,
+/// rotated by `attempt`: every retry shifts the window by
+/// [`ENRICH_ATTEMPTS`] nodes (wrapping around), so a retry after
+/// round-wide silence reaches seeds the silent round never asked
+/// instead of re-asking the same closest ones.
+fn enrichment_order(candidates: &[DhtCandidate], key_id: &[u8; 32], attempt: usize) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..candidates.len()).collect();
+    order.sort_by_key(|&index| xor_distance(&candidates[index].id, key_id));
+    if !order.is_empty() {
+        let start = (attempt * ENRICH_ATTEMPTS) % order.len();
+        order.rotate_left(start);
+    }
+    order
 }
 
 /// Extracts a publish candidate from a `dht.node` record.
@@ -611,9 +668,10 @@ pub type DhtAddressPublisher =
 /// `TON_MEMPOOL_EXTERNAL_ADDRESS` environment variable, then a
 /// route probe against the known DHT nodes.  A lazy resolution
 /// keeps the value correct when the host's address changes
-/// between rounds.  A store round that stored nothing is retried
-/// once after a short delay, because a silent responsible node is
-/// indistinguishable from a transient failure.
+/// between rounds.  A store round that stored nothing is retried up to
+/// twice with rotating resolver seeds and a longer second delay,
+/// because a silent responsible node is indistinguishable from a
+/// transient failure.
 #[allow(clippy::large_types_passed_by_value)]
 pub fn address_publisher(
     local_addr: SocketAddr,
@@ -644,12 +702,27 @@ pub fn address_publisher(
             let mut stored =
                 publish_dht_address_value(local_addr, local_keypair, external, &nodes, timeout)
                     .await;
-            if stored.is_empty() {
-                log::debug!("dht address publish: store round stored nothing, retrying once");
-                tokio::time::sleep(PUBLISH_STORE_RETRY_DELAY).await;
-                stored =
-                    publish_dht_address_value(local_addr, local_keypair, external, &nodes, timeout)
-                        .await;
+            for (index, delay) in [PUBLISH_STORE_RETRY_DELAY, PUBLISH_STORE_RETRY_LONG_DELAY]
+                .into_iter()
+                .enumerate()
+            {
+                if !stored.is_empty() {
+                    break;
+                }
+                let attempt = index + 1;
+                log::debug!(
+                    "dht address publish: store round {attempt} stored nothing, retrying after {delay:?} with rotated resolvers"
+                );
+                tokio::time::sleep(delay).await;
+                stored = publish_dht_address_value_attempt(
+                    local_addr,
+                    local_keypair,
+                    external,
+                    &nodes,
+                    timeout,
+                    attempt,
+                )
+                .await;
             }
             let served = verify_dht_address_value(
                 local_addr,
@@ -768,6 +841,43 @@ mod tests {
         assert!(xor_distance(&near, &target) < xor_distance(&far, &target));
         // Distance is symmetric.
         assert_eq!(xor_distance(&near, &target), xor_distance(&target, &near));
+    }
+
+    #[test]
+    fn enrichment_order_rotates_the_resolver_window_per_attempt() {
+        let key_id = [7u8; 32];
+        let candidates: Vec<DhtCandidate> = (0..9)
+            .map(|_| {
+                let keypair = KeyPair::generate(&mut rand::rngs::OsRng);
+                DhtCandidate {
+                    id: short_id(&keypair.public_key),
+                    public_key: keypair.public_key,
+                    address: "127.0.0.1:30303".parse().unwrap(),
+                }
+            })
+            .collect();
+        let mut sorted = (0..candidates.len()).collect::<Vec<_>>();
+        sorted.sort_by_key(|&index| xor_distance(&candidates[index].id, &key_id));
+
+        // Attempt 0 keeps the plain closest-first order.
+        assert_eq!(enrichment_order(&candidates, &key_id, 0), sorted);
+        // Every further attempt shifts the window by ENRICH_ATTEMPTS,
+        // so a retry after round-wide silence never re-asks the same
+        // closest nodes first.
+        let window = |attempt: usize| -> Vec<usize> {
+            enrichment_order(&candidates, &key_id, attempt)
+                .into_iter()
+                .take(ENRICH_ATTEMPTS)
+                .collect()
+        };
+        assert_eq!(window(1), sorted[ENRICH_ATTEMPTS..2 * ENRICH_ATTEMPTS]);
+        assert_ne!(window(0), window(1));
+        // A wrap-around attempt stays a permutation of the whole set.
+        let wrapped = enrichment_order(&candidates, &key_id, 4);
+        let mut dedup = wrapped.clone();
+        dedup.sort_unstable();
+        dedup.dedup();
+        assert_eq!(dedup.len(), candidates.len());
     }
 
     #[test]

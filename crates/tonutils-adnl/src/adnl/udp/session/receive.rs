@@ -23,6 +23,22 @@ fn tl_id(data: &[u8]) -> u32 {
         .map_or(0, |id| u32::from_le_bytes([id[0], id[1], id[2], id[3]]))
 }
 
+/// What the receive loop must do with one dispatched datagram.
+///
+/// `PacketContents` is a few hundred bytes; the enum lives on the receive
+/// loop's stack only for the duration of one dispatch, so boxing the large
+/// variant would add a heap allocation per delivered packet for no benefit.
+#[allow(clippy::large_enum_variant)]
+enum Dispatch {
+    /// Nothing is left for the consumer: the datagram was rejected or
+    /// its registered fast answers consumed it.
+    Skip,
+    /// The decoded packet still needs the consumer inbox.
+    Deliver(PacketContents),
+    /// Terminal decode failure: end the loop.
+    Stop,
+}
+
 impl SessionInner {
     /// Decodes, validates, and dispatches every datagram routed
     /// to a shared session.
@@ -35,42 +51,134 @@ impl SessionInner {
     /// in-flight queries are routed by query id before the packet
     /// reaches the consumer, so a shared session can serve concurrent
     /// callers.
+    ///
+    /// When the consumer's inbox is full the decoded packet is parked
+    /// and the loop keeps reading further datagrams, so their
+    /// registered fast answers leave inside the peer's five-second
+    /// admission window instead of queueing behind inbox
+    /// backpressure; a second consumer-bound packet seen in that state
+    /// is dropped with UDP loss semantics and counted as
+    /// [`SessionInner::inbox_drops`].
     pub(super) async fn receive_loop(self: Arc<Self>) {
         let mut consecutive_failures: u32 = 0;
         let mut queue = self.queue.lock().await;
-        while let Some((at, datagram)) = queue.recv().await {
-            let wait_ms = at.elapsed().as_millis();
-            if wait_ms > SLOW_SESSION_WAIT_MS {
+        // A decoded packet the consumer's inbox could not take yet.
+        // While it waits, later datagrams are still read so their
+        // registered answers leave on time.
+        let mut parked: Option<PacketContents> = None;
+        let mut dropping = false;
+        'outer: loop {
+            if parked.is_none() {
+                let Some((at, datagram)) = queue.recv().await else {
+                    break;
+                };
+                match self
+                    .dispatch_datagram(&datagram, at, &mut consecutive_failures)
+                    .await
+                {
+                    Dispatch::Skip => continue,
+                    Dispatch::Deliver(contents) => parked = Some(contents),
+                    Dispatch::Stop => break,
+                }
+            }
+            let contents = parked.take().expect("the parked packet is set above");
+            tokio::select! {
+                reserved = self.inbox_tx.reserve() => {
+                    let Ok(permit) = reserved else {
+                        break 'outer;
+                    };
+                    permit.send(contents);
+                    dropping = false;
+                }
+                item = queue.recv() => {
+                    let Some((at, datagram)) = item else {
+                        // The queue closed with a packet still parked:
+                        // one last bounded hand-off, then end the loop.
+                        let _ = tokio::time::timeout(
+                            std::time::Duration::from_millis(200),
+                            self.inbox_tx.send(contents),
+                        )
+                        .await;
+                        break 'outer;
+                    };
+                    parked = Some(contents);
+                    match self
+                        .dispatch_datagram(&datagram, at, &mut consecutive_failures)
+                        .await
+                    {
+                        Dispatch::Skip => {}
+                        Dispatch::Deliver(_dropped) => {
+                            // The inbox is still full and one packet is
+                            // already parked: the newer consumer-bound
+                            // packet is dropped with UDP loss semantics.
+                            self.inbox_drops.fetch_add(1, Ordering::Relaxed);
+                            if !dropping {
+                                dropping = true;
+                                log::debug!(
+                                    "ADNL session inbox full: dropping consumer-bound packets, remote_id={}",
+                                    hex::encode(self.remote_id),
+                                );
+                            }
+                        }
+                        Dispatch::Stop => break 'outer,
+                    }
+                }
+            }
+        }
+    }
+
+    /// Applies the receive-loop work of one queued datagram: the slow
+    /// wait log, decode and validation, answer routing, query
+    /// bookkeeping, and the registered fast answers.
+    async fn dispatch_datagram(
+        &self,
+        datagram: &[u8],
+        at: std::time::Instant,
+        consecutive_failures: &mut u32,
+    ) -> Dispatch {
+        let wait_ms = at.elapsed().as_millis();
+        if wait_ms > SLOW_SESSION_WAIT_MS {
+            log::debug!(
+                "ADNL session queue wait: remote_id={} wait_ms={wait_ms}",
+                hex::encode(self.remote_id),
+            );
+        }
+        match self.process_datagram(datagram, consecutive_failures).await {
+            Ok(Some(contents)) => {
+                if super::super::capture::armed() {
+                    super::super::capture::record(
+                        "packetContents",
+                        Some(*self.remote_addr.lock().unwrap()),
+                        &tl_proto::serialize(&contents),
+                    );
+                    let customs = contents
+                        .message
+                        .iter()
+                        .chain(contents.messages.iter().flatten());
+                    for message in customs {
+                        if let AdnlMessage::Custom { data } = message {
+                            super::super::capture::record("custom", None, data);
+                        }
+                    }
+                }
+                self.deliver_answers(&contents);
+                self.note_inbound_queries(&contents, at);
+                if self.answer_fast_queries(&contents).await {
+                    Dispatch::Skip
+                } else {
+                    Dispatch::Deliver(contents)
+                }
+            }
+            Ok(None) => Dispatch::Skip,
+            Err(_) => {
+                // Terminal failure: too many consecutive datagrams
+                // could not be processed.  The inbox closes and the
+                // consumer sees `AdnlError::EndOfStream`.
                 log::debug!(
-                    "ADNL session queue wait: remote_id={} wait_ms={wait_ms}",
+                    "ADNL session receive loop ended: remote_id={} consecutive_failures={consecutive_failures}",
                     hex::encode(self.remote_id),
                 );
-            }
-            let processed = self
-                .process_datagram(&datagram, &mut consecutive_failures)
-                .await;
-            match processed {
-                Ok(Some(contents)) => {
-                    self.deliver_answers(&contents);
-                    self.note_inbound_queries(&contents, at);
-                    if self.answer_fast_queries(&contents).await {
-                        continue;
-                    }
-                    if self.inbox_tx.send(contents).await.is_err() {
-                        break;
-                    }
-                }
-                Ok(None) => {}
-                Err(_) => {
-                    // Terminal failure: too many consecutive datagrams
-                    // could not be processed.  The inbox closes and the
-                    // consumer sees `AdnlError::EndOfStream`.
-                    log::debug!(
-                        "ADNL session receive loop ended: remote_id={} consecutive_failures={consecutive_failures}",
-                        hex::encode(self.remote_id),
-                    );
-                    break;
-                }
+                Dispatch::Stop
             }
         }
     }

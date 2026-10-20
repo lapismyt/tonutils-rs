@@ -119,3 +119,68 @@ async fn declined_query_takes_the_ordinary_consumer_path() {
     };
     assert_eq!(received, query);
 }
+
+/// A full consumer inbox must not hold up the registered answers of
+/// later datagrams: the receive loop keeps reading the session queue
+/// while a decoded packet waits for inbox space, so a peer's liveness
+/// probe is answered inside its five-second window even when the
+/// consumer has stopped draining.  Packets the consumer is missing in
+/// that state are dropped and counted instead of queued.
+#[tokio::test]
+async fn registered_answers_leave_while_the_consumer_inbox_is_full() {
+    let (sender, receiver) = shared_pair().await;
+    receiver.register_query_answer(dht_find_node_id(), |_query| {
+        Some(tl_proto::serialize(DhtNodesBoxed { nodes: Vec::new() }))
+    });
+
+    // 64 consumer-bound queries fill the inbox (SESSION_QUEUE), the
+    // next one parks inside the receive loop, and the one after it is
+    // dropped and counted.  Nothing ever drains the inbox.
+    let consumer_bound = || PacketContents {
+        rand1: vec![0; 7],
+        flags: (),
+        from: None,
+        from_short: None,
+        message: Some(AdnlMessage::Query {
+            query_id: Int256::random(),
+            query: 0xdead_beefu32.to_le_bytes().to_vec(),
+        }),
+        messages: None,
+        address: None,
+        priority_address: None,
+        seqno: None,
+        confirm_seqno: None,
+        recv_addr_list_version: None,
+        recv_priority_addr_list_version: None,
+        reinit_date: None,
+        dst_reinit_date: None,
+        signature: None,
+        rand2: vec![0; 7],
+    };
+    for _ in 0..66 {
+        sender
+            .send_contents(consumer_bound())
+            .await
+            .expect("flood query must send");
+    }
+
+    // The registered query is dispatched while the loop waits for inbox
+    // space, so the answer leaves although the consumer never receives.
+    let answer = tokio::time::timeout(
+        Duration::from_secs(3),
+        sender.dht_find_node(Int256([9; 32]), 8, Duration::from_secs(2)),
+    )
+    .await
+    .expect("the registered answer must leave while the inbox is full")
+    .expect("the registered answer must reach the query's waiter");
+    assert!(
+        answer.nodes.is_empty(),
+        "the registered answer's empty node list must round-trip, got {:?}",
+        answer.nodes
+    );
+    assert!(
+        receiver.inbox_drops() >= 1,
+        "the consumer-bound packet behind the parked one must be counted as dropped, got {}",
+        receiver.inbox_drops()
+    );
+}

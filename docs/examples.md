@@ -140,6 +140,12 @@ cargo check --workspace --all-features
 - `wallet_offline_transfer` requires `tvm`. It derives V4R2 and V5R1
   addresses from a fixed TON mnemonic and builds a signed V4R2 deployment
   transfer BoC without network access.
+- `mempool_stream` lives in `crates/tonutils-mempool/examples/` and requires
+  `tonutils-mempool`. It joins the mainnet mempool overlay over ADNL/UDP
+  using the downloaded global config, streams accepted external messages,
+  re-broadcasts each one to the connected members, and shuts down cleanly on
+  Ctrl-C. The mempool crate also ships `mempool_scan` (live acceptance
+  counters), `mempool_scan_fast`, `mempool_send_v5r1`, `adnl_udp_mempool`,
+  and `dht_diag` in the same directory. See `docs/mempool.md` for the guide.
 
-Remaining coverage gaps tracked in `TODO.md`: live proof capture and mempool
-examples.
+Remaining coverage gaps tracked in `TODO.md`: live proof capture.

@@ -469,6 +469,15 @@ impl MempoolScannerBuilder {
     /// quality metrics and send ranking are always collected, and only peers
     /// with at least [`PeerQualityConfig::min_observations`] observations are
     /// ever evicted.
+    ///
+    /// With the builder's own wiring this option rarely fires: bootstrap and
+    /// the peer-growth task admit at most
+    /// [`overlay_max_peers`](Self::overlay_max_peers) managed sessions, and
+    /// only a lost peer's reconnection re-registering after growth filled
+    /// its slot (or a custom session factory adding managed peers) can
+    /// push the roster over the cap - and even then only peers with enough
+    /// delivery observations are eligible.  The quality observability
+    /// (`snapshot`, `evictions`) works either way.
     pub fn quality_eviction(mut self, enabled: bool) -> Self {
         self.quality_eviction = enabled;
         self
@@ -552,7 +561,7 @@ impl MempoolScannerBuilder {
             lookup_timeout: self.discovery_timeout,
             max_records: 64,
         };
-        let peers = if let Some(lookup) = self.seed_discovery_lookup.clone() {
+        let discovered = if let Some(lookup) = self.seed_discovery_lookup.clone() {
             log::debug!(
                 "seed_discovery_lookup: starting with {} seeds, timeout={:?}",
                 seeds.len(),
@@ -562,29 +571,19 @@ impl MempoolScannerBuilder {
                 .await
                 .ok()
                 .filter(|peers| !peers.is_empty());
-            let mut peers = result.unwrap_or_default();
-            let discovered_count = peers.len();
-            let mut seen = peers
-                .iter()
-                .map(|peer| (peer.peer, peer.address.clone()))
-                .collect::<std::collections::HashSet<_>>();
-            for seed in &seeds {
-                if seen.insert((seed.peer, seed.address.clone())) {
-                    peers.push(seed.clone());
-                }
-            }
-            if discovered_count == 0 {
+            let discovered = result.unwrap_or_default();
+            if discovered.is_empty() {
                 log::debug!(
-                    "seed_discovery_lookup: timed out or empty, using {} raw seeds",
+                    "seed_discovery_lookup: timed out or empty, falling back to the {} bootstrap seed(s)",
                     seeds.len()
                 );
             } else {
                 log::debug!(
-                    "seed_discovery_lookup: found {discovered_count} overlay peers and retained {} raw seeds",
-                    peers.len().saturating_sub(discovered_count)
+                    "seed_discovery_lookup: found {} overlay member(s)",
+                    discovered.len()
                 );
             }
-            peers
+            discovered
         } else if let Some(lookup) = self.typed_discovery_lookup.clone() {
             discovery.discover_typed(move |seeds| lookup(seeds)).await
         } else if let Some(lookup) = self.discovery_lookup.clone() {
@@ -592,13 +591,25 @@ impl MempoolScannerBuilder {
         } else {
             discovery.discover(|| async { Vec::new() }).await
         };
-        let discovered_count = peers.len().saturating_sub(seed_count);
+        let discovered_count = discovered.len();
+        // Bootstrap seeds are DHT contacts, not overlay members: the
+        // `dht.static_nodes` entries run the `dht-server` binary, which
+        // answers `dht.findValue` and `dht.store` but hosts no overlay
+        // session (TODO item 411), so a seed-derived member session sits
+        // registered, is never verified, and is never pushed to.  Membership
+        // therefore comes from discovery; the seed set is kept only as the
+        // bootstrap fallback when discovery found nothing to talk to.
+        let members = if discovered.is_empty() {
+            seeds.clone()
+        } else {
+            discovered
+        };
         // Merge the pinned set first: pinned sessions are attempted (and
         // remembered) ahead of discovery results, deduplicated by peer id so a
         // pinned address wins over a discovered one.
-        let mut merged = Vec::with_capacity(pinned.len() + peers.len());
-        let mut seen = HashSet::with_capacity(pinned.len() + peers.len());
-        for peer in pinned.iter().chain(peers.iter()) {
+        let mut merged = Vec::with_capacity(pinned.len() + members.len());
+        let mut seen = HashSet::with_capacity(pinned.len() + members.len());
+        for peer in pinned.iter().chain(members.iter()) {
             if seen.insert(peer.peer) {
                 merged.push(peer.clone());
             }
@@ -779,7 +790,22 @@ impl MempoolScannerBuilder {
                     // Publish before the first growth round so
                     // transitive discovery can resolve this node's
                     // address right away, then re-publish inside
-                    // the value's one hour lifetime.
+                    // the value's one hour lifetime.  The first
+                    // round is staggered over a random window:
+                    // parallel scanners behind one NAT fire their
+                    // STUN probes and store rounds in the same
+                    // second, which correlates the candidate
+                    // silence the retries exist for (TODO item
+                    // 447).
+                    let stagger_ms = (rand::random::<f64>()
+                        * f64::from(
+                            u32::try_from(PUBLISH_FIRST_ROUND_STAGGER_MAX.as_millis())
+                                .unwrap_or(u32::MAX),
+                        )) as u64;
+                    tokio::select! {
+                        _ = shutdown.changed() => return,
+                        () = tokio::time::sleep(Duration::from_millis(stagger_ms)) => {}
+                    }
                     loop {
                         let nodes = known.read().await.clone();
                         if !nodes.is_empty() {
