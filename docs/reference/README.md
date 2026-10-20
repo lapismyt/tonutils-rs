@@ -45,10 +45,11 @@ tracked in `fixtures/compatibility/block_tlb_extended.json`.
 21. [Wallet V4R2 and TON mnemonics](contracts/wallet-v4r2-mnemonics.md)
 22. [TEP metadata roadmap](contracts/tep-metadata.md)
 23. [Overlay protocol design](network/overlay.md)
-24. [Mempool scanner design](mempool/scanner.md)
-25. [Cross-SDK byte comparison](testing/cross-sdk-comparison.md)
-26. [DHT address publishing](network/dht-address-publishing.md)
-27. [QUIC TLS and wire profile](network/quic.md)
+24. [Overlay delivery gate ledger](network/overlay-delivery-ledger.md)
+25. [Mempool scanner design](mempool/scanner.md)
+26. [Cross-SDK byte comparison](testing/cross-sdk-comparison.md)
+27. [DHT address publishing](network/dht-address-publishing.md)
+28. [QUIC TLS and wire profile](network/quic.md)
 
 ## Directory Map
 

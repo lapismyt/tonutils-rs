@@ -15,6 +15,45 @@ impl SessionInner {
         self.send_locked(&mut state, contents, None).await
     }
 
+    /// Sends an answer to an inbound query and logs how long that query
+    /// waited inside this process since its datagram was read.
+    ///
+    /// Both [`AdnlUdpSession::send_answer`] and the receive task's
+    /// registered fast answers go through here, so every answer is
+    /// built and stamped identically and reported by the same
+    /// diagnostic whatever answered it.
+    pub(super) async fn send_answer_to(
+        &self,
+        query_id: &Int256,
+        answer: Vec<u8>,
+    ) -> Result<usize, AdnlError> {
+        let result = self
+            .send_contents(PacketContents {
+                rand1: vec![0; 7],
+                flags: (),
+                from: None,
+                from_short: None,
+                message: Some(AdnlMessage::Answer {
+                    query_id: query_id.clone(),
+                    answer,
+                }),
+                messages: None,
+                address: None,
+                priority_address: None,
+                seqno: None,
+                confirm_seqno: None,
+                recv_addr_list_version: None,
+                recv_priority_addr_list_version: None,
+                reinit_date: None,
+                dst_reinit_date: None,
+                signature: None,
+                rand2: vec![0; 7],
+            })
+            .await;
+        self.log_answer_latency(query_id);
+        result
+    }
+
     /// Encodes and sends one packet to `dest` instead of the session's
     /// adopted address.
     ///

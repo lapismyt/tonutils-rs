@@ -206,6 +206,7 @@ impl AdnlUdpOverlaySession {
             .await
             .map_err(|error| error.to_string())?;
         session.overlay = Some(overlay);
+        session.register_fast_answers();
         Ok(session)
     }
 
@@ -236,6 +237,7 @@ impl AdnlUdpOverlaySession {
             endpoints: crate::OverlayMemberEndpoints::default(),
             pre_dedup: PacketPreDedup::default(),
         };
+        session.register_fast_answers();
         if let Err(error) = session
             .session
             .overlay_get_random_peers(tonutils_tl::Int256(overlay.as_bytes()), timeout)
@@ -519,6 +521,24 @@ impl AdnlUdpOverlaySession {
         AdnlUdpOverlaySender {
             session: self.session.clone(),
             overlay: self.overlay,
+        }
+    }
+
+    /// Registers the stateless overlay answers on the ADNL session.
+    ///
+    /// `overlay.ping` and the pytoniq-style wrapped `dht.ping` are the
+    /// two probes whose answers need no overlay or DHT state, and they
+    /// are the ones peers measure against a liveness deadline, so the
+    /// session's receive task answers them directly instead of handing
+    /// them to the consumer loop (see
+    /// [`overlay_inbound::build_fast_answer`]).
+    fn register_fast_answers(&self) {
+        let Some(overlay) = self.overlay else {
+            return;
+        };
+        for id in overlay_inbound::FAST_ANSWER_IDS {
+            self.session
+                .register_query_answer(id, overlay_inbound::build_fast_answer(overlay, self.peer));
         }
     }
 

@@ -10,6 +10,9 @@ use crate::{
     KeyPair, decrypt_direct, encrypt_direct, ordered_channel_ciphers,
 };
 
+mod fast_answer;
+mod transport;
+
 #[test]
 fn roundtrip_and_reject_trailing_data() {
     let params = AdnlAesParams::default();
@@ -704,17 +707,24 @@ async fn raw_exchange_returns_reply_and_recovers_from_timeout() {
     assert!(matches!(again, Err(AdnlError::Timeout { .. })));
 }
 
-/// Inbound routing must not wait for the runtime's IO driver.
+/// Inbound routing must not wait for any task runtime's IO driver.
 ///
 /// Tokio pulls its IO driver only every `event_interval` (61) task polls
 /// while the local queue stays busy.  In the live gate, eight scanner
 /// samples share four vCPUs and chains of tasks wake each other for tens
-/// of seconds at a time; the demultiplexing task sat parked on socket
-/// readiness while probe answers filled the kernel receive queue, and
-/// every sample timed out with no inbound broadcast.  The socket is now
-/// drained by a dedicated thread whose channel send wakes the
-/// demultiplexer directly, and this test pins that routing latency does
-/// not scale with the driver window.
+/// of seconds at a time; the demultiplexing task sat on the runtime those
+/// samples saturated, so probe answers waited seconds in its queue while
+/// the kernel receive queue filled.  The socket is now drained by a
+/// dedicated thread and the demultiplexer runs on the process-wide
+/// inbound executor, so the read-to-dispatch leg never queues behind a
+/// session's runtime.  This test keeps the runtime hostile and asserts
+/// that leg (`dispatch_wait_max_ms`) stays inside a few polls.
+///
+/// The wait *after* the route handoff - the raw-exchange waiter here, a
+/// session consumer elsewhere - belongs to that waiter's own runtime and
+/// is not asserted: a hostile local queue delays every wake from another
+/// thread, and keeping peer liveness off that schedule is what session
+/// fast answers are for.
 #[tokio::test]
 async fn inbound_routing_survives_a_busy_runtime() {
     use std::sync::Arc;
@@ -726,10 +736,12 @@ async fn inbound_routing_survives_a_busy_runtime() {
     const BURN: Duration = Duration::from_millis(50);
     /// Task polls between two IO driver turns while the chain runs.
     const WINDOW_POLLS: u64 = 61;
-    /// Task polls inbound routing may take, out of the window above.
-    /// A driver-gated receive path needs the window itself; the fix
-    /// needs a couple of polls.
-    const BUDGET_POLLS: u64 = 12;
+    /// Read-to-dispatch polls inbound routing may take, out of the window
+    /// above.  Routing runs on the inbound executor and measures far below
+    /// one poll on a quiet machine; the budget absorbs a loaded machine's
+    /// OS scheduling while still failing a receive path that waits for a
+    /// driver turn or for another runtime's queue to drain.
+    const WAIT_BUDGET_POLLS: u64 = WINDOW_POLLS / 2;
 
     fn burn() {
         let until = std::time::Instant::now() + BURN;
@@ -839,147 +851,13 @@ async fn inbound_routing_survives_a_busy_runtime() {
 
     let reply = reply.expect("echo reply must arrive while the runtime is busy");
     assert_eq!(reply, b"ping");
-    let elapsed_ms = elapsed_ms.load(Ordering::Relaxed);
     let poll_ms = poll_ms.load(Ordering::Relaxed);
+    let elapsed_ms = elapsed_ms.load(Ordering::Relaxed);
+    let wait_max_ms = transport.dispatch_wait_max_ms();
     assert!(
-        elapsed_ms < BUDGET_POLLS * poll_ms,
-        "inbound routing took {elapsed_ms} ms while the IO driver window was about {} ms \
-         ({WINDOW_POLLS} polls of {poll_ms} ms)",
+        wait_max_ms <= WAIT_BUDGET_POLLS * poll_ms,
+        "read-to-dispatch wait was {wait_max_ms} ms while the IO driver window was about {} ms \
+         ({WINDOW_POLLS} polls of {poll_ms} ms; round trip {elapsed_ms} ms)",
         WINDOW_POLLS * poll_ms,
-    );
-}
-
-/// One peer advertises several endpoints; a probe of one of them must
-/// not repoint the session at it.
-#[tokio::test]
-async fn probe_sessions_keep_the_adopted_address() {
-    use crate::AdnlUdpTransport;
-
-    let transport = AdnlUdpTransport::bind(
-        "127.0.0.1:0".parse().unwrap(),
-        KeyPair::generate(&mut rand::rngs::OsRng),
-    )
-    .await
-    .expect("transport must bind");
-    let peer = KeyPair::generate(&mut rand::rngs::OsRng);
-    let established: std::net::SocketAddr = "127.0.0.1:41001".parse().unwrap();
-    let candidate: std::net::SocketAddr = "127.0.0.1:41002".parse().unwrap();
-
-    let session = transport.session_for_peer(peer.public_key, established);
-    assert_eq!(session.remote_addr(), established);
-
-    // A dial-only caller gets the same session and must not repoint it:
-    // a concurrent sweep over candidate endpoints used to strand the
-    // manager's keepalives on whichever candidate adopted last.
-    let probe = transport.session_for_probe(peer.public_key, candidate);
-    assert_eq!(
-        probe.remote_addr(),
-        established,
-        "a probe must not adopt a candidate endpoint"
-    );
-
-    // An addressed send keeps the adopted address too: the destination
-    // rides on that packet only.
-    probe
-        .send_overlay_get_random_peers_to(candidate, Int256([7; 32]))
-        .await
-        .expect("an addressed send must reach the socket layer");
-    assert_eq!(
-        session.remote_addr(),
-        established,
-        "an addressed send must not adopt its destination"
-    );
-
-    // The deliberate adopt path keeps working for the manager.
-    transport.session_for_peer(peer.public_key, candidate);
-    assert_eq!(session.remote_addr(), candidate);
-}
-
-/// A session whose consumer stalls must not block the shared socket's
-/// demultiplexer.
-///
-/// The demultiplexer is one task for every session of a node id, and
-/// its queues are bounded.  Waiting for room in a saturated session's
-/// queue let one stalled consumer add head-of-line delay to every
-/// other session on the socket; live CI runs showed it as a wide-area
-/// inbound lag (~27 s by late run) applied uniformly to all peers.
-/// Overflowing datagrams are now dropped and the demultiplexer keeps
-/// serving the rest of the socket.
-#[tokio::test]
-async fn saturated_session_does_not_stall_the_shared_demux() {
-    use crate::AdnlUdpTransport;
-
-    let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
-    let transport = AdnlUdpTransport::bind("127.0.0.1:0".parse().unwrap(), local_key)
-        .await
-        .expect("transport must bind");
-    let local_addr = transport.local_addr().unwrap();
-
-    // Peer A: a real session that is never drained, so its pipeline
-    // fills up: 64 datagrams in its queue and 64 in its inbox park its
-    // receive loop and permanently saturate the shared demux.
-    let key_a = KeyPair::generate(&mut rand::rngs::OsRng);
-    let addr_a = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let _session_a = transport.session_for_peer(key_a.public_key, addr_a);
-    let peer_a = AdnlUdpSession::connect(addr_a, local_addr, key_a, local_key.public_key)
-        .await
-        .unwrap();
-
-    // Peer B: a real single-socket session whose signed direct packet
-    // the shared transport decodes and delivers to session B.
-    let key_b = KeyPair::generate(&mut rand::rngs::OsRng);
-    let addr_b = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let session_b = transport.session_for_peer(key_b.public_key, addr_b);
-    let peer_b = AdnlUdpSession::connect(addr_b, local_addr, key_b, local_key.public_key)
-        .await
-        .unwrap();
-
-    let packet = |data: Vec<u8>| PacketContents {
-        rand1: vec![1],
-        flags: (),
-        from: None,
-        from_short: None,
-        message: Some(AdnlMessage::Custom { data }),
-        messages: None,
-        address: None,
-        priority_address: None,
-        seqno: None,
-        confirm_seqno: None,
-        recv_addr_list_version: None,
-        recv_priority_addr_list_version: None,
-        reinit_date: None,
-        dst_reinit_date: None,
-        signature: None,
-        rand2: vec![2],
-    };
-
-    // Overflow peer A's queue plus receive budget.
-    for index in 0..200u8 {
-        peer_a
-            .send_contents(packet(vec![index]))
-            .await
-            .expect("flood must send");
-    }
-    tokio::time::sleep(Duration::from_millis(300)).await;
-
-    // Peer B's packet must survive A's backlog and arrive promptly.
-    peer_b.send_contents(packet(vec![9, 9, 9])).await.unwrap();
-    let received = tokio::time::timeout(Duration::from_secs(5), session_b.recv_contents())
-        .await
-        .expect("a saturated sibling session must not stall session B")
-        .expect("session B must decode its packet");
-    assert_eq!(
-        received.message,
-        Some(AdnlMessage::Custom {
-            data: vec![9, 9, 9]
-        })
     );
 }

@@ -52,6 +52,15 @@ mod send;
 /// receive task applies backpressure.
 const SESSION_QUEUE: usize = 64;
 
+/// Inbound queries remembered per session by the instant their
+/// datagram was read off the socket, for the answer-latency
+/// diagnostic.
+///
+/// One peer cannot have more unanswered queries of this kind pending
+/// than it sends as a burst, so a small ring is enough to attach the
+/// socket-read instant to the answer that leaves later.
+const MAX_INBOUND_QUERIES: usize = 256;
+
 /// Queries whose waiter is gone keep their registration instant for
 /// this many most-recent entries, so an answer that arrives after the
 /// caller gave up can still be logged with its real age.
@@ -60,6 +69,21 @@ const MAX_RECENT_QUERIES: usize = 4096;
 /// One in-flight query: the instant its waiter was registered and the
 /// channel that delivers the answer to that waiter.
 type PendingQuery = (std::time::Instant, tokio::sync::oneshot::Sender<Vec<u8>>);
+
+/// One inbound query remembered for the answer-latency diagnostic: its
+/// query id, the instant its datagram was read off the socket, and the
+/// TL constructor the peer asked with (the little-endian id word at
+/// the start of the query payload, `0` when the payload is too short).
+type InboundQuery = ([u8; 32], std::time::Instant, u32);
+
+/// One registered synchronous answer for inbound queries, keyed by the
+/// query's outer TL constructor word (see
+/// [`AdnlUdpSession::register_query_answer`]).
+///
+/// The closure receives the query payload and returns the answer
+/// payload, or `None` to decline an id it shares but does not
+/// recognize; a declined query continues to the consumer unchanged.
+type FastAnswer = Arc<dyn Fn(&[u8]) -> Option<Vec<u8>> + Send + Sync>;
 
 /// One authenticated ADNL-over-UDP peer.
 ///
@@ -92,12 +116,13 @@ pub(crate) struct SessionInner {
     /// replay window.  Held only for synchronous critical sections and
     /// the datagram send, never across a consumer's receive wait.
     state: tokio::sync::Mutex<SessionState>,
-    /// Raw datagrams routed here by the transport's receive task.
+    /// Raw datagrams routed here by the transport's receive task, each
+    /// with the instant the receive thread read it off the socket.
     ///
     /// The session's own receive task is the only consumer, so it holds
     /// the lock for the whole loop; nothing else ever waits on it.
-    queue: tokio::sync::Mutex<mpsc::Receiver<Vec<u8>>>,
-    queue_tx: mpsc::Sender<Vec<u8>>,
+    queue: tokio::sync::Mutex<mpsc::Receiver<(std::time::Instant, Vec<u8>)>>,
+    queue_tx: mpsc::Sender<(std::time::Instant, Vec<u8>)>,
     /// Decoded packets for the session's consumer.
     inbox: tokio::sync::Mutex<mpsc::Receiver<PacketContents>>,
     inbox_tx: mpsc::Sender<PacketContents>,
@@ -112,6 +137,23 @@ pub(crate) struct SessionInner {
     /// of them arrives after the caller stopped waiting, so the age
     /// diagnostic picks it up from here.
     recent: Mutex<VecDeque<([u8; 32], std::time::Instant)>>,
+    /// Inbound queries by query id with the instant their datagram was
+    /// read off the socket and the TL constructor they asked with,
+    /// newest last and bounded to [`MAX_INBOUND_QUERIES`].
+    ///
+    /// [`AdnlUdpSession::send_answer`] removes the entry, so its log
+    /// line reports how long the peer's query waited inside this
+    /// process before the answer left - the leg a peer's
+    /// `overlay.ping` deadline is measured against.
+    inbound_queries: Mutex<VecDeque<InboundQuery>>,
+    /// Synchronous answers for inbound queries, by the query's outer TL
+    /// constructor word, registered through
+    /// [`AdnlUdpSession::register_query_answer`].
+    ///
+    /// The session's receive task consults this before delivering a
+    /// query to the consumer, so an answered query never queues behind
+    /// the consumer's inbox and the consumer never sees it.
+    fast_answers: Mutex<HashMap<u32, FastAnswer>>,
 }
 
 /// Where a session's datagrams travel.
@@ -325,26 +367,46 @@ impl AdnlUdpSession {
         self.inner.send_contents(contents).await
     }
 
+    /// Sends an answer to an inbound query and logs how long that
+    /// query waited inside this process since its datagram was read.
+    ///
+    /// A peer's `overlay.ping`/`dht.ping` answer is what grants this
+    /// node liveness on that peer (upstream allows five seconds, see
+    /// `OverlayImpl::check_pending_peer` in `overlay/overlay-peers.cpp`)
+    /// and what admits it into the peer's broadcast fan-out, so this
+    /// latency decides whether pushes ever arrive.  The value is
+    /// logged even when the send itself fails: it measures the wait,
+    /// not the outcome.
     pub async fn send_answer(&self, query_id: Int256, answer: Vec<u8>) -> Result<usize, AdnlError> {
-        self.send_contents(PacketContents {
-            rand1: vec![0; 7],
-            flags: (),
-            from: None,
-            from_short: None,
-            message: Some(AdnlMessage::Answer { query_id, answer }),
-            messages: None,
-            address: None,
-            priority_address: None,
-            seqno: None,
-            confirm_seqno: None,
-            recv_addr_list_version: None,
-            recv_priority_addr_list_version: None,
-            reinit_date: None,
-            dst_reinit_date: None,
-            signature: None,
-            rand2: vec![0; 7],
-        })
-        .await
+        self.inner.send_answer_to(&query_id, answer).await
+    }
+
+    /// Registers a synchronous answer for inbound queries whose outer
+    /// TL constructor word is `id`, replacing any earlier registration.
+    ///
+    /// The closure runs on the session's receive task - the layer that
+    /// already authenticated the datagram - so an answered query is
+    /// sent back there and never reaches [`Self::recv_contents`].  A
+    /// query the closure declines with `None` takes the ordinary
+    /// consumer path untouched, which lets one registration cover a
+    /// wrapper id whose inner constructors need different handling.
+    /// The closure must not call back into this session.
+    ///
+    /// This exists because a peer's liveness probes are answered on a
+    /// deadline (five seconds, `OverlayImpl::check_pending_peer`), and
+    /// an answer the consumer builds can queue behind application work
+    /// for longer than that: the live gate measured `overlay.ping`
+    /// answers taking seconds while the application runtime was busy.
+    pub fn register_query_answer(
+        &self,
+        id: u32,
+        answer: impl Fn(&[u8]) -> Option<Vec<u8>> + Send + Sync + 'static,
+    ) {
+        self.inner
+            .fast_answers
+            .lock()
+            .unwrap()
+            .insert(id, Arc::new(answer));
     }
 
     /// Receives the next decoded packet for this session's consumer.
@@ -538,6 +600,8 @@ impl SessionInner {
             inbox_tx,
             pending: Mutex::new(HashMap::new()),
             recent: Mutex::new(VecDeque::new()),
+            inbound_queries: Mutex::new(VecDeque::new()),
+            fast_answers: Mutex::new(HashMap::new()),
         }
     }
 
@@ -570,6 +634,8 @@ impl SessionInner {
             inbox_tx,
             pending: Mutex::new(HashMap::new()),
             recent: Mutex::new(VecDeque::new()),
+            inbound_queries: Mutex::new(VecDeque::new()),
+            fast_answers: Mutex::new(HashMap::new()),
         }
     }
 
@@ -640,11 +706,16 @@ impl SessionInner {
     /// returns one packet per call, exactly the pre-transport
     /// behavior - and its socket is released synchronously when
     /// the session is dropped.
+    ///
+    /// The task runs on the process-wide inbound executor
+    /// ([`super::inbound`]), not the runtime that created the session:
+    /// decoding, answer routing, and registered fast answers must not
+    /// queue behind the application's own ready queue.
     pub(super) fn spawn(self: Arc<Self>) {
         let Source::Shared(_) = &self.source else {
             return;
         };
-        tokio::spawn(async move {
+        super::inbound::handle().spawn(async move {
             self.receive_loop().await;
         });
     }

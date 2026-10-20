@@ -225,7 +225,7 @@ Limits and edge cases:
   field from RFC 5389 rather than captured from a live server, so the parser is
   checked against the specification.
 - Unit test in `tonutils-adnl`: `raw_exchange_returns_reply_and_recovers_from_timeout`
-  (`adnl/udp/tests.rs`) covers reply capture on the shared socket and hook
+  (`adnl/udp/tests/`) covers reply capture on the shared socket and hook
   cleanup after a timeout.
 - Unit test in `tonutils-tl` (`network.rs`): `dht_store_carries_the_bare_value`
   pins the store framing - the query is the `0x34934212` id followed by the

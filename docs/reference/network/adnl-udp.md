@@ -134,9 +134,11 @@ The `udp` module is split by concern so no file outgrows the repository's
 1000-line limit: `udp/mod.rs` holds the constants, the shared per-peer-pair
 sequence/reinit state, and `AdnlUdpPeer`/`AdnlUdpSocket`; `udp/cipher.rs` holds
 `AdnlChannelCipher`, `AdnlChannelPacket`, and the direct-packet crypto;
-`udp/session.rs` holds the `AdnlUdpSession` transport state machine; and
+`udp/session.rs` holds the `AdnlUdpSession` transport state machine;
+`udp/inbound.rs` holds the dedicated inbound executor; and
 `udp/session/query.rs` is a second inherent block with the DHT and overlay
-query helpers. `udp/tests.rs` covers all four. Everything is re-exported
+query helpers. `udp/tests/` covers all of them (`mod.rs` plus
+`fast_answer.rs`). Everything is re-exported
 unchanged through `adnl/mod.rs`, so no public path moved.
 
 `tonutils-adnl` exposes `AdnlUdpPeer`, `AdnlUdpSocket`, and authenticated
@@ -198,12 +200,27 @@ scanner samples on four shared vCPUs - left the window open for tens of
 seconds, so a demultiplexer parked on socket readiness was never woken
 while probe answers filled the kernel receive queue (runs 39032749928 and
 39107770528).  The thread never waits: a full channel drops the datagram
-and counts an overrun, the same loss mode UDP already has.  The
+and counts an overrun, the same loss mode UDP already has.
+
+The channel then hands the datagram to a task that is still on the
+application runtime, so `udp/inbound.rs` moves that hop too: a process-wide
+current-thread runtime on a dedicated OS thread (`adnl-udp-inbound`) runs
+the demultiplexer and every shared session's receive loop, and sessions
+spawn there instead of on the caller's runtime.  The saturated-runtime
+measurement behind the split (run 39114243866 and the pinned local re-run,
+`overlay-delivery-ledger.md`) read p50 1497 ms / max 14574 ms
+read-to-dispatch waits with no queue loss anywhere - `overrun`,
+`kernel_drops`, session-queue `dropped`, and `queue_max` all zero - so the
+remaining delay was executor scheduling, not I/O or backpressure.  The
 regression test
 `tonutils_adnl::adnl::udp::tests::inbound_routing_survives_a_busy_runtime`
 pins the property by chaining two tasks that keep the event loop's local
-queue busy and timing a raw-exchange round trip against the 61-poll driver
-window.
+queue busy and asserting the transport's own read-to-dispatch wait
+(`dispatch_wait_max_ms`, reported cumulatively by the heartbeat as
+`wait_cum_max_ms`) against half the 61-poll driver window; the round trip
+additionally includes the waiting caller's own runtime wake, which no
+transport change can schedule, so the test deliberately does not gate on
+it.
 
 The session hand-off is deliberately
 non-blocking: each session has a bounded queue (64 datagrams into its
@@ -217,21 +234,71 @@ confined to the slow session.  The regression test
 `tonutils_adnl::adnl::udp::tests::saturated_session_does_not_stall_the_shared_demux`
 pins the property.
 
+Queries a session can answer from no shared state skip the consumer
+entirely: `AdnlUdpSession::register_query_answer(id, closure)` stores a
+closure per TL constructor id, and the session's receive task runs it
+inline on the datagram that carried a matching `adnl.message.query`,
+sending the answer before the datagram reaches the inbox.  A closure that
+declines (returns `None`) leaves the datagram untouched for the consumer,
+so registering an id is never a routing change, only a shortcut; the
+session's own pending-answer routing is unaffected because registered
+answers go out as plain `adnl.message.answer` packets.  The mempool
+registers its probe constructors this way (overlay ping wrappers and
+`dht.ping`), which keeps peer liveness off the consumer's schedule - the
+five-second upstream deadline only measures the transport leg once the
+consumer is off it.  `udp/tests/fast_answer.rs` pins both the registered
+answer and the declined-query fallthrough; the mempool path is pinned by
+`overlay_inbound::tests` and the `udp_session` integration test.
+
 The demultiplexer also logs `ADNL transport rx heartbeat` every ten
 seconds while it runs: datagrams read and sent, datagrams dropped because a
 session queue was full, datagrams whose route was already closed, datagrams
 that matched no route, datagrams the receive thread dropped for a full
-channel (`overrun`), the demultiplexing loop's iterations and the longest
-gap between them (`iters`, `gap_max_ms`, which is this task's own
-scheduling latency), the interval's real wall-clock length, and - on Linux -
-the bytes the kernel still holds unread for the socket and the datagrams
-it dropped for overflow (`/proc/net/udp`).  The session receive path logs
-`ADNL answer age` for every delivered answer and `ADNL late answer` for
-an answer that arrived after its caller gave up.  The heartbeat and the
-ages separate "this process read the answer late" from "the answer
-arrived late", which line order in a log alone cannot.
+channel (`overrun`), the longest wait between the receive thread reading a
+datagram off the socket and this task dispatching it (`wait_max_ms`, the
+runtime's own scheduling delay on the inbound path) and the same value's
+cumulative maximum since the transport started (`wait_cum_max_ms`, which a
+rolling ten-second window can miss), the demultiplexing
+loop's iterations and the longest gap between them (`iters`, `gap_max_ms`,
+which is this task's own scheduling latency), the interval's real
+wall-clock length, and - on Linux - the bytes the kernel still holds unread
+for the socket and the datagrams it dropped for overflow (`/proc/net/udp`).
+The session receive path logs `ADNL answer age` for every delivered answer
+and `ADNL late answer` for an answer that arrived after its caller gave up.
+For queries this node answers it logs `ADNL answer latency`: the value runs
+from the instant the receive thread read the datagram off the socket to the
+moment the answer left, so it covers the demultiplexer channel, the session
+queue, and the consumer's own turn - or, for a registered fast answer, only
+the demultiplexer channel and the session receive task.  A datagram that
+sat more than a second in a session queue also logs `ADNL session queue
+wait` on its own, which separates a session-queue stall from a
+demultiplexer or consumer one.  The
+latency matters beyond diagnostics: a peer admits a node into its broadcast
+fan-out only after its `overlay.ping` is answered within upstream's five
+second deadline (`OverlayImpl::check_pending_peer` in
+`overlay/overlay-peers.cpp`), so the in-process answer latency decides
+whether pushes arrive at all (run 39114243866: pingers present, no pushes,
+while the same build answered in milliseconds and was pushed to within a
+second on an idle host).  The heartbeat, the ages, and the latency line
+together separate "this process read the answer late" and "this process
+answered the ping late" from "the answer arrived late", which line order in
+a log alone cannot.
 
 ## Missing Work
 
+- A session receive loop blocked on a full consumer inbox (64 packets)
+  also holds up the next datagrams of that session, so a ping waiting for
+  its registered answer can queue behind that backpressure.  Pin5 measured
+  session-queue waits of 1-8 s on such datagrams while the pongs still
+  left within 784 ms, so the edge exists but did not bite; give registered
+  answers their own lane in the receive loop if a future gate shows it.
+- Route sends issued from the inbound runtime - registered fast answers,
+  session answers, channel control, retries - through the transport's own
+  socket instead of the shared tokio socket, whose readiness registration
+  belongs to the application runtime: a send from the inbound runtime that
+  finds the kernel send buffer full waits for the application runtime to
+  turn its IO driver.  Not observed under the gate's load (answers are
+  small and the buffer is large), but it is the one remaining app-runtime
+  hop on the inbound path.
 - Add packet fixtures from official nodes.
 - Add deterministic simulated UDP tests.

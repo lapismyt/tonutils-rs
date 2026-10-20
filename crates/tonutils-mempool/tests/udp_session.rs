@@ -7,7 +7,9 @@ use tonutils_adnl::{AdnlUdpSession, KeyPair};
 use tonutils_mempool::{AdnlUdpOverlaySession, MempoolConfig, MempoolEvent, MempoolScanner};
 use tonutils_overlay::{OverlayConfig, OverlayId, PeerId};
 use tonutils_tl::tl::adnl::Message as AdnlMessage;
-use tonutils_tl::tl::network::{OverlayBroadcast, OverlayMessage, OverlayQuery, PacketContents};
+use tonutils_tl::tl::network::{
+    OverlayBroadcast, OverlayMessage, OverlayPong, OverlayQuery, PacketContents,
+};
 use tonutils_tl::{Int256, Message};
 
 #[tokio::test]
@@ -152,5 +154,98 @@ async fn adnl_session_sends_answer_to_query() {
             ));
         }
         _ => panic!("expected Answer message with Ping"),
+    }
+}
+
+/// The scanner's overlay sessions must answer peer liveness probes without
+/// help from the consumer: `connect_for_overlay` registers the synchronous
+/// answers on the session, so its receive task sends the pong even though
+/// nothing in this test ever reads the session's inbox.
+///
+/// Upstream drops a peer whose probe goes unanswered past its own deadline
+/// (`OverlayImpl::process_pending_peer`), which is the state run 39114243866
+/// recorded on every sample (`pushers=0`).
+#[tokio::test]
+async fn overlay_session_fast_answers_a_wrapped_ping_without_a_consumer() {
+    let server_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let client_key = KeyPair::generate(&mut rand::rngs::OsRng);
+    let server_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let client_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap();
+    let overlay = OverlayId::MAINNET_BASECHAIN_OVERLAY_ID;
+
+    // The adapter is the mempool's own overlay session; its consumer never
+    // runs here, which is what makes this test the gate's own shape.
+    let _adapter = AdnlUdpOverlaySession::connect_for_overlay(
+        PeerId::from_bytes([7; 32]),
+        overlay,
+        server_addr,
+        client_addr,
+        server_key,
+        client_key.public_key,
+    )
+    .await
+    .unwrap();
+    let client =
+        AdnlUdpSession::connect(client_addr, server_addr, client_key, server_key.public_key)
+            .await
+            .unwrap();
+
+    let mut ping = tl_proto::serialize(OverlayQuery::Query {
+        overlay: Int256(overlay.as_bytes()),
+    });
+    ping.extend_from_slice(&tl_proto::serialize(OverlayQuery::Ping));
+    let query_id = Int256::random();
+    client
+        .send_contents(PacketContents {
+            rand1: vec![1; 7],
+            flags: (),
+            from: None,
+            from_short: None,
+            message: Some(Message::Query {
+                query_id: query_id.clone(),
+                query: ping,
+            }),
+            messages: None,
+            address: None,
+            priority_address: None,
+            seqno: None,
+            confirm_seqno: None,
+            recv_addr_list_version: None,
+            recv_priority_addr_list_version: None,
+            reinit_date: None,
+            dst_reinit_date: None,
+            signature: None,
+            rand2: vec![2; 7],
+        })
+        .await
+        .unwrap();
+
+    // The adapter's constructor sent `overlay.getRandomPeers` as well, so
+    // skip whatever the peer sees before the pong.
+    let expected = tl_proto::serialize(OverlayPong);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let packet = tokio::time::timeout(remaining, client.recv_contents())
+            .await
+            .expect("the registered answer must arrive without a consumer")
+            .unwrap();
+        if let Some(AdnlMessage::Answer {
+            answer,
+            query_id: id,
+        }) = packet.message
+        {
+            assert_eq!(id, query_id);
+            assert_eq!(answer, expected);
+            break;
+        }
     }
 }

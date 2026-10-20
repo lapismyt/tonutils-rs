@@ -9,6 +9,20 @@
 
 use super::*;
 
+/// How long a datagram may wait in a session queue before the wait is
+/// logged as its own diagnostic.
+///
+/// The end-to-end value is what `send_answer` reports; this line only
+/// separates a session-queue stall from a demultiplexer or consumer
+/// one.
+const SLOW_SESSION_WAIT_MS: u128 = 1000;
+
+/// Reads the little-endian TL constructor id of a serialized object.
+fn tl_id(data: &[u8]) -> u32 {
+    data.get(..4)
+        .map_or(0, |id| u32::from_le_bytes([id[0], id[1], id[2], id[3]]))
+}
+
 impl SessionInner {
     /// Decodes, validates, and dispatches every datagram routed
     /// to a shared session.
@@ -24,13 +38,24 @@ impl SessionInner {
     pub(super) async fn receive_loop(self: Arc<Self>) {
         let mut consecutive_failures: u32 = 0;
         let mut queue = self.queue.lock().await;
-        while let Some(datagram) = queue.recv().await {
+        while let Some((at, datagram)) = queue.recv().await {
+            let wait_ms = at.elapsed().as_millis();
+            if wait_ms > SLOW_SESSION_WAIT_MS {
+                log::debug!(
+                    "ADNL session queue wait: remote_id={} wait_ms={wait_ms}",
+                    hex::encode(self.remote_id),
+                );
+            }
             let processed = self
                 .process_datagram(&datagram, &mut consecutive_failures)
                 .await;
             match processed {
                 Ok(Some(contents)) => {
                     self.deliver_answers(&contents);
+                    self.note_inbound_queries(&contents, at);
+                    if self.answer_fast_queries(&contents).await {
+                        continue;
+                    }
                     if self.inbox_tx.send(contents).await.is_err() {
                         break;
                     }
@@ -168,6 +193,101 @@ impl SessionInner {
         }
     }
 
+    /// Answers one decoded packet from a registered fast answer, when
+    /// the packet is a single query whose outer constructor has one.
+    ///
+    /// Returns `true` when the answer left and the packet must not reach
+    /// the consumer: the registration speaks for the query.  A packet
+    /// carrying anything else - control messages, answers, custom
+    /// payloads, or a query the closure declines - is left to the
+    /// ordinary path untouched.
+    async fn answer_fast_queries(&self, contents: &PacketContents) -> bool {
+        if contents
+            .messages
+            .as_ref()
+            .is_some_and(|messages| !messages.is_empty())
+        {
+            return false;
+        }
+        let Some(AdnlMessage::Query { query_id, query }) = &contents.message else {
+            return false;
+        };
+        let registered = {
+            let answers = self.fast_answers.lock().unwrap();
+            answers.get(&tl_id(query)).cloned()
+        };
+        let Some(answer) = registered else {
+            return false;
+        };
+        let Some(payload) = answer(query) else {
+            return false;
+        };
+        if let Err(error) = self.send_answer_to(query_id, payload).await {
+            log::trace!(
+                "ADNL fast answer send failed: peer={:?} error={error}",
+                self.remote_id,
+            );
+        }
+        true
+    }
+
+    /// Remembers the queries one accepted packet carries, with the
+    /// instant its datagram was read off the socket.
+    ///
+    /// [`Self::log_answer_latency`] reads the instant back when the
+    /// consumer answers, so its log line spans the whole in-process
+    /// leg: the demultiplexer channel, the session queue, and the
+    /// consumer's own turn before it sends.
+    fn note_inbound_queries(&self, contents: &PacketContents, at: std::time::Instant) {
+        let mut inbound = self.inbound_queries.lock().unwrap();
+        for message in contents
+            .message
+            .iter()
+            .chain(contents.messages.iter().flatten())
+        {
+            if let AdnlMessage::Query { query_id, query } = message {
+                let kind = query
+                    .get(..4)
+                    .and_then(|id| id.try_into().ok())
+                    .map_or(0, u32::from_le_bytes);
+                inbound.push_back((query_id.0, at, kind));
+            }
+        }
+        while inbound.len() > MAX_INBOUND_QUERIES {
+            inbound.pop_front();
+        }
+    }
+
+    /// Logs the in-process wait of one answered query and drops its
+    /// record.
+    ///
+    /// The peer measures its `overlay.ping` round trip against a
+    /// deadline before marking this node alive and admitting it into
+    /// its broadcast fan-out (upstream `OverlayImpl::check_pending_peer`
+    /// allows five seconds), so this value is what decides whether
+    /// pushes ever arrive.  It is stamped at the socket read, not at
+    /// the session's turn, so a stalled demultiplexer or session task
+    /// shows up in full.
+    pub(super) fn log_answer_latency(&self, query_id: &Int256) {
+        let at = {
+            let mut inbound = self.inbound_queries.lock().unwrap();
+            inbound
+                .iter()
+                .position(|(id, _, _)| id == &query_id.0)
+                .and_then(|index| inbound.remove(index))
+                .map(|(_, at, kind)| (at, kind))
+        };
+        let Some((at, kind)) = at else {
+            return;
+        };
+        log::debug!(
+            "ADNL answer latency: peer={:?} query_id={} kind={kind:08x} latency_ms={}",
+            self.remote_id,
+            query_id.to_hex(),
+            at.elapsed().as_millis(),
+        );
+    }
+
     /// Registers `query_id` for answer routing and returns the receiver.
     ///
     /// Must be called before the query goes on the wire, otherwise an
@@ -235,6 +355,7 @@ impl SessionInner {
                 Ok(Err(error)) => return Err(AdnlError::from(error)),
                 Err(_) => return Ok(None),
             };
+            let at = std::time::Instant::now();
             if size > MAX_UDP_PACKET_SIZE {
                 return Err(AdnlError::TooLongPacket);
             }
@@ -243,6 +364,7 @@ impl SessionInner {
                 .await?
             {
                 self.deliver_answers(&contents);
+                self.note_inbound_queries(&contents, at);
                 return Ok(Some(contents));
             }
         }
