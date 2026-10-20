@@ -292,7 +292,7 @@ jobs:
         # ids 38558546040, 38594880666, 38828796572; red ids 38579887480,
         # 38723511984, 38745254834, 38814358139, 38819591750, 38865936964;
         # the mechanics and per-arm counters are recorded in
-        # docs/reference/network/overlay.md). A single sample is therefore
+        # docs/reference/network/overlay-delivery-ledger.md). A single sample is therefore
         # red on about two healthy runs of three, so this step runs
         # TON_MEMPOOL_LIVE_DELIVERY_SAMPLES independent samples in parallel
         # (each process generates its own ADNL keypair and binds ephemeral
@@ -324,7 +324,7 @@ jobs:
         # ~8 % per sample in 300 s the constant-hazard extrapolation is
         # ~15 % at 600 s with a k=8 gate green rate of ~74 %, without the
         # CPU/DHT contention a larger k would add.  Numbers and mechanics:
-        # TODO item 440 and docs/reference/network/overlay.md.
+        # TODO item 440 and docs/reference/network/overlay-delivery-ledger.md.
         run: |
           set -o pipefail
           samples="${TON_MEMPOOL_LIVE_DELIVERY_SAMPLES:-8}"

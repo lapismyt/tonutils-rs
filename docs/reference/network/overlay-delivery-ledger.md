@@ -510,3 +510,16 @@ line appears in any sample), and with 1-5 pings answered per sample
 gated by its own NAT mapping and the upstream sampling lottery, and the
 transport shows nothing lost in either direction; the CI runner's own NAT
 and the 600 s window remain the delivery judge.
+
+Run 39457557758 (2026-10-20, `f0c7790`, 600 s budget): green, the first
+gate after the inbound-executor fix.  Sample 2 delivered at
+`time_to_message=104.1s` and sample 7 at `127.7s`, so the job ended after
+6m36s with the other six samples stopped healthy (`task_panics=0`
+everywhere; `dht address publish: stored ... served_by_dht=true` in
+samples 1, 3, 4, 5, and 8, sample 6 storing 0 of 4 candidates).  The
+previous gate on the same overlay (39114243866, `378bba6`) was red with
+`pushers=0` in all eight windows while its answers carried p50 3.8 s /
+p90 40 s ages; the delta between the two runs is `f0c7790`
+(`fix(adnl): answer peer probes off the application runtime`), whose
+pinned local re-run measured p50 0 ms pong answers, p50 1 ms
+read-to-dispatch, and heartbeats on time in every beat.

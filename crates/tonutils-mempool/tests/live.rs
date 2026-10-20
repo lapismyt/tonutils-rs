@@ -467,7 +467,7 @@ async fn configured_seed_delivers_valid_external_message() {
             let protocol = scanner.protocol_stats();
             let custom_arrived = protocol.custom_messages;
             panic!(
-                "live mempool phase=delivery timed out after {timeout}s: registered_peers={peers} metrics={metrics:?} protocol={protocol:?}; inbound custom overlay datagrams arrived={custom_arrived} in this window; delivery requires a verified-neighbour holder to sample this node into its broadcast fan-out (upstream get_neighbours(propagate_broadcast_to() = 5)), so a red window is an upstream sampling outcome, not a client defect - mechanism and recorded arms in docs/reference/network/overlay.md"
+                "live mempool phase=delivery timed out after {timeout}s: registered_peers={peers} metrics={metrics:?} protocol={protocol:?}; inbound custom overlay datagrams arrived={custom_arrived} in this window; delivery requires a verified-neighbour holder to sample this node into its broadcast fan-out (upstream get_neighbours(propagate_broadcast_to() = 5)), so a red window is an upstream sampling outcome, not a client defect - mechanism and recorded arms in docs/reference/network/overlay-delivery-ledger.md"
             );
         }
     };
