@@ -33,7 +33,7 @@ pub(super) const LIVE_WIRE_FIXTURE_FILES: [(&str, &str); 3] = [
     ),
 ];
 
-fn cases_of<'json>(file: &str, content: &'json str) -> Vec<Value> {
+fn cases_of(file: &str, content: &str) -> Vec<Value> {
     let fixture: Value = serde_json::from_str(content)
         .unwrap_or_else(|error| panic!("fixtures/cross_sdk/{file} must parse: {error}"));
     fixture["cases"]
@@ -42,7 +42,7 @@ fn cases_of<'json>(file: &str, content: &'json str) -> Vec<Value> {
         .clone()
 }
 
-fn raw_of<'json>(file: &str, case: &'json Value) -> Vec<u8> {
+fn raw_of(file: &str, case: &Value) -> Vec<u8> {
     let name = case["name"].as_str().expect("case name");
     let raw = case["raw_hex"]
         .as_str()

@@ -87,7 +87,7 @@
    "live_capture": "2026-10-20",
    "captured_from": "official mainnet overlay and DHT peers (per-case peer recorded) over ADNL/UDP",
    "captured_by": ".agents/logs/pin5/run-capture.sh, run-capture-long.sh, and run-churn-capture.sh: configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with the ADNL_UDP_CAPTURE_FILE receive-thread capture armed",
-   "sha256": "69037989784341d7a016272438c0bd78c13a20284eb1defaf7036af2a181eeba",
+   "sha256": "d246188174efbedabbe8132e1e832cc14a09a14a24c6295cf1af6cc02d661e8d",
    "usage": "framing-only: each case is a verbatim wire datagram - a 32-byte sender-or-channel prefix followed by an encrypted body that is not reproducible offline; tests pin the envelope shape and exclude STUN messages that share the socket"
   },
   {
@@ -98,7 +98,7 @@
    "live_capture": "2026-10-20",
    "captured_from": "official mainnet peers (per-case peer and message constructor label recorded)",
    "captured_by": ".agents/logs/pin5/run-capture.sh, run-capture-long.sh, and run-churn-capture.sh: configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with the ADNL_UDP_CAPTURE_FILE receive-thread capture armed",
-   "sha256": "a69f692d751daa5779f99223c4e1b34f3c3dc8f4cb0d0015ec140db83a7000a9",
+   "sha256": "b98d636f3375d54fd2cd47d9f9fde8173e4ccc7e0c90a1d2fae4bbc1856709eb",
    "usage": "roundtrip: decoded from live datagrams at capture time; tests assert our decoder accepts every observed constructor mix and re-serializes the captured bytes byte-for-byte, and that the independently computed message-constructor label matches the decoded variant"
   },
   {
@@ -109,7 +109,7 @@
    "live_capture": "2026-10-20",
    "captured_from": "mainnet mempool overlay members pushing broadcasts to this node (verbatim peer bytes)",
    "captured_by": ".agents/logs/pin5/run-capture.sh, run-capture-long.sh, and run-churn-capture.sh: configured_seed_delivers_valid_external_message samples against mainnet through tonutils-mempool tests/live.rs with the ADNL_UDP_CAPTURE_FILE receive-thread capture armed",
-   "sha256": "1aa84f367ca3b79ef8c42f39f593d165a07ba99e300423265c3d59f7db19e48a",
+   "sha256": "93ac658e52242a898334a07582624b41913298d71b7cc78c367c4814270815ce",
    "usage": "roundtrip: verbatim adnl.message.custom payloads - [overlay.message][overlay id][inner TL]; tests assert our overlay decoders round-trip the wrapper and the inner FEC/broadcast frame byte-for-byte against unmodified peer serialization"
   }
  ]

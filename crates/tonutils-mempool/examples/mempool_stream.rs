@@ -57,7 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     MempoolEvent::ExternalMessage { hash, raw_boc, routing, .. } => {
                         println!(
                             "message {}.. from peer {:?} ({} bytes)",
-                            hash.iter().take(8).map(|byte| format!("{byte:02x}")).collect::<String>(),
+                            hex::encode(&hash[..8]),
                             routing.peer,
                             raw_boc.len(),
                         );
@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     MempoolEvent::Included { hash, .. } => {
                         println!(
                             "message {}.. reached a block",
-                            hash.iter().take(8).map(|byte| format!("{byte:02x}")).collect::<String>(),
+                            hex::encode(&hash[..8]),
                         );
                     }
                     MempoolEvent::PeerStatus(status) => {
