@@ -17,6 +17,9 @@ mod quic_tls;
 #[cfg(test)]
 mod tests;
 
+#[cfg(all(test, feature = "quic"))]
+mod quic_interop_tests;
+
 pub use crypto::{KeyPair, PublicKey};
 pub use helper_types::{AdnlAddress, AdnlAesParams, AdnlConnectionInfo, AdnlError};
 pub use primitives::codec::AdnlCodec;

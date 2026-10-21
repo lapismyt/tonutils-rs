@@ -1,0 +1,68 @@
+name: QUIC interop
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "crates/tonutils-adnl/src/adnl/quic.rs"
+      - "crates/tonutils-adnl/src/adnl/quic_tls.rs"
+      - "crates/tonutils-adnl/src/adnl/quic_interop_tests.rs"
+      - ".github/workflows/quic-interop.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "crates/tonutils-adnl/src/adnl/quic.rs"
+      - "crates/tonutils-adnl/src/adnl/quic_tls.rs"
+      - "crates/tonutils-adnl/src/adnl/quic_interop_tests.rs"
+      - ".github/workflows/quic-interop.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cpp-client-to-rust-server:
+    name: C++ quictls client to rustls server
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache Cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-interop-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-interop-
+            ${{ runner.os }}-cargo-
+
+      - name: Install upstream build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libjemalloc-dev
+
+      - name: Checkout upstream TON (quictls C++ QUIC client)
+        uses: actions/checkout@v7
+        with:
+          repository: ton-blockchain/ton
+          path: upstream-ton
+          submodules: recursive
+
+      - name: Build the upstream C++ QUIC example client
+        run: |
+          cmake -S upstream-ton -B upstream-ton/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build upstream-ton/build --target quic-example-client
+
+      - name: Pair the C++ client with our rustls server
+        env:
+          QUIC_INTEROP_CLIENT: ${{ github.workspace }}/upstream-ton/build/quic/quic-example-client
+        run: cargo test -p tonutils-adnl --features quic --lib quic_interop_tests -- --ignored --nocapture

@@ -343,6 +343,20 @@ pub(crate) fn make_quinn_client_config(
 pub(crate) fn make_quinn_server_config(
     keypair: &AdnlKeyPair,
 ) -> Result<quinn::ServerConfig, AdnlError> {
+    make_quinn_server_config_with_alpn(keypair, &[ALPN_TON])
+}
+
+/// Same profile as [`make_quinn_server_config`] with a caller-chosen ALPN
+/// list.
+///
+/// Production servers always negotiate `ton` alone; the QUIC interop test
+/// harness uses this to additionally offer the upstream demo ALPN
+/// (`hq-interop`) when pairing against `quic-example-client`, without
+/// changing the shipped server profile.
+pub(crate) fn make_quinn_server_config_with_alpn(
+    keypair: &AdnlKeyPair,
+    alpn: &[&[u8]],
+) -> Result<quinn::ServerConfig, AdnlError> {
     let resolver = SniRpkResolver {
         identity: make_certified_key(keypair)?,
         expected_sni: sni_for_public_key(&keypair.public_key),
@@ -355,7 +369,7 @@ pub(crate) fn make_quinn_server_config(
     .map_err(|e| AdnlError::TlsConfig(e.to_string()))?
     .with_client_cert_verifier(Arc::new(TonRpkClientVerifier))
     .with_cert_resolver(Arc::new(resolver));
-    tls_config.alpn_protocols = vec![ALPN_TON.to_vec()];
+    tls_config.alpn_protocols = alpn.iter().map(|proto| proto.to_vec()).collect();
 
     let quic_config = quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
         .map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
