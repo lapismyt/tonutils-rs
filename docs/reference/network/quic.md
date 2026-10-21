@@ -362,12 +362,34 @@ short id fails during the handshake.
   `connected_advertised` count is now non-zero (1), confirming that
   dialing both endpoints per member captures real listeners.
 
+## C++ interop harness
+
+`test-quic-interop.sh` never exercised a quictls/C++ client against a
+rustls server with *mandatory* client auth (their Test 3 rustls server
+ran `offer_client_auth() = false`), so the pairing runs in our CI
+instead: `quic_interop_tests::cpp_quictls_client_completes_the_demo_pairing`
+(`crates/tonutils-adnl/src/adnl/quic_interop_tests.rs`, `#[ignore]`d and
+gated on `QUIC_INTEROP_CLIENT`) pairs the upstream `quic-example-client`
+(built from `ton-blockchain/ton` in `.github/workflows/quic-interop.yml`,
+ubuntu-24.04 + clang-21 mirroring upstream's known-good builder) with a
+server that reuses the production TLS pieces through the pub(crate)
+`make_quinn_server_config_with_alpn`; the only profile difference from
+production is additionally offering the demo ALPN `hq-interop` - the C++
+client hardcodes it and cannot send `ton`.
+
+First green run 39592831262 (2026-10-21, `aab98c5`): the quictls client
+completed the handshake in 0.27 s, extracted our raw public key through
+`SSL_get0_peer_rpk` (`server public key: ...` in its log), received the
+34-byte demo response on its unidirectional stream 0, and logged
+`test passed`; the server observed no SNI (the demo client has no
+expected peer key to derive one from) and served its default identity
+the way upstream `sni_select_cb` does. The first attempt, run
+39591141791, failed before the pairing: GCC 13 rejected upstream's own
+`http/http-server.h:62` (ambiguous `return_value`) inside the `tonhttp`
+dependency closure of the client target.
+
 ## Missing work
 
-- A quictls/C++ client against our mandatory-client-auth server is the one
-  pairing upstream's `test-quic-interop.sh` matrix never exercised (their
-  Test 3 rustls server ran with `offer_client_auth() = false`); tracked in
-  `TODO.md`.
 - Whether mainnet full nodes answer QUIC from third-party sources
   has a three-way verdict across the recorded runs: most probed
   members are silent, some abort the handshake with TLS alert 112
@@ -402,7 +424,7 @@ short id fails during the handshake.
   the hard `connected > 0` gate is kept by project decision, so the
   step is green in the runs where at least one member completes a
   handshake. The wrapper mechanism is now live-verified (run
-  38723511984), so the outstanding unproven pairing next to it is
-  the C++-client pairing above.
+  38723511984), and the C++-client pairing that used to be listed as
+  unproven next to it is now closed by the interop harness above.
 - Concurrent routing and unsolicited-message handling on `QuicSession` are
   not implemented (see the [protocol matrix](protocol-matrix.md)).
