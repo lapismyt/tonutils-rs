@@ -25,7 +25,12 @@ permissions:
 jobs:
   cpp-client-to-rust-server:
     name: C++ quictls client to rustls server
-    runs-on: ubuntu-latest
+    # Upstream builds this stack with clang-21 (build-ton-linux-x86-64-21.yml);
+    # run 39591141791 showed GCC 13 failing on upstream's own
+    # http/http-server.h:62 with an ambiguous return_value overload while
+    # compiling the tonhttp target that sits in the client's dependency
+    # closure, so the runner and compiler mirror the upstream known-good pair.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -49,6 +54,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ninja-build libjemalloc-dev
+          wget -q https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 21
 
       - name: Checkout upstream TON (quictls C++ QUIC client)
         uses: actions/checkout@v7
@@ -59,7 +67,10 @@ jobs:
 
       - name: Build the upstream C++ QUIC example client
         run: |
-          cmake -S upstream-ton -B upstream-ton/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -S upstream-ton -B upstream-ton/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-21 \
+            -DCMAKE_CXX_COMPILER=clang++-21
           cmake --build upstream-ton/build --target quic-example-client
 
       - name: Pair the C++ client with our rustls server
