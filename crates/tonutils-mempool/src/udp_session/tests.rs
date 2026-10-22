@@ -241,12 +241,37 @@ async fn ignores_wrong_overlay_packets_without_killing_session() {
             data: vec![9, 8, 7],
         },
     }));
-    sender.send_contents(packet(valid_overlay)).await.unwrap();
-
-    let payload = tokio::time::timeout(Duration::from_secs(1), receiver.receive())
+    sender
+        .send_contents(packet(valid_overlay.clone()))
         .await
-        .unwrap()
         .unwrap();
+
+    // UDP is lossy: a loaded CI runner can drop the loopback datagram or
+    // delay its processing past any single short deadline.  The assertion is
+    // that the wrong-overlay packet did not kill the session, so retransmit
+    // the valid packet instead of betting on one datagram.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let payload = loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "session stopped delivering valid overlay packets"
+        );
+        match tokio::time::timeout(
+            remaining.min(Duration::from_millis(250)),
+            receiver.receive(),
+        )
+        .await
+        {
+            Ok(result) => break result.unwrap(),
+            Err(_) => {
+                sender
+                    .send_contents(packet(valid_overlay.clone()))
+                    .await
+                    .unwrap();
+            }
+        }
+    };
     assert_eq!(payload.as_ref(), [9, 8, 7]);
 }
 
