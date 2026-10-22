@@ -28,9 +28,9 @@ mod offline_fixture_tests {
     where
         T: TlbSerialize + TlbDeserialize + PartialEq + Debug,
     {
-        assert!(!fixture.name.is_empty());
-        assert!(!fixture.source.is_empty());
-        assert!(!fixture.decoded_type.is_empty());
+        assert_ne!(fixture.name, "");
+        assert_ne!(fixture.source, "");
+        assert_ne!(fixture.decoded_type, "");
 
         let cell = fixture_cell(fixture);
         assert_eq!(hex::encode(cell.hash()), fixture.expected_root_hash);
@@ -521,7 +521,7 @@ mod compatibility_checked_fixture_tests {
 
     fn fixture_set(json: &str) -> FixtureSet {
         let set: FixtureSet = serde_json::from_str(json).unwrap();
-        assert!(!set.schema_revision.is_empty());
+        assert_ne!(set.schema_revision, "");
         assert!(!set.fixtures.is_empty());
         set
     }
@@ -530,10 +530,10 @@ mod compatibility_checked_fixture_tests {
     where
         T: TlbSerialize + TlbDeserialize + PartialEq + Debug,
     {
-        assert!(!fixture.name.is_empty());
-        assert!(!fixture.source.is_empty());
-        assert!(!fixture.capture_date.is_empty());
-        assert!(!fixture.upstream_commit_or_endpoint.is_empty());
+        assert_ne!(fixture.name, "");
+        assert_ne!(fixture.source, "");
+        assert_ne!(fixture.capture_date, "");
+        assert_ne!(fixture.upstream_commit_or_endpoint, "");
         assert_eq!(fixture.decoded_type, expected_type);
         let payload = hex::decode(&fixture.boc_hex).unwrap();
         let payload_hash = Sha256::digest(payload);

@@ -40,7 +40,10 @@ Pending external messages are propagated before final block inclusion. A scanner
 
 ## Missing Work
 
-- Extract overlay constructors from `ton_api.tl`.
-- Document overlay id derivation.
+- Add the remaining V2 peer-exchange types (`overlay.nodeV2`,
+  `overlay.nodesV2`, `overlay.getRandomPeersV2`) and member certificate
+  handling.
+- Document overlay id derivation (canonical shard-public derivation already
+  exists in `tonutils-overlay`).
 - Study validator shard overlays relevant to pending messages.
 - Add captured fixtures.
