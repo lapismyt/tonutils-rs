@@ -1,3 +1,4 @@
+#[path = "../../examples/src/common.rs"]
 mod common;
 
 fn main() -> anyhow::Result<()> {

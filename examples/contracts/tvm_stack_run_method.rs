@@ -1,3 +1,4 @@
+#[path = "../../examples/src/common.rs"]
 mod common;
 
 use tonutils_liteclient::client::LiteClient;
@@ -21,7 +22,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     println!(
-        "method={} exit_code={} result_bytes={}",
+        "method={} exit_code={} result_cells={}",
         method,
         result.exit_code,
         result.result.as_ref().map_or(0, Vec::len)

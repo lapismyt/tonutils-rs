@@ -25,6 +25,8 @@ overlay = ["dep:tonutils-overlay"]
 jetton-provider = ["tonutils-jetton/provider"]
 nft-provider = ["tonutils-nft/provider"]
 wallet-provider = ["tonutils-wallet/provider"]
+cli = ["tonutils-cli"]
+tvm = ["tonutils-tvm"]
 
 [dependencies]
 tonutils-adnl = { path = "../tonutils-adnl", version = "2.0.0", default-features = false }
@@ -38,6 +40,147 @@ tonutils-network-config = { path = "../tonutils-network-config", version = "2.0.
 tonutils-nft = { path = "../tonutils-nft", version = "2.0.0", default-features = false }
 tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
 tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
-tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
+tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0", optional = true }
 tonutils-wallet = { path = "../tonutils-wallet", version = "2.0.0", default-features = false }
 tonutils-overlay = { path = "../tonutils-overlay", version = "2.0.0", optional = true }
+tonutils-cli = { path = "../tonutils-cli", version = "2.0.0", optional = true }
+
+[dev-dependencies]
+anyhow.workspace = true
+hex.workspace = true
+rand.workspace = true
+ureq.workspace = true
+pretty_env_logger.workspace = true
+log.workspace = true
+tl-proto.workspace = true
+tokio.workspace = true
+tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
+tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
+tonutils-liteclient = { path = "../tonutils-liteclient", version = "2.0.0" }
+tonutils-contracts = { path = "../tonutils-contracts", version = "2.0.0" }
+tonutils-network-config = { path = "../tonutils-network-config", version = "2.0.0" }
+tonutils-wallet = { path = "../tonutils-wallet", version = "2.0.0" }
+tonutils-overlay = { path = "../tonutils-overlay", version = "2.0.0" }
+num-bigint.workspace = true
+sha2.workspace = true
+
+# Examples organized by feature group
+[[example]]
+name = "adnl_ping"
+path = "../../examples/adnl/adnl_ping.rs"
+required-features = ["adnl-tcp"]
+
+[[example]]
+name = "liteclient_masterchain_info"
+path = "../../examples/liteclient/liteclient_masterchain_info.rs"
+required-features = ["liteclient-network-config", "cli"]
+
+[[example]]
+name = "liteclient_raw_query"
+path = "../../examples/liteclient/liteclient_raw_query.rs"
+required-features = ["liteclient-network-config", "cli"]
+
+[[example]]
+name = "network_config"
+path = "../../examples/network/network_config.rs"
+required-features = ["liteclient-network-config", "cli"]
+
+[[example]]
+name = "contract_get_state"
+path = "../../examples/contracts/contract_get_state.rs"
+required-features = ["liteclient-network-config", "cli"]
+
+[[example]]
+name = "contract_get_method"
+path = "../../examples/contracts/contract_get_method.rs"
+required-features = ["liteclient-network-config", "cli"]
+
+[[example]]
+name = "tvm_stack_run_method"
+path = "../../examples/contracts/tvm_stack_run_method.rs"
+required-features = ["liteclient-network-config", "cli", "tvm"]
+
+[[example]]
+name = "litebalancer_failover"
+path = "../../examples/liteclient/litebalancer_failover.rs"
+required-features = ["liteclient-network-config", "cli"]
+
+[[example]]
+name = "liteclient_account_state_decode"
+path = "../../examples/liteclient/liteclient_account_state_decode.rs"
+required-features = ["liteclient-network-config", "tvm"]
+
+[[example]]
+name = "proof_verify"
+path = "../../examples/tvm/proof_verify.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tvm_boc_decode"
+path = "../../examples/tvm/tvm_boc_decode.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tvm_boc_roundtrip"
+path = "../../examples/tvm/tvm_boc_roundtrip.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tvm_cell_builder"
+path = "../../examples/tvm/tvm_cell_builder.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tvm_dictionary_roundtrip"
+path = "../../examples/tvm/tvm_dictionary_roundtrip.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_account_state_roundtrip"
+path = "../../examples/tlb/tlb_account_state_roundtrip.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_block_wrapper_decode"
+path = "../../examples/tlb/tlb_block_wrapper_decode.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_config_params_wrapper"
+path = "../../examples/tlb/tlb_config_params_wrapper.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_custom_derive"
+path = "../../examples/tlb/tlb_custom_derive.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_message_roundtrip"
+path = "../../examples/tlb/tlb_message_roundtrip.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_parse_boc"
+path = "../../examples/tlb/tlb_parse_boc.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_read_tx_data"
+path = "../../examples/tlb/tlb_read_tx_data.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_schema_codegen"
+path = "../../examples/tlb/tlb_schema_codegen.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "tlb_transaction_roundtrip"
+path = "../../examples/tlb/tlb_transaction_roundtrip.rs"
+required-features = ["tvm"]
+
+[[example]]
+name = "wallet_offline_transfer"
+path = "../../examples/wallet/wallet_offline_transfer.rs"
+required-features = ["tvm", "wallet-provider"]
