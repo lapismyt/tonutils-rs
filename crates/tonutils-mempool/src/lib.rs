@@ -25,13 +25,16 @@ use tonutils_overlay::{
     SeedPeer,
 };
 use tonutils_overlay::{DiscoveryLookup, TypedDiscoveryLookup};
+mod bootstrap;
 mod broadcast;
 mod builder;
+mod discovery_task;
 mod endpoints;
 mod overlay_inbound;
 mod packet_dedup;
 mod peer_growth;
 mod peer_quality;
+mod peer_store;
 mod protocol_stats;
 mod quic_session;
 mod udp_session;
@@ -47,6 +50,10 @@ pub use endpoints::{
     member_quic_target, record_member, record_member_quic, registered_member_count,
 };
 pub use peer_quality::{PeerQualityConfig, PeerQualityRegistry, PeerQualitySnapshot};
+pub use peer_store::{
+    DEFAULT_PEER_STORE_SAVE_INTERVAL, MAX_STORED_PEERS, PEER_STORE_VERSION, PeerStore,
+    PeerStoreFile, StoredPeer,
+};
 pub use protocol_stats::{ProtocolStats, protocol_stats};
 pub use quic_session::{
     QuicOverlaySession, quic_overlay_factory, quic_overlay_factory_with_endpoints,

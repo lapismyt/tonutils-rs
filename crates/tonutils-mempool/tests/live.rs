@@ -370,7 +370,7 @@ async fn configured_seed_delivers_valid_external_message() {
     // after bootstrap: it holds every runtime-resolved member, which
     // is the non-seed peer set the connectivity checks below dial.
     let member_endpoints = OverlayMemberEndpoints::default();
-    let (scanner, manager, stream) = MempoolScannerBuilder::new()
+    let mut builder = MempoolScannerBuilder::new()
         .download_config(false)
         .overlay_id(overlay)
         .config(MempoolConfig {
@@ -402,7 +402,23 @@ async fn configured_seed_delivers_valid_external_message() {
             ..PeerQualityConfig::default()
         })
         .quality_eviction(true)
-        .native_udp("0.0.0.0:0".parse().unwrap(), local_key, None)
+        .native_udp("0.0.0.0:0".parse().unwrap(), local_key, None);
+    // Optional durable peer store: the live-delivery CI job restores a store
+    // file and hands each sample process its own copy through this variable,
+    // so a green run teaches the next one which overlay members are reliable
+    // and the warm store skips the blocking discovery at startup.  Unset
+    // outside that job keeps the discovery-based bootstrap unchanged.
+    if let Ok(path) = std::env::var("TON_MEMPOOL_LIVE_PEER_STORE")
+        && !path.is_empty()
+    {
+        eprintln!("live mempool phase=peer-store path={path}");
+        builder = builder
+            .peer_store(path)
+            // Sample processes may be killed once a sibling wins, so lean
+            // on the periodic snapshot rather than only on shutdown.
+            .peer_store_save_interval(Duration::from_secs(20));
+    }
+    let (scanner, manager, stream) = builder
         .start()
         .await
         .unwrap_or_else(|error| panic!("live mempool phase=start failed: {error}"));

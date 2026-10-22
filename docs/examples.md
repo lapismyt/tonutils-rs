@@ -145,7 +145,9 @@ cargo check --workspace --all-features
   using the downloaded global config, streams accepted external messages,
   re-broadcasts each one to the connected members, and shuts down cleanly on
   Ctrl-C. The mempool crate also ships `mempool_scan` (live acceptance
-  counters), `mempool_scan_fast`, `mempool_send_v5r1`, `adnl_udp_mempool`,
+  counters), `peer_store_scan` (the same scan with a durable peer store that
+  makes the next launch skip discovery), `mempool_scan_fast`,
+  `mempool_send_v5r1`, `adnl_udp_mempool`,
   and `dht_diag` in the same directory. See `docs/mempool.md` for the guide.
 
 Remaining coverage gaps tracked in `TODO.md`: live proof capture.

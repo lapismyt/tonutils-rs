@@ -30,3 +30,8 @@ rustc-ice-*.txt
 
 # Network configs
 *.config.json
+
+# Mempool peer store (example default file and CI sample copies)
+mempool-peer-store.json
+mempool-peer-store.json.tmp
+.tonutils-peer-store/

@@ -31,8 +31,9 @@ tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
 tl-proto.workspace = true
 tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
 quinn.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 pretty_env_logger.workspace = true
-serde_json.workspace = true
 tonutils-wallet = { path = "../tonutils-wallet", version = "2.0.0" }

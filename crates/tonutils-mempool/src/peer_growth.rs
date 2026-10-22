@@ -37,6 +37,9 @@ pub(crate) struct PeerGrowthTask {
     pub(crate) growth_interval: Duration,
     /// The scanner's event sender, read by the idle gate.
     pub(crate) event_tx: mpsc::Sender<MempoolEvent>,
+    /// Durable peer store: every dial outcome is recorded so the persisted
+    /// priority reflects this run's reliability and speed.
+    pub(crate) store: Option<Arc<crate::peer_store::PeerStore>>,
 }
 
 impl PeerGrowthTask {
@@ -54,6 +57,7 @@ impl PeerGrowthTask {
             pinned,
             growth_interval,
             event_tx,
+            store,
         } = self;
         if max_peers == 0 {
             return;
@@ -145,8 +149,20 @@ impl PeerGrowthTask {
                     {
                         continue;
                     }
+                    let started = Instant::now();
                     match factory(candidate.clone()).await {
                         Ok(session) => {
+                            if let Some(store) = &store {
+                                store
+                                    .record_dial(
+                                        candidate.peer,
+                                        &candidate.address,
+                                        crate::peer_store::SOURCE_GROWTH,
+                                        started.elapsed(),
+                                        true,
+                                    )
+                                    .await;
+                            }
                             manager
                                 .add_session_with_reconnect(
                                     session,
@@ -158,10 +174,23 @@ impl PeerGrowthTask {
                             discovered.push(candidate);
                             added += 1;
                         }
-                        Err(error) => log::debug!(
-                            "peer growth: session to {} failed: {error}",
-                            candidate.address
-                        ),
+                        Err(error) => {
+                            if let Some(store) = &store {
+                                store
+                                    .record_dial(
+                                        candidate.peer,
+                                        &candidate.address,
+                                        crate::peer_store::SOURCE_GROWTH,
+                                        started.elapsed(),
+                                        false,
+                                    )
+                                    .await;
+                            }
+                            log::debug!(
+                                "peer growth: session to {} failed: {error}",
+                                candidate.address
+                            );
+                        }
                     }
                 }
                 if !discovered.is_empty() {
@@ -180,7 +209,7 @@ impl PeerGrowthTask {
 
 /// Counts sessions that count against the growth budget: pinned sessions are
 /// a separate, guaranteed set.
-fn managed_count(connected: &[PeerId], pinned: &HashSet<PeerId>) -> usize {
+pub(crate) fn managed_count(connected: &[PeerId], pinned: &HashSet<PeerId>) -> usize {
     connected
         .iter()
         .filter(|peer| !pinned.contains(peer))
@@ -188,9 +217,10 @@ fn managed_count(connected: &[PeerId], pinned: &HashSet<PeerId>) -> usize {
 }
 
 /// Whether the scanner has enough free event-queue capacity for a discovery
-/// round; below [`EVENT_IDLE_FREE_RATIO`] the round is postponed.
+/// round; below [`EVENT_IDLE_FREE_RATIO`] the round is postponed.  Shared
+/// with the background peer-discovery task.
 #[allow(clippy::cast_precision_loss)]
-fn event_queue_idle(transmitter: &mpsc::Sender<MempoolEvent>) -> bool {
+pub(crate) fn event_queue_idle(transmitter: &mpsc::Sender<MempoolEvent>) -> bool {
     let free = transmitter.capacity() as f64;
     let total = transmitter.max_capacity() as f64;
     total <= 0.0 || free / total >= EVENT_IDLE_FREE_RATIO

@@ -471,6 +471,7 @@ async fn disconnect_triggers_an_immediate_growth_round() {
         pinned: HashSet::new(),
         growth_interval: Duration::from_secs(10),
         event_tx: scanner.event_tx.clone(),
+        store: None,
     }
     .spawn();
 
@@ -615,4 +616,224 @@ async fn quality_eviction_drops_silent_peers_and_keeps_pinned() {
         "the pinned peer must survive quality churn"
     );
     manager.shutdown_wait().await;
+}
+
+/// Unique per-test store file; always starts absent.
+fn store_path(tag: &str) -> std::path::PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "tonutils-mempool-store-{}-{tag}.json",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{}.tmp", path.display()));
+    path
+}
+
+fn write_store(path: &std::path::Path, peers: Vec<StoredPeer>) {
+    let file = PeerStoreFile {
+        version: PEER_STORE_VERSION,
+        network: "mainnet".into(),
+        overlay: hex::encode(OverlayId::MAINNET_BASECHAIN_OVERLAY_ID.as_bytes()),
+        saved_at: 1_700_000_000,
+        peers,
+    };
+    std::fs::write(path, serde_json::to_vec_pretty(&file).unwrap()).unwrap();
+}
+
+fn stored(id: u8, address: &str, priority: f64) -> StoredPeer {
+    StoredPeer {
+        id: PeerId::from_bytes([id; 32]),
+        address: address.to_owned(),
+        last_seen: 1_700_000_000,
+        source: crate::peer_store::SOURCE_GROWTH.to_owned(),
+        status: crate::peer_store::STATUS_CONNECTED.to_owned(),
+        priority,
+        udp: None,
+        quic: None,
+    }
+}
+
+fn accepting_factory() -> OverlaySessionFactory {
+    Arc::new(move |candidate| {
+        Box::pin(async move {
+            Ok(Box::new(PendingSession {
+                peer: candidate.peer,
+            }) as Box<dyn OverlaySession>)
+        })
+    })
+}
+
+fn counting_lookup(counter: Arc<std::sync::atomic::AtomicUsize>) -> SeedDiscoveryLookup {
+    Arc::new(move |_seeds| {
+        counter.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async move { vec![SeedPeer::from_public_key([9; 32], "127.0.0.1:30304")] })
+    })
+}
+
+/// A warm store joins the bootstrap dial set and the blocking start-time
+/// discovery lookup must not run at all (the background task is parked far
+/// outside the test window).
+#[tokio::test]
+async fn warm_peer_store_skips_the_blocking_discovery() {
+    let path = store_path("warm");
+    write_store(
+        &path,
+        vec![
+            stored(1, "127.0.0.1:30301", 0.9),
+            stored(2, "127.0.0.1:30302", 0.4),
+        ],
+    );
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (_scanner, manager, _events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .seed(SeedPeer {
+            peer: PeerId::from_bytes([7; 32]),
+            address: "127.0.0.1:30399".into(),
+        })
+        .seed_discovery_lookup(counting_lookup(Arc::clone(&calls)))
+        .session_factory(accepting_factory())
+        .peer_store(&path)
+        .peer_store_discovery_interval(Duration::from_secs(3600))
+        .start()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        manager.peers().await.len(),
+        2,
+        "both stored peers must be dialed"
+    );
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        0,
+        "a warm store must skip the blocking startup discovery"
+    );
+    manager.shutdown_wait().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// A cold store keeps the legacy behavior: the blocking discovery runs once
+/// at startup and its members form the session set.
+#[tokio::test]
+async fn cold_peer_store_keeps_the_legacy_startup_discovery() {
+    let path = store_path("cold");
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (_scanner, manager, _events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .seed(SeedPeer {
+            peer: PeerId::from_bytes([7; 32]),
+            address: "127.0.0.1:30399".into(),
+        })
+        .seed_discovery_lookup(counting_lookup(Arc::clone(&calls)))
+        .session_factory(accepting_factory())
+        .peer_store(&path)
+        .peer_store_discovery_interval(Duration::from_secs(3600))
+        .start()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        manager.peers().await,
+        vec![SeedPeer::from_public_key([9; 32], "127.0.0.1:30304").peer],
+        "the discovered member, not the DHT seed, must be registered"
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    manager.shutdown_wait().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// When every warm-store dial fails, startup runs the skipped discovery once
+/// as a fallback instead of failing outright.
+#[tokio::test]
+async fn warm_store_total_failure_falls_back_to_discovery() {
+    let path = store_path("fallback");
+    write_store(&path, vec![stored(1, "127.0.0.1:30311", 0.9)]);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let factory: OverlaySessionFactory = Arc::new(move |candidate| {
+        Box::pin(async move {
+            if candidate.address == "127.0.0.1:30311" {
+                return Err("stale stored address".to_owned());
+            }
+            Ok(Box::new(PendingSession {
+                peer: candidate.peer,
+            }) as Box<dyn OverlaySession>)
+        })
+    });
+    let (_scanner, manager, _events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .seed(SeedPeer {
+            peer: PeerId::from_bytes([7; 32]),
+            address: "127.0.0.1:30399".into(),
+        })
+        .seed_discovery_lookup(counting_lookup(Arc::clone(&calls)))
+        .session_factory(factory)
+        .peer_store(&path)
+        .peer_store_discovery_interval(Duration::from_secs(3600))
+        .start()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        1,
+        "the skipped discovery must run as the warm-store fallback"
+    );
+    assert_eq!(
+        manager.peers().await,
+        vec![SeedPeer::from_public_key([9; 32], "127.0.0.1:30304").peer],
+        "the fallback discovery member must be registered"
+    );
+    manager.shutdown_wait().await;
+    let _ = std::fs::remove_file(&path);
+}
+
+/// The store file exists after startup and still exists - with the run's
+/// peers - after shutdown, which is the on-disk contract CI relies on.
+#[tokio::test]
+async fn shutdown_leaves_the_store_file_behind() {
+    let path = store_path("shutdown");
+    write_store(
+        &path,
+        vec![
+            stored(1, "127.0.0.1:30301", 0.9),
+            stored(2, "127.0.0.1:30302", 0.4),
+        ],
+    );
+    let (_scanner, manager, _events) = MempoolScannerBuilder::new()
+        .download_config(false)
+        .config(config())
+        .seed(SeedPeer {
+            peer: PeerId::from_bytes([7; 32]),
+            address: "127.0.0.1:30399".into(),
+        })
+        .seed_discovery_lookup(counting_lookup(Arc::new(
+            std::sync::atomic::AtomicUsize::new(0),
+        )))
+        .session_factory(accepting_factory())
+        .peer_store(&path)
+        .peer_store_save_interval(Duration::from_secs(3600))
+        .peer_store_discovery_interval(Duration::from_secs(3600))
+        .start()
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    manager.shutdown_wait().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let reloaded = PeerStore::load(
+        &path,
+        "mainnet",
+        &hex::encode(OverlayId::MAINNET_BASECHAIN_OVERLAY_ID.as_bytes()),
+    );
+    let seeds = reloaded.seeds().await;
+    assert_eq!(seeds.len(), 2, "both persisted peers survive the run");
+    assert!(
+        seeds
+            .iter()
+            .any(|seed| seed.peer == PeerId::from_bytes([1; 32])),
+        "the stored peer set must not be replaced by the run"
+    );
+    let _ = std::fs::remove_file(&path);
 }

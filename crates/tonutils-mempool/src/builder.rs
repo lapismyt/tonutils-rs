@@ -4,7 +4,13 @@
 //! limit; `lib.rs` re-exports [`MempoolScannerBuilder`].
 
 use super::*;
+use crate::bootstrap::{
+    BootstrapDial, await_registered, download_config, merge_peer_sets, parse_seed_json,
+    warm_store_fallback,
+};
+use crate::discovery_task::{PeerDiscoveryTask, discovery_runner};
 use crate::peer_growth::PeerGrowthTask;
+use crate::peer_store::{PeerStore, PeerStoreWriter};
 
 /// Builder for a live scanner startup.
 pub type OverlaySessionFactory = Arc<
@@ -69,6 +75,12 @@ pub struct MempoolScannerBuilder {
     /// Whether the background churn task evicts the worst non-pinned peers
     /// over [`overlay_max_peers`](Self::overlay_max_peers).
     quality_eviction: bool,
+    /// Durable peer-store file; `None` keeps startup behavior unchanged.
+    peer_store_path: Option<std::path::PathBuf>,
+    /// Interval between automatic peer-store saves.
+    peer_store_save_interval: Duration,
+    /// Interval between background discovery rounds while the store runs.
+    peer_store_discovery_interval: Duration,
 }
 
 impl fmt::Debug for MempoolScannerBuilder {
@@ -114,6 +126,12 @@ impl fmt::Debug for MempoolScannerBuilder {
             .field("pinned_max_peers", &self.pinned_max_peers)
             .field("peer_quality", &self.peer_quality)
             .field("quality_eviction", &self.quality_eviction)
+            .field("peer_store_path", &self.peer_store_path)
+            .field("peer_store_save_interval", &self.peer_store_save_interval)
+            .field(
+                "peer_store_discovery_interval",
+                &self.peer_store_discovery_interval,
+            )
             .finish()
     }
 }
@@ -151,6 +169,10 @@ impl Default for MempoolScannerBuilder {
             pinned_max_peers: None,
             peer_quality: PeerQualityConfig::default(),
             quality_eviction: false,
+            peer_store_path: None,
+            peer_store_save_interval: crate::peer_store::DEFAULT_PEER_STORE_SAVE_INTERVAL,
+            peer_store_discovery_interval:
+                crate::discovery_task::DEFAULT_PEER_STORE_DISCOVERY_INTERVAL,
         }
     }
 }
@@ -522,6 +544,49 @@ impl MempoolScannerBuilder {
         self
     }
 
+    /// Enables durable peer persistence at `path` (a versioned JSON file,
+    /// format documented on [`PeerStore`]).
+    ///
+    /// The file is read at startup and rewritten after bootstrap, on every
+    /// save interval ([`peer_store_save_interval`](Self::peer_store_save_interval)),
+    /// and on shutdown:
+    ///
+    /// - every peer ever learned stays persisted - connected, disconnected,
+    ///   failed, or evicted - with its UDP/QUIC endpoints and a persistent
+    ///   `priority` that this run corrects (fast handshakes and delivered
+    ///   broadcasts raise it, failed dials and dropped sessions lower it,
+    ///   untouched peers decay);
+    /// - a **warm** file (at least one dialable entry) joins the bootstrap
+    ///   dial set in priority order and skips the blocking start-time
+    ///   discovery lookup; background rounds
+    ///   ([`peer_store_discovery_interval`](Self::peer_store_discovery_interval))
+    ///   keep discovering fresher members while the event queue is idle;
+    /// - if every warm-store dial fails at bootstrap, the skipped blocking
+    ///   discovery runs once as a fallback before startup gives up;
+    /// - a cold, unreadable, or foreign file (other `version`, `network`, or
+    ///   `overlay`) starts empty and startup behaves exactly as without a
+    ///   store.
+    pub fn peer_store(mut self, path: impl Into<std::path::PathBuf>) -> Self {
+        self.peer_store_path = Some(path.into());
+        self
+    }
+
+    /// Interval between automatic peer-store saves (default 60 s).  A save
+    /// also runs right after bootstrap and once on shutdown.
+    pub fn peer_store_save_interval(mut self, interval: Duration) -> Self {
+        self.peer_store_save_interval = interval;
+        self
+    }
+
+    /// Interval between background discovery rounds while the store is
+    /// enabled (default 60 s).  On a warm store these rounds replace the
+    /// blocking start-time lookup and keep searching for better peers; a
+    /// round additionally requires an idle event queue.
+    pub fn peer_store_discovery_interval(mut self, interval: Duration) -> Self {
+        self.peer_store_discovery_interval = interval;
+        self
+    }
+
     /// Resolves bootstrap sources, initializes the bounded overlay manager, and
     /// starts the scanner's overlay receive adapter.
     pub async fn start(
@@ -561,60 +626,90 @@ impl MempoolScannerBuilder {
             lookup_timeout: self.discovery_timeout,
             max_records: 64,
         };
-        let discovered = if let Some(lookup) = self.seed_discovery_lookup.clone() {
-            log::debug!(
-                "seed_discovery_lookup: starting with {} seeds, timeout={:?}",
-                seeds.len(),
-                self.discovery_timeout
+        // The configured lookup, normalized across the three builder
+        // variants; the same runner backs the warm-store fallback and the
+        // background discovery rounds.
+        let runner = discovery_runner(
+            self.seed_discovery_lookup.clone(),
+            self.typed_discovery_lookup.clone(),
+            self.discovery_lookup.clone(),
+            self.overlay_id,
+            self.discovery_timeout,
+        );
+        // Durable peer memory.  A warm store (at least one dialable entry)
+        // joins the dial set below and skips the blocking start-time lookup;
+        // background discovery rounds take over for the rest of the run.
+        let store = self.peer_store_path.clone().map(|path| {
+            PeerStore::load(
+                path,
+                if self.testnet { "testnet" } else { "mainnet" },
+                &hex::encode(self.overlay_id.as_bytes()),
+            )
+        });
+        let saved_all = match &store {
+            Some(store) => store.seeds().await,
+            None => Vec::new(),
+        };
+        let warm = !saved_all.is_empty();
+        // Bootstrap dials at most twice the managed budget from the store
+        // (never fewer than 16); the remaining entries stay in the
+        // known-candidate list, where background rounds dial them by priority
+        // under the budget instead of all at once.
+        let store_budget = usize::try_from(self.overlay_max_peers)
+            .unwrap_or(usize::MAX)
+            .saturating_mul(2)
+            .max(16);
+        let saved = saved_all
+            .iter()
+            .take(store_budget)
+            .cloned()
+            .collect::<Vec<_>>();
+        if warm {
+            log::info!(
+                "mempool::start: peer store warm with {} peer(s), dialing up to {store_budget} and skipping the blocking discovery",
+                saved_all.len()
             );
-            let result = tokio::time::timeout(self.discovery_timeout, lookup(seeds.clone()))
-                .await
-                .ok()
-                .filter(|peers| !peers.is_empty());
-            let discovered = result.unwrap_or_default();
-            if discovered.is_empty() {
+        }
+        let discovered = if warm {
+            Vec::new()
+        } else if let Some(runner) = &runner {
+            let found = runner(seeds.clone()).await;
+            if found.is_empty() {
                 log::debug!(
-                    "seed_discovery_lookup: timed out or empty, falling back to the {} bootstrap seed(s)",
+                    "discovery: timed out or empty, falling back to the {} bootstrap seed(s)",
                     seeds.len()
                 );
             } else {
-                log::debug!(
-                    "seed_discovery_lookup: found {} overlay member(s)",
-                    discovered.len()
-                );
+                log::debug!("discovery: found {} overlay member(s)", found.len());
             }
-            discovered
-        } else if let Some(lookup) = self.typed_discovery_lookup.clone() {
-            discovery.discover_typed(move |seeds| lookup(seeds)).await
-        } else if let Some(lookup) = self.discovery_lookup.clone() {
-            discovery.discover_with(move |seeds| lookup(seeds)).await
+            found
         } else {
             discovery.discover(|| async { Vec::new() }).await
         };
         let discovered_count = discovered.len();
-        // Bootstrap seeds are DHT contacts, not overlay members: the
-        // `dht.static_nodes` entries run the `dht-server` binary, which
-        // answers `dht.findValue` and `dht.store` but hosts no overlay
-        // session (TODO item 411), so a seed-derived member session sits
-        // registered, is never verified, and is never pushed to.  Membership
-        // therefore comes from discovery; the seed set is kept only as the
-        // bootstrap fallback when discovery found nothing to talk to.
-        let members = if discovered.is_empty() {
+        // Membership comes from the warm store or from discovery; the seed
+        // set is kept only as the bootstrap fallback when neither yielded
+        // anything to talk to (the seeds are `dht-server` contacts without
+        // overlay sessions - TODO item 411).
+        let members = if warm {
+            saved
+        } else if discovered.is_empty() {
             seeds.clone()
         } else {
             discovered
         };
         // Merge the pinned set first: pinned sessions are attempted (and
-        // remembered) ahead of discovery results, deduplicated by peer id so a
-        // pinned address wins over a discovered one.
-        let mut merged = Vec::with_capacity(pinned.len() + members.len());
-        let mut seen = HashSet::with_capacity(pinned.len() + members.len());
-        for peer in pinned.iter().chain(members.iter()) {
-            if seen.insert(peer.peer) {
-                merged.push(peer.clone());
-            }
-        }
-        let peers = merged;
+        // remembered) ahead of member results, deduplicated by peer id so a
+        // pinned address wins over a discovered or stored one.
+        let peers = merge_peer_sets([pinned.as_slice(), members.as_slice()]);
+        // Candidate list shared with growth, reconnect, and the background
+        // rounds: a warm store keeps its entire loaded set here, beyond the
+        // bootstrap dial budget, so those peers stay reachable later.
+        let known_init = if warm {
+            merge_peer_sets([pinned.as_slice(), saved_all.as_slice()])
+        } else {
+            peers.clone()
+        };
         if peers.is_empty() {
             return Err(MempoolError::NoBootstrapPeers);
         }
@@ -677,7 +772,7 @@ impl MempoolScannerBuilder {
         });
         if let Some(factory) = self.session_factory {
             let known_peers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>> =
-                Arc::new(tokio::sync::RwLock::new(peers.clone()));
+                Arc::new(tokio::sync::RwLock::new(known_init));
             let reconnect_factory: ReconnectFactory = {
                 let factory = factory.clone();
                 let known = known_peers.clone();
@@ -692,80 +787,44 @@ impl MempoolScannerBuilder {
                     })
                 })
             };
-            let results = join_all(peers.into_iter().map(|peer| {
-                let factory = factory.clone();
-                async move {
-                    log::debug!(
-                        "mempool bootstrap: attempting peer={:?} address={}",
-                        peer.peer,
-                        peer.address
-                    );
-                    let result = factory(peer.clone()).await;
-                    match &result {
-                        Ok(_) => log::debug!(
-                            "mempool bootstrap: direct overlay session established for peer={:?} address={}",
-                            peer.peer,
-                            peer.address
-                        ),
-                        Err(error) => log::warn!(
-                            "mempool bootstrap: peer={:?} address={} failed: {error}",
-                            peer.peer,
-                            peer.address
-                        ),
-                    }
-                    result
-                }
-            }))
-            .await;
-            let mut factory_successes = 0;
-            let mut factory_failures = 0;
-            for result in results {
-                match result {
-                    Ok(session) => {
-                        manager
-                            .add_session_with_reconnect(
-                                session,
-                                reconnect_factory.clone(),
-                                self.reconnect_attempts,
-                                self.reconnect_backoff,
-                            )
-                            .await;
-                        factory_successes += 1;
-                    }
-                    Err(error) => {
-                        factory_failures += 1;
-                        log::warn!("bootstrap session failed: {error}");
-                    }
-                }
-            }
+            let dial = BootstrapDial {
+                factory: &factory,
+                manager: &manager,
+                reconnect: &reconnect_factory,
+                attempts: self.reconnect_attempts,
+                backoff: self.reconnect_backoff,
+                store: store.as_ref(),
+            };
+            let (mut factory_successes, factory_failures) = dial.dial(&peers).await;
             log::info!(
                 "mempool bootstrap: factory_successes={} factory_failures={}",
                 factory_successes,
                 factory_failures
             );
+            if factory_successes == 0 && warm {
+                // Every warm-store candidate went stale: run the blocking
+                // discovery the warm start skipped and retry with the fresh
+                // members before giving up on bootstrap.
+                if let Some(runner) = &runner {
+                    factory_successes = warm_store_fallback(
+                        runner,
+                        &seeds,
+                        &pinned,
+                        &saved_all,
+                        &known_peers,
+                        &dial,
+                    )
+                    .await
+                    .0;
+                }
+            }
             if factory_successes == 0 {
                 manager.shutdown();
                 return Err(MempoolError::Session(
                     "all validated bootstrap sessions failed".into(),
                 ));
             }
-            if self.bootstrap_timeout != Duration::ZERO {
-                let deadline = tokio::time::Instant::now() + self.bootstrap_timeout;
-                while manager.peer_count().await == 0 {
-                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-                    if remaining.is_zero() {
-                        manager.shutdown();
-                        return Err(MempoolError::Session(
-                            "bootstrap sessions did not register any peers".into(),
-                        ));
-                    }
-                    tokio::time::sleep(remaining.min(Duration::from_millis(10))).await;
-                }
-                log::info!(
-                    "mempool bootstrap ready: registered_peers={}",
-                    manager.peer_count().await
-                );
-            }
+            await_registered(&manager, self.bootstrap_timeout).await?;
             if let Some(growth) = self.peer_growth_lookup.clone() {
                 PeerGrowthTask {
                     manager: manager.clone(),
@@ -779,6 +838,7 @@ impl MempoolScannerBuilder {
                     pinned: pinned_ids.clone(),
                     growth_interval,
                     event_tx: scanner.event_tx.clone(),
+                    store: store.clone(),
                 }
                 .spawn();
             }
@@ -817,6 +877,40 @@ impl MempoolScannerBuilder {
                         }
                     }
                 });
+            }
+            // Durable save loop: an immediate bootstrap snapshot, then every
+            // save interval, and one final write on shutdown.
+            if let Some(store) = store.clone() {
+                PeerStoreWriter {
+                    store,
+                    known: known_peers.clone(),
+                    endpoints: self.member_endpoints.clone(),
+                    manager: manager.clone(),
+                    quality: scanner.quality(),
+                    interval: self.peer_store_save_interval,
+                }
+                .spawn();
+            }
+            // Background replacement for the skipped start-time discovery:
+            // idle-time rounds that merge fresher members and dial known-but-
+            // down peers in persisted-priority order under the budget.
+            if let (Some(runner), Some(store)) = (runner.clone(), store.clone()) {
+                PeerDiscoveryTask {
+                    manager: manager.clone(),
+                    runner,
+                    seeds: seeds.clone(),
+                    known: known_peers.clone(),
+                    factory: factory.clone(),
+                    reconnect: reconnect_factory.clone(),
+                    attempts: self.reconnect_attempts,
+                    backoff: self.reconnect_backoff,
+                    max_peers: usize::try_from(self.overlay_max_peers).unwrap_or(usize::MAX),
+                    pinned: pinned_ids.clone(),
+                    interval: self.peer_store_discovery_interval,
+                    event_tx: scanner.event_tx.clone(),
+                    store: Some(store),
+                }
+                .spawn();
             }
         }
         Ok((scanner, manager, stream))
@@ -873,27 +967,4 @@ impl MempoolScannerBuilder {
         });
         Ok(peers)
     }
-}
-
-async fn download_config(url: &str) -> Result<String, MempoolError> {
-    reqwest::get(url)
-        .await
-        .map_err(|error| MempoolError::ConfigDownload(error.to_string()))?
-        .error_for_status()
-        .map_err(|error| MempoolError::ConfigDownload(error.to_string()))?
-        .text()
-        .await
-        .map_err(|error| MempoolError::ConfigDownload(error.to_string()))
-}
-
-fn parse_seed_json(json: &str) -> Result<Vec<SeedPeer>, MempoolError> {
-    let addresses = extract_dht_addresses(json)
-        .map_err(|error| MempoolError::ConfigDownload(error.to_string()))?;
-    Ok(addresses
-        .into_iter()
-        .map(|item| SeedPeer {
-            peer: PeerId::from_bytes(item.public_key.unwrap_or([0; 32])),
-            address: item.address.to_string(),
-        })
-        .collect())
 }

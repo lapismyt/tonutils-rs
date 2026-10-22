@@ -151,6 +151,60 @@ session factory adding managed peers), and the default budget (30) sits
 above typical live rosters, so evictions are rare by design.
 `PeerQualityRegistry::evictions()` reports how many peers churn removed.
 
+## Persistent Peer Store
+
+Optional, enabled by giving the builder a file path. The scanner reads the
+file at startup and rewrites it after bootstrap, on every save interval
+(default 60 s), and on shutdown, so every peer the run ever learns - connected,
+disconnected, failed, or evicted - survives into the next launch together with
+its UDP/QUIC endpoints and a persistent dial `priority`:
+
+```rust
+# use tonutils_mempool::MempoolScannerBuilder;
+# use std::time::Duration;
+# fn builder() -> MempoolScannerBuilder {
+MempoolScannerBuilder::new()
+    .peer_store("mempool-peer-store.json")
+    .peer_store_save_interval(Duration::from_secs(30))
+    .peer_store_discovery_interval(Duration::from_secs(60))
+# }
+```
+
+Startup behavior splits on the file's contents:
+
+- **Warm** (at least one dialable entry): the saved peers join the bootstrap
+  dial set in priority order (capped at twice `overlay_max_peers`, never fewer
+  than 16; the rest stay in the candidate list), and the blocking start-time
+  discovery lookup is **skipped**. Background rounds
+  (`peer_store_discovery_interval`) then keep running the same lookup while
+  the event queue is idle, merging fresher members and redialing known-but-down
+  peers in priority order under the managed budget.
+- **Fallback**: if every warm-store dial fails, startup runs the skipped
+  blocking discovery once and retries with the discovered members before
+  failing.
+- **Cold** (missing, empty, unreadable, or a foreign `version`, `network`, or
+  `overlay`): startup behaves exactly as without a store.
+
+Priority is corrected by this run: an established dial adds up to 0.05 scaled
+by handshake speed (<100 ms full, <1 s half, else quarter), a failed dial or a
+dropped session subtracts 0.10, a peer that delivered a broadcast gains 0.10
+once per run, and peers left untouched decay by 2 % per run. Values are clamped
+to `[0.05, 1.0]` and written with three decimals, so ordering is stable across
+saves. The format is the versioned JSON documented on `PeerStore`
+(`PEER_STORE_VERSION` 1, at most `MAX_STORED_PEERS` = 512 entries, written
+atomically through a sibling `.tmp` file).
+
+`examples/peer_store_scan.rs` is the working end-to-end sample; its store
+path comes from the second argument, `TON_MEMPOOL_PEER_STORE`, or defaults to
+`mempool-peer-store.json`. The live-delivery CI job wires the same mechanism
+through `TON_MEMPOOL_LIVE_PEER_STORE` so parallel samples share a cached
+roster across runs.
+
+Current store-specific limits: priority reflects dial and delivery behavior
+only (proof verification stays out of scope), status labels record the last
+observed state rather than a cause, and a hard kill between save intervals
+loses at most one interval of experience.
+
 ## Live Network Requirements
 
 - Outbound UDP to the global config's seeds; a NAT'd host must be able to

@@ -237,6 +237,21 @@ jobs:
             ${{ runner.os }}-cargo-live-
             ${{ runner.os }}-cargo-
 
+      - name: Cache the durable peer store
+        # Durable overlay-member memory for the delivery samples only: the
+        # most recent run's store (restored by restore-keys) lets each sample
+        # start warm - saved peers are dialed in persisted-priority order and
+        # the blocking discovery lookup is skipped - which shortens the
+        # bootstrap toward the registered_peers census.  The unique run-id key
+        # forces a fresh save every green gate; actions/cache persists only on
+        # job success, so a red run keeps the previous roster.
+        uses: actions/cache@v6
+        with:
+          path: .tonutils-peer-store
+          key: peer-store-${{ github.run_id }}
+          restore-keys: |
+            peer-store-
+
       - name: Load public TON global config
         # The delivery test derives mainnet seeds only; the testnet config
         # stays in the live-tests job.
@@ -343,7 +358,24 @@ jobs:
           fi
 
           pids=()
+          # Peer-store continuity: each sample process reads its own store
+          # file under .tonutils-peer-store/ (restored by the cache step when
+          # a previous run left one).  A sample whose own file is missing is
+          # seeded from the largest restored store, so one rich roster warms
+          # every parallel process on the first wired run.  Each sample
+          # rewrites only its own file, so parallel writers never collide.
+          store_dir="$PWD/.tonutils-peer-store"
+          mkdir -p "$store_dir"
+          best="$(ls -S "$store_dir"/*.json 2>/dev/null | head -n 1 || true)"
           for i in $(seq 1 "$samples"); do
+            store_file="$store_dir/store-$i.json"
+            if [ ! -f "$store_file" ] && [ -n "$best" ]; then
+              cp "$best" "$store_file"
+            fi
+          done
+
+          for i in $(seq 1 "$samples"); do
+            TON_MEMPOOL_LIVE_PEER_STORE="$store_dir/store-$i.json" \
             "$bin" configured_seed_delivers_valid_external_message --ignored --nocapture \
               > "$artifacts/sample-$i.log" 2>&1 &
             pids+=("$!")
