@@ -154,16 +154,16 @@ postponed work moves to `# BACKLOG`.
     - [ ] Add a docs checklist to release preparation #docs
 - [ ] Build an `examples/` suite covering every public API feature #docs #examples
   - [ ] Add minimal examples that compile under the narrowest required feature set #examples #features #tests
-    - [x] `examples/liteclient_masterchain_info.rs` #examples #liteclient
-    - [x] `examples/liteclient_raw_query.rs` #examples #liteclient #tl
-    - [x] `examples/litebalancer_failover.rs` #examples #balancer
-    - [x] `examples/network_config.rs` #examples #network
-    - [x] `examples/adnl_ping.rs` or equivalent loopback-safe ADNL example #examples #network
-    - [x] `examples/tvm_cell_builder.rs` #examples #tvm
-    - [x] `examples/tvm_boc_roundtrip.rs` #examples #tvm
-    - [x] `examples/tvm_stack_run_method.rs` #examples #contracts #tvm
-    - [ ] `examples/proof_verify_account_state.rs` after proof APIs land #examples #proofs
-    - [x] `examples/mempool_stream.rs` after mempool APIs land Closed 2026-10-20: rewritten against the current builder API - `crates/tonutils-mempool/examples/mempool_stream.rs` joins the mainnet basechain overlay through `native_udp_for_shard_public`, streams `MempoolEvent`s, re-broadcasts each accepted BoC through `send_external`, and exits cleanly on Ctrl-C; it passes `cargo check -p tonutils-mempool --example mempool_stream`, is listed in `docs/examples.md`, and is demonstrated by `docs/mempool.md`. #examples #mempool
+    - [x] `examples/liteclient/liteclient_masterchain_info.rs` #examples #liteclient
+    - [x] `examples/liteclient/liteclient_raw_query.rs` #examples #liteclient #tl
+    - [x] `examples/liteclient/litebalancer_failover.rs` #examples #balancer
+    - [x] `examples/network/network_config.rs` #examples #network
+    - [x] `examples/adnl/adnl_ping.rs` or equivalent loopback-safe ADNL example #examples #network
+    - [x] `examples/tvm/tvm_cell_builder.rs` #examples #tvm
+    - [x] `examples/tvm/tvm_boc_roundtrip.rs` #examples #tvm
+    - [x] `examples/contracts/tvm_stack_run_method.rs` #examples #contracts #tvm
+    - [ ] `examples/tvm/proof_verify_account_state.rs` after proof APIs land #examples #proofs
+    - [x] `examples/mempool/mempool_stream.rs` after mempool APIs land Closed 2026-10-20: rewritten against the current builder API - `examples/mempool/mempool_stream.rs` joins the mainnet basechain overlay through `native_udp_for_shard_public`, streams `MempoolEvent`s, re-broadcasts each accepted BoC through `send_external`, and exits cleanly on Ctrl-C; it passes `cargo check -p tonutils-mempool --example mempool_stream`, is listed in `docs/examples.md`, and is demonstrated by `docs/mempool.md`. #examples #mempool
   - [ ] Add example verification to CI #examples #tests
     - [ ] Compile examples with default features #examples #tests
     - [ ] Compile examples with all features #examples #tests
@@ -494,7 +494,7 @@ postponed work moves to `# BACKLOG`.
   - [x] Store format and lifecycle: `PeerStore` writes versioned JSON v1 (`version`, `network`, `overlay`, `saved_at`, up to `MAX_STORED_PEERS` = 512 entries with id/address/last_seen/source/status/priority/udp/quic) atomically through a sibling `.tmp` file; load drops entries with no usable dial address, dedups by id (higher priority/last_seen wins), applies one per-run 2 % decay, and ignores a file with a foreign `version`, `network`, or `overlay`; a writer task saves right after bootstrap, on `peer_store_save_interval` (default 60 s), on pool status changes, and once on shutdown #mempool #tests
   - [x] Persistent per-peer priority corrected each run: established dial +0.05 scaled by handshake speed (<100 ms full, <1 s half, else quarter), failed dial and dropped/failed session -0.10, a delivered broadcast +0.10 once per run from the quality registry snapshot, untouched decay -2 % per run, clamped to [0.05, 1.0] and serialized with three decimals; disconnect causes are not double-counted (a churn eviction surfaces as `Disconnected`) #mempool #tests
   - [x] Warm start with background discovery: a warm store joins the bootstrap dial set in priority order (capped at twice `overlay_max_peers`, min 16; the full load stays in the candidate list) and skips the blocking start-time lookup, background `discovery_task` rounds re-run the configured lookup while the event queue is idle and redial known-but-down peers by priority under the budget, and a total warm-store failure runs the skipped discovery once as a fallback before startup gives up; cold or store-less startups keep the legacy path byte-for-byte #mempool #network #tests
-  - [x] Surface: builder `.peer_store(path)`, `.peer_store_save_interval`, `.peer_store_discovery_interval`, public `PeerStore`/`PeerStoreFile`/`StoredPeer` types, `examples/peer_store_scan.rs`, and `docs/mempool.md` "Persistent Peer Store" #mempool #docs
+  - [x] Surface: builder `.peer_store(path)`, `.peer_store_save_interval`, `.peer_store_discovery_interval`, public `PeerStore`/`PeerStoreFile`/`StoredPeer` types, `examples/mempool/peer_store_scan.rs`, and `docs/mempool.md` "Persistent Peer Store" #mempool #docs
   - [x] CI speedup: the live-delivery job caches `.tonutils-peer-store` (run-id key with `peer-store-` restore prefix, saved on green gates) and gives each of its parallel sample processes its own `store-$i.json` via `TON_MEMPOOL_LIVE_PEER_STORE`, so a green run teaches the next one which members are reliable; discovery/smoke tests stay untouched #ci #tests Closed 2026-10-21 by the implementation in this branch; live evidence pending the first wired delivery gate.
 
 ## CLI And Shell Automation
@@ -685,7 +685,7 @@ postponed work moves to `# BACKLOG`.
 - [x] Add initial public `docs/` guides for getting started, LiteClient, CLI, and examples #docs
 - [x] Add initial compiling examples for network config, LiteClient masterchain info, and raw LiteAPI query #examples #liteclient
 - [x] Add `docs/contracts.md` with smart contract usage patterns #docs #contracts
-- [x] Add `examples/contract_get_method.rs` and `examples/contract_get_state.rs` #examples #contracts
+- [x] Add `examples/contracts/contract_get_method.rs` and `examples/contracts/contract_get_state.rs` #examples #contracts
 - [x] Add `Contract` wrapper over `LiteClient` and `LiteBalancer` #contracts
   - [x] Fetch account state #contracts
   - [x] Run get-method by numeric id #contracts

@@ -1,10 +1,10 @@
 use tonutils_tlb::schema;
 
 fn main() -> anyhow::Result<()> {
-    let user_schema = r#"
+    let user_schema = r"
         demo_state$10 seqno:uint32 owner:bits256 = DemoState;
         demo_empty$0 = DemoMaybe;
-    "#;
+    ";
     let user_constructors = schema::parse_schema(user_schema)?;
     let user_summary = schema::generate_summary(&user_constructors);
 

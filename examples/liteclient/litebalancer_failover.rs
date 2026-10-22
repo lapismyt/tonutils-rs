@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+#[path = "../../examples/src/common.rs"]
 mod common;
 
 use tonutils_liteclient::balancer::LiteBalancer;

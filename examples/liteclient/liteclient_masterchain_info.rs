@@ -1,3 +1,4 @@
+#[path = "../../examples/src/common.rs"]
 mod common;
 
 use tonutils_liteclient::client::LiteClient;

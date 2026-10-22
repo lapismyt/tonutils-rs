@@ -306,7 +306,7 @@ Compatibility macro/schema support is the checked schema workflow in
 - generate a deterministic checked summary with `generate_summary`,
 - compare generated output against a checked-in snapshot for drift detection.
 
-`examples/tlb_schema_codegen.rs` demonstrates this path with a small
+`examples/tlb/tlb_schema_codegen.rs` demonstrates this path with a small
 user-defined schema snippet and separately verifies the built-in
 `BLOCK_TLB` summary. The built-in Compatibility block/config/proof schema
 snapshot remains in `src/tlb/schemas/block.tlb`; its checked summary remains

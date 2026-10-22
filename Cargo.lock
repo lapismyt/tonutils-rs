@@ -2275,7 +2275,17 @@ dependencies = [
 name = "tonutils"
 version = "2.0.0"
 dependencies = [
+ "anyhow",
+ "hex",
+ "log",
+ "num-bigint",
+ "pretty_env_logger",
+ "rand 0.8.7",
+ "sha2 0.10.9",
+ "tl-proto",
+ "tokio",
  "tonutils-adnl",
+ "tonutils-cli",
  "tonutils-contracts",
  "tonutils-crc",
  "tonutils-jetton",
@@ -2289,6 +2299,7 @@ dependencies = [
  "tonutils-tlb",
  "tonutils-tvm",
  "tonutils-wallet",
+ "ureq",
 ]
 
 [[package]]
