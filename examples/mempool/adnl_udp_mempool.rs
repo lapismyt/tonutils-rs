@@ -55,7 +55,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let testnet = std::env::var("TON_NETWORK").as_deref() == Ok("testnet");
 
     let local_key = KeyPair::generate(&mut rand::rngs::OsRng);
-    let local_addr: SocketAddr = "0.0.0.0:0".parse()?;
+    // Fixed inbound port so members can push broadcasts directly.
+    // Override with TON_MEMPOOL_LOCAL_PORT or TON_MEMPOOL_PORT.
+    let local_port: u16 = std::env::var("TON_MEMPOOL_LOCAL_PORT")
+        .or_else(|_| std::env::var("TON_MEMPOOL_PORT"))
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(30000);
+    let local_addr: SocketAddr = format!("0.0.0.0:{local_port}").parse()?;
 
     let network_label = if testnet { "testnet" } else { "mainnet" };
     println!("adnl-udp mempool scanner ({network_label})");
