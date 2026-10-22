@@ -194,11 +194,12 @@ saves. The format is the versioned JSON documented on `PeerStore`
 (`PEER_STORE_VERSION` 1, at most `MAX_STORED_PEERS` = 512 entries, written
 atomically through a sibling `.tmp` file).
 
-`examples/peer_store_scan.rs` is the working end-to-end sample; its store
-path comes from the second argument, `TON_MEMPOOL_PEER_STORE`, or defaults to
-`mempool-peer-store.json`. The live-delivery CI job wires the same mechanism
-through `TON_MEMPOOL_LIVE_PEER_STORE` so parallel samples share a cached
-roster across runs.
+`crates/tonutils-mempool/examples/peer_store_scan.rs` is the working
+end-to-end sample; its store path comes from the second argument,
+`TON_MEMPOOL_PEER_STORE`, or defaults to `mempool-peer-store.json`. The
+live-delivery CI job wires the same mechanism through
+`TON_MEMPOOL_LIVE_PEER_STORE` so parallel samples share a cached roster
+across runs.
 
 Current store-specific limits: priority reflects dial and delivery behavior
 only (proof verification stays out of scope), status labels record the last
