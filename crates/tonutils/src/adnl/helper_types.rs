@@ -114,12 +114,10 @@ impl Default for AdnlAesParams {
 }
 
 impl AdnlAddress {
-    #[inline]
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0
     }
 
-    #[inline]
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }

@@ -1,11 +1,15 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 //! TVM stack values used by smart-contract get-method calls.
 
 use std::sync::Arc;
 
-use anyhow::{Result, bail};
+use crate::tvm::{TvmResult as Result, error::stack_bail as bail};
 use num_bigint::BigInt;
 
-use crate::{
+use crate::tvm::{
     Builder, Cell, Slice,
     boc::{deserialize_boc, serialize_boc},
 };
@@ -217,8 +221,8 @@ fn decode_entry(cell: Arc<Cell>) -> Result<TvmStackEntry> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::CellBuilder;
+    use super::{BigInt, Slice, TvmStack, TvmStackEntry, serialize_boc};
+    use crate::tvm::CellBuilder;
 
     #[test]
     fn test_stack_roundtrip_simple_values() {

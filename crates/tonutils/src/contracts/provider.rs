@@ -5,14 +5,16 @@ use crate::{
         RUN_METHOD_MODE_RETURN_RESULT,
         stack::{FromTvmStack, ToTvmStack, TvmStackConversionError},
     },
-    tl::{
-        BlockIdExt,
-        common::{AccountId, Int256},
-        response::{AccountState, MasterchainInfo, RunMethodResult, TransactionList},
+    liteclient::tl::{
+        LiteAccountId as AccountId, LiteBlockIdExt as BlockIdExt,
+        LiteServerAccountState as AccountState, MasterchainInfo, RunMethodResult, TransactionList,
     },
-    tlb::TlbError,
+    tl::TlInt256 as Int256,
     tlb::{StateInit, TlbSerialize},
-    tvm::{Address, TvmStack, TvmStackEntry, deserialize_boc, method_name_to_id},
+    tlb::{TlbError, tlb_to_tvm_error},
+    tvm::{
+        Address, TvmError, TvmResult, TvmStack, TvmStackEntry, deserialize_boc, method_name_to_id,
+    },
 };
 
 use async_trait::async_trait;
@@ -28,7 +30,7 @@ where
     #[error("get-method exited with code {exit_code}")]
     NonZeroExitCode { exit_code: i32 },
     #[error("failed to decode contract data: {0}")]
-    Decode(#[source] anyhow::Error), // TODO: don't use anyhow in libraries
+    Decode(#[source] TvmError),
     #[error("failed to convert TVM stack value: {0}")]
     StackConversion(#[source] TvmStackConversionError),
 }
@@ -38,11 +40,11 @@ where
 #[derive(Debug, thiserror::Error)]
 pub enum ContractBuildError {
     #[error("failed to decode contract code BoC: {0}")]
-    InvalidCodeBoc(#[source] anyhow::Error), // TODO: don't use anyhow in libraries
+    InvalidCodeBoc(#[source] TvmError),
     #[error("failed to serialize contract data as TL-B: {0}")]
     DataSerialization(#[source] TlbError),
     #[error("failed to serialize contract StateInit: {0}")]
-    StateInitSerialization(#[source] anyhow::Error), // TODO: don't use anyhow in libraries
+    StateInitSerialization(#[source] TvmError),
 }
 
 impl<E> ContractError<E>
@@ -52,9 +54,8 @@ where
     fn provider(error: E) -> Self {
         Self::Provider(error)
     }
-    pub fn decode(error: impl Into<anyhow::Error>) -> Self {
-        // TODO: don't use anyhow in libraries
-        Self::Decode(error.into())
+    fn decode(error: TvmError) -> Self {
+        Self::Decode(error)
     }
     fn stack_conversion(error: TvmStackConversionError) -> Self {
         Self::StackConversion(error)
@@ -167,7 +168,8 @@ impl<'a, P: ContractProvider + ?Sized> Contract<'a, P> {
         stack: TvmStack,
     ) -> Result<Vec<TvmStackEntry>, ContractError<P::Error>> {
         decode_success_stack(
-            self.run_get_method(block, method_id, stack)
+            &self
+                .run_get_method(block, method_id, stack)
                 .await
                 .map_err(ContractError::provider)?,
         )
@@ -316,16 +318,13 @@ pub trait ContractBlueprint {
     }
 }
 
-// TODO: don't use anyhow in libraries
-pub fn address_from_state_init(
-    workchain: i8,
-    state_init: &StateInit,
-) -> Result<Address, anyhow::Error> {
-    Ok(Address::new(workchain, state_init.to_cell()?.hash()))
+pub fn address_from_state_init(workchain: i8, state_init: &StateInit) -> TvmResult<Address> {
+    let cell = state_init.to_cell().map_err(tlb_to_tvm_error)?;
+    Ok(Address::new(workchain, cell.hash()))
 }
 
 pub(super) fn decode_success_stack<E>(
-    result: RunMethodResult,
+    result: &RunMethodResult,
 ) -> Result<Vec<TvmStackEntry>, ContractError<E>>
 where
     E: std::error::Error + Send + Sync + 'static,
@@ -351,7 +350,7 @@ pub enum DecodedRunMethodResult {
 
 pub trait RunMethodResultExt {
     fn raw_result_boc(&self) -> Option<&[u8]>;
-    fn decode_result_stack(&self) -> anyhow::Result<Option<TvmStack>>; // TODO: don't use anyhow in libraries
+    fn decode_result_stack(&self) -> TvmResult<Option<TvmStack>>;
     fn result_stack_lossless(&self) -> DecodedRunMethodResult;
 }
 
@@ -360,8 +359,7 @@ impl RunMethodResultExt for RunMethodResult {
         self.result.as_deref()
     }
 
-    // TODO: don't use anyhow in libraries
-    fn decode_result_stack(&self) -> anyhow::Result<Option<TvmStack>> {
+    fn decode_result_stack(&self) -> TvmResult<Option<TvmStack>> {
         self.result.as_deref().map(TvmStack::from_boc).transpose()
     }
 

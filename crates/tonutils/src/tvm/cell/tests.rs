@@ -1,8 +1,13 @@
-use super::*;
+use super::{Arc, Cell, CellBuilder};
+use crate::tvm::Slice;
 
 #[cfg(test)]
+#[expect(
+    clippy::module_inception,
+    reason = "The test file mirrors the owner module name for discoverability"
+)]
 mod tests {
-    use super::*;
+    use super::{Arc, Cell, CellBuilder, Slice};
 
     fn hex_bytes(hex: &str) -> Vec<u8> {
         hex::decode(hex).unwrap()
@@ -134,7 +139,7 @@ mod tests {
         assert!(builder.store_uint_custom::<u8>(0, 9).is_err());
 
         let cell = builder.build().unwrap();
-        let mut slice = crate::Slice::new(cell);
+        let mut slice = Slice::new(cell);
         assert_eq!(slice.load_uint_custom::<u8>(0).unwrap(), 0);
         assert_eq!(slice.load_uint_custom::<u8>(3).unwrap(), 0b101);
         assert_eq!(slice.load_uint_custom::<u16>(9).unwrap(), 0x01ff);

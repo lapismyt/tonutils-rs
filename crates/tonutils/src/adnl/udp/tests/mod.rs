@@ -1,20 +1,31 @@
-use std::time::Duration;
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "Test fixtures intentionally narrow generated values to protocol widths"
+)]
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use crate::{
     adnl::{
         AdnlAesParams, AdnlChannelCipher, AdnlChannelPacket, AdnlError, AdnlKeyPair, AdnlUdpPeer,
         AdnlUdpSession, AdnlUdpTransport, decrypt_direct, encrypt_direct, ordered_channel_ciphers,
+        tl::{AdnlMessage, DhtNode, DhtNodesBoxed, PacketContents},
     },
-    tl::{
-        AdnlMessage, Int256,
-        network::{
-            DhtNode, DhtNodesBoxed, OverlayNode, OverlayNodesBoxed, OverlayQuery, PacketContents,
-        },
-    },
+    tl::TlInt256 as Int256,
 };
 
+#[cfg(feature = "overlay")]
+use crate::overlay::tl::{OverlayNode, OverlayNodesBoxed, OverlayQuery};
+#[cfg(feature = "overlay")]
 use tl_proto::TlRead;
 use tokio_util::bytes::Bytes;
+
+use super::{address_storing_peers, note_peer_holds_our_addr, raw_packet_flags};
 
 mod fast_answer;
 mod transport;
@@ -396,6 +407,7 @@ async fn channel_create_confirm_switches_to_directional_channel_packets() {
     );
 }
 
+#[cfg(feature = "overlay")]
 #[tokio::test]
 async fn overlay_random_peers_query_routes_boxed_response() {
     let client_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
@@ -577,19 +589,19 @@ async fn address_version_is_restamped_on_every_packet() {
 /// and each peer may move it only once.
 #[test]
 fn address_storing_counter_counts_each_peer_once() {
-    let before = super::address_storing_peers();
+    let before = address_storing_peers();
     let peer = [0xab; 32];
 
     assert!(
-        super::note_peer_holds_our_addr(&peer),
+        note_peer_holds_our_addr(&peer),
         "a peer's first echo must count"
     );
     assert!(
-        !super::note_peer_holds_our_addr(&peer),
+        !note_peer_holds_our_addr(&peer),
         "repeat echoes from the same peer must not count again"
     );
     assert_eq!(
-        super::address_storing_peers(),
+        address_storing_peers(),
         before + 1,
         "the counter must move exactly once per peer"
     );
@@ -619,7 +631,7 @@ fn raw_flags_probe_reads_the_wire_word() {
     };
 
     let encoded = tl_proto::serialize(contents.clone());
-    let flags = super::raw_packet_flags(&encoded).expect("header must parse");
+    let flags = raw_packet_flags(&encoded).expect("header must parse");
     assert_eq!(
         flags & 0x40,
         0x40,
@@ -641,7 +653,7 @@ fn raw_flags_probe_reads_the_wire_word() {
     contents.recv_addr_list_version = None;
     contents.recv_priority_addr_list_version = Some(7);
     let encoded = tl_proto::serialize(contents);
-    let flags = super::raw_packet_flags(&encoded).expect("header must parse");
+    let flags = raw_packet_flags(&encoded).expect("header must parse");
     assert_eq!(flags & 0x100, 0, "unset field clears bit 8 on the wire");
     assert_eq!(
         flags & 0x200,
@@ -725,9 +737,6 @@ async fn raw_exchange_returns_reply_and_recovers_from_timeout() {
 /// fast answers are for.
 #[tokio::test]
 async fn inbound_routing_survives_a_busy_runtime() {
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-
     /// CPU burned by one poll of each chained task.
     const BURN: Duration = Duration::from_millis(50);
     /// Task polls between two IO driver turns while the chain runs.

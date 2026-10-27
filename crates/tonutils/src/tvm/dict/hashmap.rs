@@ -1,12 +1,12 @@
-use super::*;
+use std::{collections::BTreeMap, sync::Arc};
 
-use crate::address::Address;
-use crate::builder::Builder;
-use crate::cell::Cell;
-use crate::slice::Slice;
-use anyhow::{Result, bail};
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use crate::tvm::{address::Address, builder::Builder, cell::Cell, slice::Slice};
+
+use super::{
+    Result, bail, bits_to_bytes, build_aug_node, clear_unused_bits, collect_key_bits,
+    common_prefix_len, deserialize_hashmap_aug_from_slice, ensure_aug_ref_consumed, get_bit,
+    parse_edge, set_bit, store_aug_node, store_label,
+};
 
 /// Fixed-width MSB-first dictionary key.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -405,6 +405,15 @@ impl<V, E> HashmapAugE<V, E> {
     }
 }
 
+impl<'a, V, E> IntoIterator for &'a HashmapAugE<V, E> {
+    type Item = (&'a BitKey, &'a V, &'a E);
+    type IntoIter = Box<dyn Iterator<Item = Self::Item> + 'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 /// Dictionary key type preserved for compatibility.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DictKey {
@@ -458,6 +467,10 @@ impl Dict {
     }
 
     /// Sets a value for a key.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub fn set(&mut self, key: DictKey, value: DictValue) -> Result<&mut Self> {
         let bit_key = self.dict_key_to_bit_key(&key)?;
         if let DictKey::Int(int_key) = key {
@@ -610,12 +623,11 @@ impl Builder {
 
     /// Stores a compatibility dictionary as `HashmapE`.
     pub fn store_dictionary(&mut self, dict: Option<&Dict>) -> Result<&mut Self> {
-        match dict {
-            Some(dict) => self.store_hashmap_e_with(&dict.inner, store_dict_value),
-            None => {
-                self.store_bit(false)?;
-                Ok(self)
-            }
+        if let Some(dict) = dict {
+            self.store_hashmap_e_with(&dict.inner, store_dict_value)
+        } else {
+            self.store_bit(false)?;
+            Ok(self)
         }
     }
 }

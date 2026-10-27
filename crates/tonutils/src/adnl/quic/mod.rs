@@ -31,24 +31,21 @@ use crate::{
     adnl::{
         AdnlError, AdnlKeyPair, AdnlPublicKey,
         quic::tls::{make_quinn_client_config, make_quinn_server_config, sni_for_public_key},
+        tl::{DhtMessage, DhtNodesBoxed, DhtValueResult, QuicAnswer, QuicMessage, QuicQuery},
     },
-    tl::{
-        Int256,
-        network::{
-            DhtMessage, DhtNodesBoxed, DhtValueResult, OverlayNodes, OverlayNodesBoxed,
-            OverlayQuery, QuicAnswer, QuicMessage, QuicQuery,
-        },
-    },
+    tl::TlInt256 as Int256,
 };
+
+#[cfg(feature = "overlay")]
+use crate::overlay::tl::{OverlayNodes, OverlayNodesBoxed, OverlayQuery};
 
 /// Default maximum QUIC stream buffer size (1 MiB).
 const MAX_FRAME_SIZE: usize = 1 << 20;
 
 /// QUIC connection wrapper for TON protocol.
 pub struct QuicSession {
-    endpoint: quinn::Endpoint,
+    _endpoint: quinn::Endpoint,
     connection: quinn::Connection,
-    local_keypair: AdnlKeyPair,
     remote_key: AdnlPublicKey,
 }
 
@@ -67,7 +64,7 @@ impl QuicSession {
 
         let quinn_config = make_quinn_client_config(&local_keypair, &remote_key)?;
 
-        let socket = std::net::UdpSocket::bind(local_addr)?;
+        let socket = tokio::net::UdpSocket::bind(local_addr).await?.into_std()?;
         socket.set_nonblocking(true)?;
         let endpoint = quinn::Endpoint::new(
             quinn::EndpointConfig::default(),
@@ -84,9 +81,8 @@ impl QuicSession {
             .map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
 
         Ok(Self {
-            endpoint,
+            _endpoint: endpoint,
             connection,
-            local_keypair,
             remote_key,
         })
     }
@@ -180,8 +176,8 @@ impl QuicSession {
     /// query" and `QuicSender::on_inbound_query` has no error branch - no
     /// `quic.answer` is sent and the client just times out. That was the
     /// recorded pre-fix symptom: 4/4 completed mainnet handshakes never
-    /// answered `overlay.getRandomPeers` within 15s (Evidence in
-    /// `docs/reference/network/quic.md`).
+    /// answered `overlay.getRandomPeers` within 15s. The retained evidence
+    /// and protocol notes live in `docs/reference/README.md`.
     ///
     /// The framing matches the proven UDP path
     /// (`AdnlUdpSession::send_overlay_get_random_peers_with_id`) and
@@ -194,8 +190,9 @@ impl QuicSession {
     /// empty `overlay.nodes` is a no-op. The only cost is peer admission,
     /// not the answer: an outgoing query with an empty `peers` list does
     /// not queue this node in the member's `pending_peers_` (see
-    /// `docs/reference/network/overlay.md`), so ping-back visibility is
-    /// left to the UDP path that carries the signed record.
+    /// the overlay protocol notes in `docs/reference/README.md`), so ping-back
+    /// visibility is left to the UDP path that carries the signed record.
+    #[cfg(feature = "overlay")]
     pub async fn overlay_get_random_peers(
         &self,
         overlay: Int256,
@@ -228,15 +225,17 @@ impl QuicSession {
 /// peer-key checks.
 pub struct QuicServer {
     endpoint: quinn::Endpoint,
-    local_keypair: AdnlKeyPair,
 }
 
 impl QuicServer {
     /// Creates a new QUIC server listening on the given address.
-    pub fn bind(local_addr: SocketAddr, local_keypair: AdnlKeyPair) -> Result<Self, AdnlError> {
+    pub async fn bind(
+        local_addr: SocketAddr,
+        local_keypair: AdnlKeyPair,
+    ) -> Result<Self, AdnlError> {
         let server_config = make_quinn_server_config(&local_keypair)?;
 
-        let socket = std::net::UdpSocket::bind(local_addr)?;
+        let socket = tokio::net::UdpSocket::bind(local_addr).await?.into_std()?;
         socket.set_nonblocking(true)?;
         let endpoint = quinn::Endpoint::new(
             quinn::EndpointConfig::default(),
@@ -246,10 +245,7 @@ impl QuicServer {
         )
         .map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
 
-        Ok(Self {
-            endpoint,
-            local_keypair,
-        })
+        Ok(Self { endpoint })
     }
 
     /// Returns the address the server is listening on.

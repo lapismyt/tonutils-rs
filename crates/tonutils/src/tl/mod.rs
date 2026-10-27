@@ -1,39 +1,24 @@
-//! Type Language (TL) structures for TON ADNL and `LiteAPI` traffic.
+//! Shared Type Language (TL) primitives and schema infrastructure.
 //!
-//! This module is available with the `tl` feature and contains the handwritten
-//! request, response, common identifier, and ADNL message types currently used
-//! by the crate. Serialization is backed by `tl-proto`, while local tests check
-//! implemented constructor ids against the checked-in `LiteAPI` schema snapshot.
+//! This module is available with the `tl` feature and owns common identifiers,
+//! serialization helpers, checked-in schema snapshots, generated constructor
+//! metadata, and cross-schema tests. Handwritten protocol wire types live with
+//! their owning modules: `crate::adnl::tl`, `crate::liteclient::tl`, and
+//! `crate::overlay::tl`. Serialization is backed by `tl-proto`; local tests check
+//! constructor ids against the checked-in schema snapshots.
 //!
 //! TL constructor ids are 32-bit little-endian values on the wire. When adding
 //! or changing constructors, update the local schema text, keep tests covering
 //! flags/vectors/boxed values, and record unsupported upstream fields in
 //! `TODO.md` rather than silently omitting them.
 
-pub mod adnl;
 pub mod common;
 pub mod error;
-pub mod fullnode;
 pub mod generated;
-pub mod network;
-pub mod overlay;
-pub mod request;
-pub mod response;
 pub mod utils;
 
 #[cfg(test)]
 mod tests;
 
-// Re-export commonly used types
-pub use adnl::AdnlMessage;
-pub use common::{
-    AccountId, BlockId, BlockIdExt, Int256, NonfinalCandidateId, NonfinalCandidateInfo,
-    ZeroStateIdExt,
-};
+pub use common::{TlInt256, TlString, True};
 pub use error::TlError;
-pub use fullnode::{
-    FULL_NODE_PROTO_VERSION_MAJOR, FULL_NODE_PROTO_VERSION_MINOR, TonNodeCapabilities,
-    TonNodeGetCapabilities,
-};
-pub use request::{LiteQuery, LiteQueryRaw, RawWrappedRequest, Request, WrappedRequest};
-pub use response::{Error, Response};

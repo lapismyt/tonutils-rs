@@ -15,15 +15,16 @@
 //!   the `HashmapE` APIs are used;
 //! - TVM stack decoding preserves unsupported payloads for lossless diagnostics.
 //!
-//! The surface is still expanding toward full TON compatibility. Consult
-//! `docs/tvm.md`, `docs/reference/tvm/`, and `TODO.md` before changing wire-format
-//! behavior.
+//! The surface is still expanding toward full TON compatibility. Consult the
+//! error-boundary and wire-invariant sections in `docs/reference/README.md`
+//! and `TODO.md` before changing wire-format behavior.
 
 pub mod address;
 pub mod boc;
 pub mod builder;
 pub mod cell;
 pub mod dict;
+mod error;
 pub mod slice;
 pub mod stack;
 #[cfg(test)]
@@ -42,6 +43,7 @@ pub use dict::{
     BitKey, Dict, DictKey, DictValue, HashmapAug, HashmapAugE, HashmapAugFork, HashmapAugLeaf,
     HashmapE,
 };
+pub use error::{TvmError, TvmResult};
 pub use slice::Slice;
 pub use stack::{TvmStack, TvmStackEntry};
 
@@ -49,6 +51,6 @@ use crate::crc::CRC16;
 
 /// Converts a get-method name to the conventional TVM method identifier.
 pub fn method_name_to_id(name: &str) -> u64 {
-    let method_value = CRC16.checksum(name.as_bytes()) as u32;
-    ((method_value & 0xFFFF) | 0x10000) as u64
+    let method_value = u32::from(CRC16.checksum(name.as_bytes()));
+    u64::from((method_value & 0xFFFF) | 0x10000)
 }

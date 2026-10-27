@@ -121,7 +121,7 @@ impl FromTvmStackEntry for BigUint {
         let value = BigInt::from_tvm_stack_entry(entry)?;
         value
             .to_biguint()
-            .ok_or_else(|| integer_out_of_range("BigUint", value))
+            .ok_or_else(|| integer_out_of_range("BigUint", &value))
     }
 }
 
@@ -297,7 +297,7 @@ macro_rules! impl_signed_int {
             impl FromTvmStackEntry for $ty {
                 fn from_tvm_stack_entry(entry: TvmStackEntry) -> Result<Self, TvmStackConversionError> {
                     let value = BigInt::from_tvm_stack_entry(entry)?;
-                    <$ty>::try_from(&value).map_err(|_| integer_out_of_range(stringify!($ty), value))
+                    <$ty>::try_from(&value).map_err(|_| integer_out_of_range(stringify!($ty), &value))
                 }
             }
 
@@ -319,9 +319,9 @@ macro_rules! impl_unsigned_int {
                 fn from_tvm_stack_entry(entry: TvmStackEntry) -> Result<Self, TvmStackConversionError> {
                     let value = BigInt::from_tvm_stack_entry(entry)?;
                     if value.sign() == Sign::Minus {
-                        return Err(integer_out_of_range(stringify!($ty), value));
+                        return Err(integer_out_of_range(stringify!($ty), &value));
                     }
-                    <$ty>::try_from(&value).map_err(|_| integer_out_of_range(stringify!($ty), value))
+                    <$ty>::try_from(&value).map_err(|_| integer_out_of_range(stringify!($ty), &value))
                 }
             }
 
@@ -422,7 +422,7 @@ fn type_mismatch(expected: &'static str, entry: &TvmStackEntry) -> TvmStackConve
     }
 }
 
-fn integer_out_of_range(target: &'static str, value: BigInt) -> TvmStackConversionError {
+fn integer_out_of_range(target: &'static str, value: &BigInt) -> TvmStackConversionError {
     TvmStackConversionError::IntegerOutOfRange {
         target,
         value: value.to_string(),

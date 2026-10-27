@@ -1,6 +1,11 @@
+#![expect(
+    clippy::cast_lossless,
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 //! Internal unsigned integer support for fixed-width cell APIs.
 
-use anyhow::{Result, bail};
+use crate::tvm::{TvmResult as Result, error::integer_bail as bail};
 use num_bigint::BigUint;
 
 mod private {
@@ -67,8 +72,8 @@ impl UnsignedInteger for u128 {
         if digits.len() > 2 {
             bail!("Loaded unsigned integer does not fit u128");
         }
-        let low = digits.first().copied().unwrap_or(0) as u128;
-        let high = digits.get(1).copied().unwrap_or(0) as u128;
+        let low = u128::from(digits.first().copied().unwrap_or(0));
+        let high = u128::from(digits.get(1).copied().unwrap_or(0));
         Ok(low | (high << 64))
     }
 }

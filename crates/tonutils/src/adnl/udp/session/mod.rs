@@ -38,12 +38,13 @@ use std::{
 use crate::{
     adnl::{
         AdnlAddress, AdnlChannelPacket, AdnlError, AdnlKeyPair, AdnlPublicKey, now_i32,
-        udp::transport::{Route, TransportInner},
+        tl::{AdnlMessage, DhtMessage, PacketContents},
+        udp::{
+            inbound::{handle, on_inbound_thread},
+            transport::{Route, TransportInner},
+        },
     },
-    tl::{
-        AdnlMessage, Int256,
-        network::{DhtMessage, PacketContents},
-    },
+    tl::TlInt256 as Int256,
 };
 
 use tokio::sync::mpsc;
@@ -194,7 +195,7 @@ impl Source {
                 // send buffer full would wait for a driver this
                 // runtime does not poll.  A full buffer is ordinary
                 // UDP loss and is counted as such.
-                let sent = if super::inbound::on_inbound_thread() {
+                let sent = if on_inbound_thread() {
                     transport
                         .socket
                         .try_send_to(packet, addr)
@@ -385,7 +386,7 @@ impl AdnlUdpSession {
     /// packet and fills the address fields the peer needs to reach us.
     ///
     /// Direct and channel packets share one sequence number space per
-    /// peer pair, so both paths allocate from [`super::PeerPairState`]
+    /// peer pair, so both paths allocate from `PeerPairState`
     /// here instead of from any session-local counter.
     pub async fn send_contents(&self, contents: PacketContents) -> Result<usize, AdnlError> {
         self.inner.send_contents(contents).await
@@ -652,7 +653,7 @@ impl SessionInner {
     /// The caller registers the initial address route and starts the
     /// receive task.
     pub(super) fn shared(
-        transport: Arc<TransportInner>,
+        transport: &Arc<TransportInner>,
         remote_id: [u8; 32],
         remote_addr: SocketAddr,
         remote: AdnlPublicKey,
@@ -758,7 +759,7 @@ impl SessionInner {
         let Source::Shared(_) = &self.source else {
             return;
         };
-        super::inbound::handle().spawn(async move {
+        handle().spawn(async move {
             self.receive_loop().await;
         });
     }

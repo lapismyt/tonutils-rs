@@ -1,9 +1,9 @@
 use std::task::Poll;
 
 use crate::{
-    adnl::AdnlError,
+    adnl::{AdnlError, tl::AdnlMessage},
     liteclient::types::LiteError,
-    tl::{TlError, adnl::AdnlMessage, common::Int256},
+    tl::{TlError, TlInt256 as Int256},
 };
 
 use futures::{Sink, Stream};
@@ -41,7 +41,7 @@ where
     }
 
     fn start_send(self: std::pin::Pin<&mut Self>, item: AdnlMessage) -> Result<(), Self::Error> {
-        log::debug!("Sending TL message: {:?}", item);
+        log::debug!("Sending TL message: {item:?}");
         let data = tl_proto::serialize(item).into();
         self.project()
             .inner
@@ -84,7 +84,7 @@ where
         match inner {
             Poll::Ready(Some(Ok(bytes))) => {
                 let decoded = tl_proto::deserialize(&bytes);
-                log::debug!("Decoded to TL message:\n{:?}\n{:?}", bytes, decoded);
+                log::debug!("Decoded to TL message:\n{bytes:?}\n{decoded:?}");
                 Poll::Ready(Some(decoded.map_err(|e| {
                     LiteError::TlError(TlError::ParseError(e.to_string()))
                 })))
@@ -107,19 +107,11 @@ impl<T> TagStore<AdnlMessage, AdnlMessage> for LitePeer<T> {
 
     fn assign_tag(self: std::pin::Pin<&mut Self>, r: &mut AdnlMessage) -> Self::Tag {
         match r {
-            AdnlMessage::Answer { query_id, .. } => {
+            AdnlMessage::Answer { query_id, .. } | AdnlMessage::Query { query_id, .. } => {
                 *query_id = Int256::random();
                 LiteTag::Int256(query_id.clone())
             }
-            AdnlMessage::Query { query_id, .. } => {
-                *query_id = Int256::random();
-                LiteTag::Int256(query_id.clone())
-            }
-            AdnlMessage::Ping { random_id } => {
-                *random_id = random();
-                LiteTag::Long(*random_id)
-            }
-            AdnlMessage::Pong { random_id } => {
+            AdnlMessage::Ping { random_id } | AdnlMessage::Pong { random_id } => {
                 *random_id = random();
                 LiteTag::Long(*random_id)
             }
@@ -129,10 +121,12 @@ impl<T> TagStore<AdnlMessage, AdnlMessage> for LitePeer<T> {
 
     fn finish_tag(self: std::pin::Pin<&mut Self>, r: &AdnlMessage) -> Self::Tag {
         match r {
-            AdnlMessage::Answer { query_id, .. } => LiteTag::Int256(query_id.clone()),
-            AdnlMessage::Query { query_id, .. } => LiteTag::Int256(query_id.clone()),
-            AdnlMessage::Ping { random_id } => LiteTag::Long(*random_id),
-            AdnlMessage::Pong { random_id } => LiteTag::Long(*random_id),
+            AdnlMessage::Answer { query_id, .. } | AdnlMessage::Query { query_id, .. } => {
+                LiteTag::Int256(query_id.clone())
+            }
+            AdnlMessage::Ping { random_id } | AdnlMessage::Pong { random_id } => {
+                LiteTag::Long(*random_id)
+            }
             _ => unreachable!("LitePeer cannot finish non-LiteAPI ADNL messages"),
         }
     }

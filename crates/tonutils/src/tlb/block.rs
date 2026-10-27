@@ -1,3 +1,7 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 //! Generated-backed TL-B codecs for Initial compatibility block, config, and proof models.
 //!
 //! These types cover the cell boundaries and constructor tags needed by
@@ -6,8 +10,8 @@
 //! bytes and references so callers can inspect hashes before opting into
 //! verification.
 
-use crate::{
-    CurrencyCollection, Grams, Result, ShardAccounts, TlbDeserialize, TlbError, TlbSerialize,
+use crate::tlb::{
+    CurrencyCollection, Grams, ShardAccounts, TlbDeserialize, TlbError, TlbResult, TlbSerialize,
     expect_tag, load_ref_tlb, store_ref_tlb, store_tag,
 };
 use std::sync::Arc;
@@ -38,7 +42,7 @@ pub struct ShardIdent {
 }
 
 impl TlbSerialize for ShardIdent {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         if self.shard_pfx_bits > 60 {
             return Err(TlbError::CustomSchema {
                 schema: "ShardIdent",
@@ -47,14 +51,14 @@ impl TlbSerialize for ShardIdent {
         }
         store_tag(builder, "00")?;
         builder.store_uint_custom::<u8>(self.shard_pfx_bits, 6)?;
-        builder.store_int(self.workchain_id as i64, 32)?;
+        builder.store_int(i64::from(self.workchain_id), 32)?;
         builder.store_u64(self.shard_prefix)?;
         Ok(())
     }
 }
 
 impl TlbDeserialize for ShardIdent {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         expect_tag(slice, "ShardIdent", "00")?;
         let shard_pfx_bits = slice.load_uint_custom::<u8>(6)?;
         if shard_pfx_bits > 60 {
@@ -85,7 +89,7 @@ pub struct ExtBlkRef {
 }
 
 impl TlbSerialize for ExtBlkRef {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_u64(self.end_lt)?;
         builder.store_u32(self.seq_no)?;
         builder.store_bytes(&self.root_hash)?;
@@ -95,7 +99,7 @@ impl TlbSerialize for ExtBlkRef {
 }
 
 impl TlbDeserialize for ExtBlkRef {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             end_lt: slice.load_u64()?,
             seq_no: slice.load_u32()?,
@@ -119,7 +123,7 @@ pub struct BlockIdExtTlb {
 }
 
 impl TlbSerialize for BlockIdExtTlb {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         self.shard_id.store_tlb(builder)?;
         builder.store_u32(self.seq_no)?;
         builder.store_bytes(&self.root_hash)?;
@@ -129,7 +133,7 @@ impl TlbSerialize for BlockIdExtTlb {
 }
 
 impl TlbDeserialize for BlockIdExtTlb {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             shard_id: ShardIdent::load_tlb(slice)?,
             seq_no: slice.load_u32()?,
@@ -162,13 +166,13 @@ pub struct BlkMasterInfo {
 }
 
 impl TlbSerialize for BlkMasterInfo {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         self.master.store_tlb(builder)
     }
 }
 
 impl TlbDeserialize for BlkMasterInfo {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             master: ExtBlkRef::load_tlb(slice)?,
         })
@@ -185,7 +189,7 @@ pub struct GlobalVersion {
 }
 
 impl TlbSerialize for GlobalVersion {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_uint(GLOBAL_VERSION_TAG)?;
         builder.store_u32(self.version)?;
         builder.store_u64(self.capabilities)?;
@@ -194,7 +198,7 @@ impl TlbSerialize for GlobalVersion {
 }
 
 impl TlbDeserialize for GlobalVersion {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         if slice.load_uint::<u8>()? != GLOBAL_VERSION_TAG {
             return Err(TlbError::TagMismatch {
                 constructor: "GlobalVersion",
@@ -219,7 +223,7 @@ pub enum BlockPrevInfo {
 }
 
 impl TlbSerialize for BlockPrevInfo {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Single { prev } => prev.store_tlb(builder),
             Self::Split { prev1, prev2 } => {
@@ -231,7 +235,7 @@ impl TlbSerialize for BlockPrevInfo {
 }
 
 impl TlbDeserialize for BlockPrevInfo {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         if slice.remaining_refs() == 0 {
             return Ok(Self::Single {
                 prev: ExtBlkRef::load_tlb(slice)?,
@@ -251,6 +255,10 @@ impl TlbDeserialize for BlockPrevInfo {
 }
 
 /// TL-B `block_info#9bc7a987 ... = BlockInfo`.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "BlockInfo mirrors the independent TL-B flag bits one-for-one"
+)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockInfo {
     /// Block format version.
@@ -304,7 +312,7 @@ pub struct BlockInfo {
 }
 
 impl TlbSerialize for BlockInfo {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         if self.flags > 1 {
             return Err(TlbError::NonCanonicalValue {
                 schema: "BlockInfo",
@@ -374,7 +382,7 @@ impl TlbSerialize for BlockInfo {
 }
 
 impl TlbDeserialize for BlockInfo {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         load_u32_tag(slice, "BlockInfo", BLOCK_INFO_TAG)?;
         let version = slice.load_u32()?;
         let not_master = slice.load_bit()?;
@@ -457,9 +465,9 @@ impl TlbDeserialize for BlockInfo {
 }
 
 impl TlbSerialize for Block {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_u32(BLOCK_TAG)?;
-        builder.store_int(self.global_id as i64, 32)?;
+        builder.store_int(i64::from(self.global_id), 32)?;
         builder.store_ref(self.info.clone())?;
         builder.store_ref(self.value_flow.clone())?;
         builder.store_ref(self.state_update.clone())?;
@@ -469,7 +477,7 @@ impl TlbSerialize for Block {
 }
 
 impl TlbDeserialize for Block {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         load_u32_tag(slice, "Block", BLOCK_TAG)?;
         Ok(Self {
             global_id: slice.load_int(32)? as i32,
@@ -506,14 +514,14 @@ pub struct McBlockExtra {
 }
 
 impl TlbSerialize for McBlockExtra {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_cell(&self.cell)?;
         Ok(())
     }
 }
 
 impl TlbDeserialize for McBlockExtra {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             cell: consume_remaining_cell(slice)?,
         })
@@ -521,19 +529,19 @@ impl TlbDeserialize for McBlockExtra {
 }
 
 impl TlbSerialize for BlockExtra {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_ref(self.in_msg_descr.clone())?;
         builder.store_ref(self.out_msg_descr.clone())?;
         builder.store_ref(self.account_blocks.clone())?;
         builder.store_bytes(&self.rand_seed)?;
         builder.store_bytes(&self.created_by)?;
-        store_maybe_ref(builder, &self.custom)?;
+        store_maybe_ref(builder, self.custom.as_ref())?;
         Ok(())
     }
 }
 
 impl TlbDeserialize for BlockExtra {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             in_msg_descr: slice.load_reference()?,
             out_msg_descr: slice.load_reference()?,
@@ -559,7 +567,7 @@ pub struct ValueFlowMain {
 }
 
 impl TlbSerialize for ValueFlowMain {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         self.from_prev_blk.store_tlb(builder)?;
         self.to_next_blk.store_tlb(builder)?;
         self.imported.store_tlb(builder)?;
@@ -568,7 +576,7 @@ impl TlbSerialize for ValueFlowMain {
 }
 
 impl TlbDeserialize for ValueFlowMain {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             from_prev_blk: CurrencyCollection::load_tlb(slice)?,
             to_next_blk: CurrencyCollection::load_tlb(slice)?,
@@ -592,7 +600,7 @@ pub struct ValueFlowFees {
 }
 
 impl TlbSerialize for ValueFlowFees {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         self.fees_imported.store_tlb(builder)?;
         self.recovered.store_tlb(builder)?;
         self.created.store_tlb(builder)?;
@@ -601,7 +609,7 @@ impl TlbSerialize for ValueFlowFees {
 }
 
 impl TlbDeserialize for ValueFlowFees {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             fees_imported: CurrencyCollection::load_tlb(slice)?,
             recovered: CurrencyCollection::load_tlb(slice)?,
@@ -637,7 +645,7 @@ pub enum ValueFlow {
 }
 
 impl TlbSerialize for ValueFlow {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::V1 {
                 main,
@@ -667,7 +675,7 @@ impl TlbSerialize for ValueFlow {
 }
 
 impl TlbDeserialize for ValueFlow {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let tag = slice.load_u32()?;
         match tag {
             VALUE_FLOW_TAG => {
@@ -765,15 +773,15 @@ pub struct ShardStateUnsplitData {
 impl ShardStateUnsplit {
     /// Decodes the stable fields of the shard state while preserving
     /// unsupported nested families at their schema-defined cell boundaries.
-    pub fn decode_typed(&self) -> Result<ShardStateUnsplitData> {
+    pub fn decode_typed(&self) -> TlbResult<ShardStateUnsplitData> {
         ShardStateUnsplitData::from_cell(self.cell.clone())
     }
 }
 
 impl TlbSerialize for ShardStateUnsplitData {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_u32(SHARD_STATE_TAG)?;
-        builder.store_int(self.global_id as i64, 32)?;
+        builder.store_int(i64::from(self.global_id), 32)?;
         self.shard_id.store_tlb(builder)?;
         builder.store_u32(self.seq_no)?;
         builder.store_u32(self.vert_seq_no)?;
@@ -802,7 +810,7 @@ impl TlbSerialize for ShardStateUnsplitData {
 }
 
 impl TlbDeserialize for ShardStateUnsplitData {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let tag = slice.load_u32()?;
         if tag != SHARD_STATE_TAG {
             return Err(TlbError::TagMismatch {
@@ -860,7 +868,7 @@ struct ShardStateUnsplitExtra {
 }
 
 impl TlbSerialize for ShardStateUnsplitExtra {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_u64(self.overload_history)?;
         builder.store_u64(self.underload_history)?;
         self.total_balance.store_tlb(builder)?;
@@ -875,7 +883,7 @@ impl TlbSerialize for ShardStateUnsplitExtra {
 }
 
 impl TlbDeserialize for ShardStateUnsplitExtra {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             overload_history: slice.load_u64()?,
             underload_history: slice.load_u64()?,
@@ -892,14 +900,14 @@ impl TlbDeserialize for ShardStateUnsplitExtra {
 }
 
 impl TlbSerialize for ShardStateUnsplit {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_cell(&self.cell)?;
         Ok(())
     }
 }
 
 impl TlbDeserialize for ShardStateUnsplit {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let state = ShardState::load_tlb(slice)?;
         match state {
             ShardState::Unsplit { payload } => Ok(Self { cell: payload }),
@@ -913,7 +921,7 @@ impl TlbDeserialize for ShardStateUnsplit {
 }
 
 impl TlbSerialize for ShardState {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Unsplit { payload } => {
                 builder.store_cell(payload)?;
@@ -923,13 +931,13 @@ impl TlbSerialize for ShardState {
                 builder.store_ref(left.clone())?;
                 builder.store_ref(right.clone())?;
             }
-        };
+        }
         Ok(())
     }
 }
 
 impl TlbDeserialize for ShardState {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let tag = slice.load_u32()?;
         match tag {
             SHARD_STATE_TAG => {
@@ -1094,7 +1102,7 @@ pub struct HashUpdate {
 }
 
 impl TlbSerialize for HashUpdate {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         store_tag(builder, "01110010")?;
         builder.store_bytes(&self.old_hash)?;
         builder.store_bytes(&self.new_hash)?;
@@ -1103,7 +1111,7 @@ impl TlbSerialize for HashUpdate {
 }
 
 impl TlbDeserialize for HashUpdate {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         expect_tag(slice, "HASH_UPDATE", "01110010")?;
         Ok(Self {
             old_hash: load_hash(slice)?,
@@ -1113,7 +1121,7 @@ impl TlbDeserialize for HashUpdate {
 }
 
 impl TlbSerialize for ConfigParams {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_bytes(&self.config_addr)?;
         builder.store_ref(self.config.clone())?;
         Ok(())
@@ -1121,7 +1129,7 @@ impl TlbSerialize for ConfigParams {
 }
 
 impl TlbDeserialize for ConfigParams {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let _ = CONFIG_PARAMS_KEY_BITS;
         Ok(Self {
             config_addr: load_hash(slice)?,
@@ -1133,10 +1141,10 @@ impl TlbDeserialize for ConfigParams {
 impl ConfigParams {
     /// Decodes `config:^(Hashmap 32 ^Cell)` while preserving each parameter
     /// cell unchanged.
-    pub fn config_entries(&self) -> Result<HashmapE<Arc<Cell>>> {
+    pub fn config_entries(&self) -> TlbResult<HashmapE<Arc<Cell>>> {
         let mut slice = Slice::new(self.config.clone());
         slice
-            .load_hashmap_e_with(CONFIG_PARAMS_KEY_BITS, |slice| slice.load_reference())
+            .load_hashmap_e_with(CONFIG_PARAMS_KEY_BITS, Slice::load_reference)
             .map_err(|error| TlbError::CustomSchema {
                 schema: "ConfigParams.config",
                 message: error.to_string(),
@@ -1144,7 +1152,7 @@ impl ConfigParams {
     }
 
     /// Returns raw-preserving typed wrappers for known config parameter ids.
-    pub fn typed_params(&self) -> Result<Vec<ConfigParam>> {
+    pub fn typed_params(&self) -> TlbResult<Vec<ConfigParam>> {
         self.config_entries()?
             .iter()
             .map(|(key, raw)| {
@@ -1161,8 +1169,8 @@ impl ConfigParams {
     }
 
     /// Looks up one raw config parameter by id.
-    pub fn raw_param(&self, id: u32) -> Result<Option<Arc<Cell>>> {
-        let key = BitKey::from_u64(id as u64, CONFIG_PARAMS_KEY_BITS).map_err(|error| {
+    pub fn raw_param(&self, id: u32) -> TlbResult<Option<Arc<Cell>>> {
+        let key = BitKey::from_u64(u64::from(id), CONFIG_PARAMS_KEY_BITS).map_err(|error| {
             TlbError::CustomSchema {
                 schema: "ConfigParams.config.key",
                 message: error.to_string(),
@@ -1170,7 +1178,7 @@ impl ConfigParams {
         })?;
         self.config_entries()?
             .get_bit_key(&key)
-            .map(|value| value.cloned())
+            .map(|value| value.map(Arc::clone))
             .map_err(|error| TlbError::CustomSchema {
                 schema: "ConfigParams.config",
                 message: error.to_string(),
@@ -1206,7 +1214,7 @@ impl ConfigParam {
     /// `Ok(None)` means that the parameter is intentionally still represented
     /// as a raw cell because its nested schema is dictionary- or revision-
     /// dependent.
-    pub fn decode_typed(&self) -> Result<Option<ConfigParamPayload>> {
+    pub fn decode_typed(&self) -> TlbResult<Option<ConfigParamPayload>> {
         let raw = match &self.value {
             ConfigParamValue::Param15(raw)
             | ConfigParamValue::Param17(raw)
@@ -1266,7 +1274,7 @@ impl ConfigParam {
 }
 
 impl TlbSerialize for GasLimitsPrices {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Basic {
                 gas_price,
@@ -1326,7 +1334,7 @@ impl TlbSerialize for GasLimitsPrices {
 }
 
 impl TlbDeserialize for GasLimitsPrices {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         match slice.load_uint::<u8>()? {
             0xdd => Ok(Self::Basic {
                 gas_price: slice.load_u64()?,
@@ -1360,7 +1368,7 @@ impl TlbDeserialize for GasLimitsPrices {
 }
 
 impl TlbSerialize for MsgForwardPrices {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_uint(0xeau8)?;
         builder.store_u64(self.lump_price)?;
         builder.store_u64(self.bit_price)?;
@@ -1373,7 +1381,7 @@ impl TlbSerialize for MsgForwardPrices {
 }
 
 impl TlbDeserialize for MsgForwardPrices {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let tag = slice.load_uint::<u8>()?;
         if tag != 0xea {
             return Err(TlbError::TagMismatch {
@@ -1393,7 +1401,7 @@ impl TlbDeserialize for MsgForwardPrices {
     }
 }
 
-fn load_validator_election(cell: &Arc<Cell>) -> Result<(u32, u32, u32, u32)> {
+fn load_validator_election(cell: &Arc<Cell>) -> TlbResult<(u32, u32, u32, u32)> {
     let mut slice = Slice::new(cell.clone());
     let values = (
         slice.load_u32()?,
@@ -1410,7 +1418,7 @@ fn load_validator_election(cell: &Arc<Cell>) -> Result<(u32, u32, u32, u32)> {
     Ok(values)
 }
 
-fn load_global_id(cell: &Arc<Cell>) -> Result<i32> {
+fn load_global_id(cell: &Arc<Cell>) -> TlbResult<i32> {
     let mut slice = Slice::new(cell.clone());
     let value = slice.load_int(32)? as i32;
     if slice.remaining_bits() != 0 || slice.remaining_refs() != 0 {
@@ -1422,13 +1430,13 @@ fn load_global_id(cell: &Arc<Cell>) -> Result<i32> {
     Ok(value)
 }
 
-fn load_hash(slice: &mut Slice) -> Result<[u8; 32]> {
+fn load_hash(slice: &mut Slice) -> TlbResult<[u8; 32]> {
     let mut hash = [0; 32];
     hash.copy_from_slice(&slice.load_bytes(32)?);
     Ok(hash)
 }
 
-fn store_maybe_ref<T: TlbSerialize>(builder: &mut Builder, value: &Option<T>) -> Result<()> {
+fn store_maybe_ref<T: TlbSerialize>(builder: &mut Builder, value: Option<&T>) -> TlbResult<()> {
     builder.store_bit(value.is_some())?;
     if let Some(value) = value {
         builder.store_ref(value.to_cell()?)?;
@@ -1436,14 +1444,17 @@ fn store_maybe_ref<T: TlbSerialize>(builder: &mut Builder, value: &Option<T>) ->
     Ok(())
 }
 
-fn load_maybe_ref<T: TlbDeserialize>(slice: &mut Slice, schema: &'static str) -> Result<Option<T>> {
+fn load_maybe_ref<T: TlbDeserialize>(
+    slice: &mut Slice,
+    schema: &'static str,
+) -> TlbResult<Option<T>> {
     if !slice.load_bit()? {
         return Ok(None);
     }
     Ok(Some(load_ref_tlb(slice, schema)?))
 }
 
-fn load_u32_tag(slice: &mut Slice, constructor: &'static str, expected: u32) -> Result<()> {
+fn load_u32_tag(slice: &mut Slice, constructor: &'static str, expected: u32) -> TlbResult<()> {
     let actual = slice.load_u32()?;
     if actual == expected {
         Ok(())
@@ -1456,13 +1467,13 @@ fn load_u32_tag(slice: &mut Slice, constructor: &'static str, expected: u32) -> 
     }
 }
 
-fn consume_remaining_cell(slice: &mut Slice) -> Result<Arc<Cell>> {
+fn consume_remaining_cell(slice: &mut Slice) -> TlbResult<Arc<Cell>> {
     let mut builder = Builder::new();
     store_remaining(slice, &mut builder)?;
     Ok(builder.build()?)
 }
 
-fn store_remaining(slice: &mut Slice, builder: &mut Builder) -> Result<()> {
+fn store_remaining(slice: &mut Slice, builder: &mut Builder) -> TlbResult<()> {
     let remaining_bits = slice.remaining_bits();
     if remaining_bits > 0 {
         let bits = slice.load_bits(remaining_bits)?;

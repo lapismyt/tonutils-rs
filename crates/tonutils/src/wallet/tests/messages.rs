@@ -1,14 +1,26 @@
-use super::mnemonic::*;
-use super::*;
+use super::mnemonic::{
+    assert_fixture_metadata, fixture_mnemonic, hex_32, signing_key, test_code, wallet_fixture_set,
+    wallet_id_hex,
+};
+use super::{
+    Address, Arc, CommonMsgInfo, HashmapE, MAINNET_GLOBAL_ID, Message, MsgAddressInt, Slice,
+    TON_DEFAULT_SEED, TON_DEFAULT_SEED_ITERATIONS, TON_SEED_VERSION, TON_SEED_VERSION_ITERATIONS,
+    TlbDeserialize, TlbSerialize, TonMnemonic, WALLET_V4R2_CODE_HASH, WALLET_V4R2_DEFAULT_ID,
+    WALLET_V5R1_CODE_HASH, WALLET_V5R1_MAINNET_DEFAULT_ID, WALLET_V5R1_TESTNET_DEFAULT_ID,
+    WalletError, WalletMessage, WalletV4R2, WalletV4R2Data, WalletV5R1, WalletV5R1Data,
+    WalletV5R1ExtendedAction, WalletV5R1ExtendedActionList, WalletV5R1Extensions,
+    WalletV5R1ExternalBody, WalletV5R1WalletId, ton_mnemonic_seed, wallet_v4r2_code,
+    wallet_v5r1_code,
+};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use tonutils::tvm::deserialize_boc;
+use tonutils::tvm::{BitKey, deserialize_boc};
 
 #[test]
 fn ton_mnemonic_derives_common_public_key_fixture() {
     let mnemonic = TonMnemonic::from_phrase(fixture_mnemonic(), None).unwrap();
     assert_eq!(
         hex::encode(mnemonic.public_key()),
-        "0cce79e60d25fde965e249096617e3ef212541ddeb5b3336cc3853e4499da196"
+        "97f33453272c2d998585c19687aa9d0981c83be4c7e1fda2d35f1b058a93b8ae"
     );
 }
 
@@ -21,14 +33,14 @@ fn ton_mnemonic_seed_derivation_matches_fixture() {
     let seed = ton_mnemonic_seed(&words, TON_DEFAULT_SEED, None, TON_DEFAULT_SEED_ITERATIONS);
     assert_eq!(
         hex::encode(seed),
-        "0f531e609f8ccf8548fcb7f018c60a7049af809dfd112e9809b64693316af2366127fde978b0b27f4f35620b3307c31b47b488fd5fc584324f2b24f928e68eba"
+        "4d8b94f35a9d57e02c6c318ab791907934c942aec478d19dff9ce2f2ec277fcf8f3983603b8f5aed5ca28c991a81610606eafd7e3e22da4c3ddef6fb8edd34dd"
     );
 
     let version_seed =
         ton_mnemonic_seed(&words, TON_SEED_VERSION, None, TON_SEED_VERSION_ITERATIONS);
     assert_eq!(
         hex::encode(version_seed),
-        "003867fb551e82edd5f5be71a2a7c7210af5c951254afd46ad0cf282fbb0340afce22ae74d9937dda2b33ff5ffdcae7f0b4deb9dd68956b4b45a85dea010c1f2"
+        "001c02b910234e1a8d4c730e19736e2bcd23fe1622eadf24e84ecffc151412bbee9f35cb49b01f74e3430ee48f1434c72865452c091331893809cdf5f8067444"
     );
 }
 

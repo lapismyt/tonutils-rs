@@ -1,3 +1,7 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 //! Datagram framing for ADNL sessions.
 //!
 //! UDP is deliberately exposed as a datagram primitive.  Handshake and peer
@@ -20,10 +24,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{
-    adnl::{AdnlAesParams, AdnlCodec, AdnlError},
-    tl::AdnlMessage,
-};
+use crate::adnl::{AdnlAesParams, AdnlCodec, AdnlError, tl::AdnlMessage};
 
 use sha2::{Digest, Sha256};
 use tokio_util::{
@@ -81,7 +82,7 @@ pub fn now_i32() -> i32 {
 /// the value is the Unix time captured on first use and stays constant for
 /// the lifetime of the process.  It is written into every direct
 /// `adnl.packetContents` as `reinit_date`, with `dst_reinit_date` carrying the
-/// peer's own announced date (see [`AdnlUdpSession::send_direct_contents`]).
+/// peer's own announced date (see `AdnlUdpSession::send_direct_contents`).
 ///
 /// A per-packet value (for example `now_i32()`) must never be used here:
 /// upstream treats a strictly increasing `reinit_date` as a peer restart and
@@ -242,7 +243,7 @@ fn note_our_addr_version(remote_id: &[u8; 32], version: i32, socket: u16) {
             state.our_addr_version = version;
             state.our_addr_socket = socket;
         }
-    })
+    });
 }
 
 /// Version this process last stamped for `remote_id` and the local

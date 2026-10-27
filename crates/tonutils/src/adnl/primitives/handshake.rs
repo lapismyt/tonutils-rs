@@ -73,7 +73,8 @@ impl AdnlHandshake {
         AdnlCodec::server(&self.aes_params)
     }
 
-    /// Send handshake over the given transport and build an [`crate::AdnlPeer`] on top of it.
+    /// Send handshake over the given transport and build an
+    /// [`crate::adnl::AdnlPeer`] on top of it.
     pub async fn perform_handshake<T: AsyncReadExt + AsyncWriteExt + Unpin>(
         &self,
         transport: T,
@@ -116,9 +117,7 @@ impl AdnlHandshake {
         let our_address = AdnlAddress::from(&keypair.public_key);
         if our_address != receiver {
             log::error!(
-                "private key selector returned wrong key, expected address: {:?}, got: {:?}",
-                receiver,
-                our_address
+                "private key selector returned wrong key, expected address: {receiver:?}, got: {our_address:?}"
             );
             return Err(AdnlError::UnknownAddr(receiver));
         }

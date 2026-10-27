@@ -1,48 +1,153 @@
-# tonutils-rs: a pure-Rust TON SDK for Rust applications
+# tonutils
 
-[![CI](https://github.com/lapismyt/tonutils-rs/actions/workflows/live-tests.yml/badge.svg)](https://github.com/lapismyt/tonutils-rs/actions/workflows/live-tests.yml)
-[![crates.io](https://img.shields.io/crates/v/tonutils.svg)](https://crates.io/crates/tonutils)
-[![codecov](https://codecov.io/gh/lapismyt/tonutils-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/lapismyt/tonutils-rs)
+`tonutils` is a pure-Rust SDK for The Open Network (TON). It implements TON
+cells, Bag of Cells (BoC), TL-B structures, TL/LiteAPI wire types, ADNL,
+overlay transport, wallets, and a direct liteserver client without depending on
+a third-party TON SDK or a runtime native library.
 
-`tonutils-rs` is a pure-Rust SDK for building TON applications. It covers
-offline TVM and TL-B data, TL/LiteAPI serialization, native ADNL and LiteClient
-network access, overlay/mempool primitives, contract helpers, wallets, jettons,
-NFTs, and a scriptable CLI.
+Features are opt-in and the default feature set is empty. Enable only the
+layers your application uses.
 
-Use the `tonutils` facade when an application spans several runtime layers, or
-depend on a focused `tonutils-*` crate when compile time and feature control
-matter. Protocol and serialization workflows are deterministic and offline;
-network reads and submissions require an explicitly configured live provider.
+## Coming From EVM Or Solana
 
-## Start Here
+TON stores state and messages in a directed acyclic graph of **cells**. A cell
+contains up to 1,023 data bits and four references. A **Bag of Cells** is the
+serialized container used to move a cell graph over the wire and into
+transactions. **TL-B** gives typed meaning to cell layouts.
 
-- [Getting started](docs/getting-started.md): choose crates and Cargo features.
-- [Examples](docs/examples.md): compile offline workflows and run live queries.
-- [TVM primitives](docs/tvm.md): cells, BoC, addresses, dictionaries, and stacks.
-- [LiteClient](docs/liteclient.md): connect to TON liteservers over LiteAPI.
-- [Mempool](docs/mempool.md): stream pending external messages from the live overlay.
-- [Wallets](docs/wallets.md): derive addresses and build signed messages offline.
-- [Documentation book](https://lapismyt.github.io/tonutils-rs/): browse all public
-  guides plus the internal protocol notes.
+| Familiar concept | TON and `tonutils` |
+| --- | --- |
+| EVM state trie or Solana account bytes | Cell DAG, BoC encoding, and TL-B models in `tvm` and `tlb` |
+| JSON-RPC provider | Binary LiteAPI over ADNL through `liteclient` |
+| ABI-encoded calldata | Cell payloads and TL-B message bodies |
+| Local transaction construction and signing | Offline wallet and contract helpers |
+| Pending-transaction feed | `MempoolServer` over an application-built `overlay::OverlayClient` |
 
-## Crates
+The layers compose, but none of them is required to use the others. In
+particular, cell construction, wallet address derivation, signing, and message
+encoding work without a network connection.
 
-- `tonutils` is the libary itself (public API)
-- `tonutils-macros` provides derive and procedural macros.
-- `tonutils-schema-gen` generates code from TL schemas.
-- `tonutils-cli` supplies the `tonutils` command-line executable.
+## Quickstart
 
-## Install
-
-Add the library with Cargo:
-
-```bash
-cargo add tonutils
-```
-
-Or add it directly to `Cargo.toml`:
+For offline cells, TL-B structures, and wallet construction:
 
 ```toml
 [dependencies]
-tonutils = "2"
+tonutils = { version = "2", features = ["tvm", "tlb", "wallet"] }
 ```
+
+For a direct liteserver client, add the network layers you need:
+
+```toml
+[dependencies]
+tonutils = { version = "2", features = ["liteclient"] }
+```
+
+### Offline Cell Example
+
+```rust
+use tonutils::tvm::{Builder, deserialize_boc, serialize_boc};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut builder = Builder::new();
+    builder.store_u32(0xdead_beef)?;
+
+    let root = builder.build()?;
+    let boc = serialize_boc(&root, true)?;
+    let decoded = deserialize_boc(&boc)?;
+
+    assert_eq!(root.hash(), decoded.hash());
+    println!("encoded {} bytes", boc.len());
+    Ok(())
+}
+```
+
+### Live Read Shape
+
+```rust
+use tonutils::{liteclient::LiteClient, network_config::ConfigGlobal};
+
+async fn latest_masterchain_seqno(
+    config_json: &str,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let config: ConfigGlobal = config_json.parse()?;
+    let mut client = LiteClient::connect_first(&config).await?;
+    let info = client.get_masterchain_info().await?;
+    Ok(info.last.seqno)
+}
+```
+
+The live example requires a Tokio runtime and application-selected configuration.
+It is intentionally not a proof that a liteserver answered honestly.
+
+## Features
+
+| Feature | Provides | Requires live network |
+| --- | --- | --- |
+| `tvm` | Cells, builders, slices, BoC, addresses, dictionaries, TVM stacks, and `TvmError` | No |
+| `tl` | Shared TL primitives, TL schema snapshots, generated metadata, and schema helpers | No |
+| `tlb` | Typed TL-B blocks, messages, transactions, accounts, and proof structures | No |
+| `wallet` | TON mnemonic handling, Ed25519 signing, Wallet V4R2/V5R1 addresses, and external message BoCs | No |
+| `crc` | CRC16 and CRC32 helpers used by TON identifiers and BoC formats | No |
+| `metadata` | TEP-64 on-chain and off-chain content parsing | No |
+| `network-config` | Global network configuration parsing and liteserver selection | No |
+| `adnl` | ADNL identity, encrypted UDP transport, QUIC transport, and ADNL TL wire types | Yes for transport |
+| `liteclient` | LiteAPI types, direct client, balancer, and typed BoC decode helpers | Yes |
+| `contracts` | Provider traits, account-state reads, and get-method stack helpers | Yes for reads |
+| `overlay` | ADNL UDP/QUIC overlay sessions, discovery, peer management and persistence, inbound serving, signed simple/FEC broadcasts, DHT publication, STUN, and protocol statistics | Yes for transport |
+| `overlay-config` | Global-config bootstrap download and parsing for `OverlayNodeBuilder`; implies `overlay` and `network-config` | Yes for download |
+| `mempool` | External-message validation, deduplication, events, and client/server submission through a caller-supplied overlay client | Yes, through `overlay` |
+| `serde` | Serde support for enabled public types that expose it, currently ADNL public keys | No |
+
+`tl` owns the snapshots and shared primitives, not every TON protocol schema.
+Handwritten ADNL, LiteAPI, and overlay wire types live in `adnl::tl`,
+`liteclient::tl`, and `overlay::tl` respectively. The ownership map and wire
+invariants are documented in [docs/reference/README.md](docs/reference/README.md).
+
+## Overlay And Mempool
+
+`overlay` owns every transport and network-maintenance concern: ADNL UDP and
+QUIC sessions, factories and lookups, bootstrap and discovery, peer growth,
+peer quality and persistence, inbound query answering, membership gossip,
+capabilities, DHT address publication, STUN, packet pre-deduplication, and
+signed simple/FEC broadcasts. Build a client with
+`OverlayNodeBuilder::start_client()` or a serving node with
+`start_server()`.
+
+`mempool` owns only external-message semantics. `MempoolServer::new` takes an
+already-built `OverlayClient` and a `MempoolConfig`, subscribes to verified
+overlay packets and peer statuses, validates and deduplicates external-message
+BoCs, and emits `MempoolEvent` values. The returned `MempoolClient` submits
+external messages through that same overlay client; it never starts transport,
+performs discovery, or publishes DHT records. Enable `overlay-config` only when
+the application wants the builder to download global-config bootstrap data.
+
+`OverlayError` owns bootstrap, discovery, session, peer-store, broadcast, and
+overlay-configuration failures. `MempoolError` is limited to external-message
+validation/decoding, submission, event-queue, and mempool-configuration
+failures.
+
+## Offline Versus Live
+
+Offline work is deterministic: construct cells, serialize or parse BoCs, derive
+wallet addresses, sign messages, and encode TL-B/TL payloads. This path needs no
+credentials and makes no network trust assumptions.
+
+Live work starts when the application connects through ADNL or LiteAPI, loads a
+global network configuration, joins an overlay, or submits a message. In that
+mode the application chooses the liteserver, network, public keys, timeouts,
+retry policy, and proof-validation policy. A successful LiteAPI response or
+message submission is not, by itself, finality or inclusion proof. Decode
+helpers preserve evidence, but callers must opt in to the proof checks that
+their threat model requires.
+
+## Workspace
+
+- `tonutils` is the library.
+- `tonutils-cli` provides the `tonutils` command-line binary.
+- `tonutils-macros` provides TL-B derive macros.
+- `tonutils-schema-gen` validates checked-in schema metadata and inventory.
+
+Use the crate's rustdoc for the public API. Repository-level development and
+verification instructions are in [CONTRIBUTING.md](CONTRIBUTING.md). The crate
+is licensed under MIT.

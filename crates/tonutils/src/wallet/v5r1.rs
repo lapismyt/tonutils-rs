@@ -1,8 +1,14 @@
-use super::*;
+use super::message::{WalletV5R1ExtendedActionList, WalletV5R1ExternalBody};
+use super::mnemonic::{WALLET_V5R1_EXTERNAL_SIGNED_OP, WALLET_V5R1_MAX_ACTIONS, WalletError};
+use crate::tlb::{
+    OutList, TlbDeserialize, TlbError, TlbResult, TlbSerialize, ensure_empty, load_ref_tlb,
+};
+use crate::tvm::{Builder, Cell, Slice};
+use std::sync::Arc;
 
 impl WalletV5R1ExternalBody {
     /// Decodes a signed Wallet V5R1 external body cell.
-    pub fn from_cell(cell: Arc<Cell>) -> tonutils::tlb::Result<Self> {
+    pub fn from_cell(cell: Arc<Cell>) -> TlbResult<Self> {
         let signature_bit_len = 512;
         if cell.bit_len() < signature_bit_len {
             return Err(TlbError::CustomSchema {
@@ -50,7 +56,7 @@ pub(super) fn store_v5_inner_request(
     builder: &mut Builder,
     out_list: Option<&OutList>,
     extended_actions: Option<&WalletV5R1ExtendedActionList>,
-) -> tonutils::tlb::Result<()> {
+) -> TlbResult<()> {
     match out_list {
         Some(list) => {
             builder.store_bit(true)?;
@@ -74,12 +80,9 @@ pub(super) fn store_v5_inner_request(
 
 pub(super) fn load_v5_inner_request(
     slice: &mut Slice,
-) -> tonutils::tlb::Result<(Option<OutList>, Option<WalletV5R1ExtendedActionList>)> {
+) -> TlbResult<(Option<OutList>, Option<WalletV5R1ExtendedActionList>)> {
     let out_list = if slice.load_bit()? {
-        Some(tonutils::tlb::load_ref_tlb(
-            slice,
-            "WalletV5R1ExternalBody.out_list",
-        )?)
+        Some(load_ref_tlb(slice, "WalletV5R1ExternalBody.out_list")?)
     } else {
         None
     };

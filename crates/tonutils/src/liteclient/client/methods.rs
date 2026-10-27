@@ -1,31 +1,39 @@
 use std::{collections::HashMap, sync::Arc};
 
+use crate::liteclient::types::LiteResult as Result;
 use crate::{
+    liteclient::tl::Request,
+    liteclient::types::LiteError,
     liteclient::{
         LiteClient,
         boc::{DecodedConfigInfo, DecodedLibrariesWithProof, decode_optional_boc},
         client::decode::{decode_config_info, decode_error},
-    },
-    tl::{
-        BlockIdExt, Int256, NonfinalCandidateId, Request,
-        common::LibraryEntry,
-        request::{
+        tl::{
+            BlockOutMsgQueueSize, ConfigInfo, DispatchQueueInfo, DispatchQueueMessages,
             GetBlockOutMsgQueueSize, GetConfigParams, GetDispatchQueueInfo,
             GetDispatchQueueMessages, GetLibraries, GetLibrariesWithProof, GetOutMsgQueueSizes,
-            GetShardBlockProof, GetValidatorStats, NonfinalGetCandidate,
-            NonfinalGetPendingShardBlocks, NonfinalGetValidatorGroups,
-        },
-        response::{
-            BlockOutMsgQueueSize, ConfigInfo, DispatchQueueInfo, DispatchQueueMessages,
-            LibraryResult, LibraryResultWithProof, NonfinalCandidate, NonfinalPendingShardBlocks,
-            NonfinalValidatorGroups, OutMsgQueueSizes, ShardBlockProof, ValidatorStats,
+            GetShardBlockProof, GetValidatorStats, LibraryResult, LibraryResultWithProof,
+            LiteBlockIdExt as BlockIdExt, LiteLibraryEntry as LibraryEntry,
+            LiteNonfinalCandidate as NonfinalCandidate,
+            LiteNonfinalCandidateId as NonfinalCandidateId,
+            LiteNonfinalGetCandidate as NonfinalGetCandidate,
+            LiteNonfinalGetPendingShardBlocks as NonfinalGetPendingShardBlocks,
+            LiteNonfinalGetValidatorGroups as NonfinalGetValidatorGroups,
+            LiteNonfinalPendingShardBlocks as NonfinalPendingShardBlocks,
+            LiteNonfinalValidatorGroups as NonfinalValidatorGroups, OutMsgQueueSizes,
+            ShardBlockProof, ValidatorStats,
         },
     },
+    tl::TlInt256 as Int256,
     tvm::{Cell, deserialize_boc},
 };
 
 impl LiteClient {
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn get_config_all_typed(
         &mut self,
         id: BlockIdExt,
@@ -57,10 +65,14 @@ impl LiteClient {
                 extract_from_key_block,
             )
             .await?;
-        decode_config_info(raw)
+        decode_config_info(raw).map_err(LiteError::from)
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn get_config_params(
         &mut self,
         id: BlockIdExt,
@@ -106,6 +118,10 @@ impl LiteClient {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn get_config_params_typed(
         &mut self,
         id: BlockIdExt,
@@ -139,7 +155,7 @@ impl LiteClient {
                 extract_from_key_block,
             )
             .await?;
-        decode_config_info(raw)
+        decode_config_info(raw).map_err(LiteError::from)
     }
 
     pub async fn get_validator_stats(
@@ -169,7 +185,7 @@ impl LiteClient {
     pub async fn get_libraries_typed(
         &mut self,
         library_list: Vec<Int256>,
-    ) -> anyhow::Result<HashMap<Int256, Option<Arc<Cell>>>> {
+    ) -> Result<HashMap<Int256, Option<Arc<Cell>>>> {
         let entries = self.get_libraries(library_list).await?;
         let mut libraries = HashMap::with_capacity(entries.len());
         for entry in entries {

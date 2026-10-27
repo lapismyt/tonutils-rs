@@ -1,8 +1,12 @@
+#![expect(
+    clippy::cast_possible_wrap,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 use std::collections::HashSet;
 
 use crate::{
+    liteclient::tl::LiteBlockId as BlockId,
     liteclient::{LiteBalancer, LiteClient},
-    tl::BlockId,
 };
 
 impl LiteBalancer {

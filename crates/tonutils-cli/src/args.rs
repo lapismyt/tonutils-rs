@@ -487,6 +487,10 @@ pub enum BalancerCommand {
 }
 
 #[derive(Parser, Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Clap exposes each protocol config flag as an independent command-line switch"
+)]
 pub struct ConfigModeFlags {
     #[arg(long)]
     pub(super) with_state_root: bool,
@@ -521,6 +525,10 @@ pub struct BalancerBlockArgs {
 }
 
 #[derive(Parser, Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Clap exposes each header option as an independent command-line switch"
+)]
 pub struct BalancerHeaderArgs {
     #[arg(short = 'n', long, default_value = "3")]
     pub(super) num_servers: usize,

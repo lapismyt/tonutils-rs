@@ -29,7 +29,6 @@ pub enum PeerState {
     Healthy,
     Suspect,
     Dead,
-    Recovering,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +49,7 @@ pub(super) struct PeerStats {
     pub(super) last_observed_seqno: u32,
 }
 
+#[must_use]
 pub struct LiteBalancer {
     pub(super) peers: Vec<LiteClient>,
     pub(super) alive_peers: Arc<RwLock<HashSet<usize>>>,

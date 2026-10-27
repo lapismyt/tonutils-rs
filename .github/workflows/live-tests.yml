@@ -83,7 +83,7 @@ jobs:
         run: python3 scripts/cross_sdk/gen_py.py
 
       - name: Verify fixtures against tonutils-rs
-        run: cargo test -p tonutils --features tl --lib
+        run: cargo test -p tonutils --features tl,adnl,overlay,liteclient --lib tl::tests::cross_sdk
 
   live-tests:
     name: Live liteserver and mempool smoke tests
@@ -135,20 +135,20 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run mempool bootstrap smoke test
-        run: cargo test -p tonutils --features mempool --test live configured_global_config_can_start_scanner -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --lib configured_global_config_can_start_scanner -- --ignored --nocapture
 
       - name: Run seed-only scanner stream test
-        run: cargo test -p tonutils --features mempool --test seed_scanner -- --nocapture
+        run: cargo test -p tonutils --features mempool --lib explicit_seed_udp_overlay_fec_reaches_scanner_stream -- --nocapture
 
       - name: Run mempool mainnet DHT probe
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils --features mempool --test live mainnet_dht_seed_answers_find_node -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --lib mainnet_dht_seed_answers_find_node -- --ignored --nocapture
 
       - name: Run mempool testnet DHT probe
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils --features mempool --test live testnet_dht_seed_answers_find_node -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --lib testnet_dht_seed_answers_find_node -- --ignored --nocapture
 
       - name: Derive mempool live seeds from global config
         run: |
@@ -183,10 +183,11 @@ jobs:
       - name: Run mempool overlay DHT discovery live test
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils --features mempool --test live mainnet_overlay_dht_discovery_returns_peers -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --lib mainnet_overlay_dht_discovery_returns_peers -- --ignored --nocapture
 
       - name: Run mempool overlay QUIC discovery live test
-        # Runs in its own test binary (`--test live_quic`). Phase 2b
+        # Runs as the `mainnet_overlay_quic_discovery_returns_peers` library
+        # test. Phase 2b
         # hard-asserts at least one member QUIC connect (`connected > 0`,
         # the gate stays hard by project decision) with a 10 s per-target
         # connect budget and up to three retry waves: wave 1 dials every
@@ -196,11 +197,11 @@ jobs:
         # number, and the summary adds `connected_advertised=`,
         # `connected_udp_offset=` and `waves=`. Green only while some
         # mainnet member completes a handshake from hosted runners (first
-        # seen in CI run 38292378027); see docs/reference/network/quic.md
-        # for the reachability verdict and the per-target log format.
+        # seen in CI run 38292378027); see docs/reference/README.md for the
+        # reachability verdict and the per-target log format.
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils --features mempool --test live_quic mainnet_overlay_quic_discovery_returns_peers -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --lib mainnet_overlay_quic_discovery_returns_peers -- --ignored --nocapture
 
       - name: Run live workflow smoke tests
         # Last and unconditional so the two flaky live-test classes cannot
@@ -209,7 +210,7 @@ jobs:
         # lost them all to the notready-651 block race), while a mempool
         # failure would in turn hide these workflows.
         if: ${{ !cancelled() }}
-        run: cargo test -p tonutils --features mempool --test live_workflows -- --ignored --nocapture
+        run: cargo test -p tonutils --features liteclient --lib liteclient::tests::live_workflows -- --ignored --nocapture
 
   live-delivery:
     name: Live mempool delivery acceptance
@@ -307,7 +308,7 @@ jobs:
         # ids 38558546040, 38594880666, 38828796572; red ids 38579887480,
         # 38723511984, 38745254834, 38814358139, 38819591750, 38865936964;
         # the mechanics and per-arm counters are recorded in
-        # docs/reference/network/overlay-delivery-ledger.md). A single sample is therefore
+        # docs/reference/README.md). A single sample is therefore
         # red on about two healthy runs of three, so this step runs
         # TON_MEMPOOL_LIVE_DELIVERY_SAMPLES independent samples in parallel
         # (each process generates its own ADNL keypair and binds ephemeral
@@ -339,7 +340,7 @@ jobs:
         # ~8 % per sample in 300 s the constant-hazard extrapolation is
         # ~15 % at 600 s with a k=8 gate green rate of ~74 %, without the
         # CPU/DHT contention a larger k would add.  Numbers and mechanics:
-        # TODO item 440 and docs/reference/network/overlay-delivery-ledger.md.
+        # TODO item 440 and docs/reference/README.md.
         run: |
           set -o pipefail
           samples="${TON_MEMPOOL_LIVE_DELIVERY_SAMPLES:-8}"
@@ -348,8 +349,8 @@ jobs:
 
           echo "building the live test binary once for ${samples} delivery samples"
           bin="$(
-            cargo test -p tonutils --features mempool --test live --no-run --message-format=json 2>/dev/null \
-              | jq -r 'select(.reason == "compiler-artifact" and .target.name == "live") | .executable' \
+            cargo test -p tonutils --features mempool --lib --no-run --message-format=json 2>/dev/null \
+              | jq -r 'select(.reason == "compiler-artifact" and .target.name == "tonutils" and .profile.test) | .executable' \
               | tail -n 1
           )" || bin=""
           if [ -z "$bin" ] || [ ! -x "$bin" ]; then

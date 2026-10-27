@@ -1,7 +1,23 @@
-use super::*;
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
+use super::{
+    ACTION_CHANGE_LIBRARY_TAG, ACTION_RESERVE_CURRENCY_TAG, ACTION_SEND_MSG_TAG,
+    ACTION_SET_CODE_TAG, Anycast, CommonMsgInfoRelaxed, CurrencyCollection, Grams,
+    MAX_OUT_LIST_ACTIONS, MessageRelaxed, StateInit, TickTock, VAR_UINT_7_LEN_BITS,
+    VAR_UINT_7_MAX_BYTES,
+};
+use crate::tlb::{
+    Either, TlbDeserialize, TlbError, TlbResult, TlbSerialize, ensure_empty, load_maybe,
+    load_ref_tlb, load_var_uint, store_maybe, store_ref_tlb, store_tag, store_var_uint,
+};
+use num_bigint::BigUint;
+use std::sync::Arc;
+use tonutils::tvm::{Builder, Cell, Slice};
 
 impl TlbDeserialize for MessageRelaxed {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let info = CommonMsgInfoRelaxed::load_tlb(slice)?;
         let init = load_message_init(slice)?;
         let body = load_message_body(slice)?;
@@ -19,7 +35,7 @@ pub enum LibRef {
 }
 
 impl TlbSerialize for LibRef {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Hash(hash) => {
                 builder.store_bit(false)?;
@@ -35,7 +51,7 @@ impl TlbSerialize for LibRef {
 }
 
 impl TlbDeserialize for LibRef {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let tag = load_one_bit_tag(slice, "LibRef", "0|1")?;
         if tag == "0" {
             let mut hash = [0u8; 32];
@@ -49,6 +65,10 @@ impl TlbDeserialize for LibRef {
 
 /// Closed upstream TL-B `OutAction` family.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "OutAction mirrors the closed TL-B union and is moved directly into message cells"
+)]
 pub enum OutAction {
     /// `action_send_msg#0ec3c86d mode:(## 8) out_msg:^(MessageRelaxed Any)`.
     SendMsg {
@@ -79,7 +99,7 @@ pub enum OutAction {
 }
 
 impl TlbSerialize for OutAction {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::SendMsg { mode, out_msg } => {
                 builder.store_uint::<u32>(ACTION_SEND_MSG_TAG)?;
@@ -112,7 +132,7 @@ impl TlbSerialize for OutAction {
 }
 
 impl TlbDeserialize for OutAction {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         match load_u32_tag(slice, "OutAction", OUT_ACTION_EXPECTED_TAGS)? {
             ACTION_SEND_MSG_TAG => Ok(Self::SendMsg {
                 mode: slice.load_uint::<u8>()?,
@@ -162,7 +182,7 @@ impl OutList {
         self.actions.is_empty()
     }
 
-    fn validate_len(&self) -> Result<()> {
+    fn validate_len(&self) -> TlbResult<()> {
         if self.actions.len() > MAX_OUT_LIST_ACTIONS {
             return Err(TlbError::CustomSchema {
                 schema: "OutList",
@@ -175,7 +195,7 @@ impl OutList {
         Ok(())
     }
 
-    fn load_with_depth(slice: &mut Slice, depth: usize) -> Result<Self> {
+    fn load_with_depth(slice: &mut Slice, depth: usize) -> TlbResult<Self> {
         if slice.is_empty() {
             return Ok(Self::default());
         }
@@ -213,7 +233,7 @@ impl OutList {
 }
 
 impl TlbSerialize for OutList {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         self.validate_len()?;
 
         let mut current = Builder::new().build()?;
@@ -230,7 +250,7 @@ impl TlbSerialize for OutList {
 }
 
 impl TlbDeserialize for OutList {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Self::load_with_depth(slice, 0)
     }
 }
@@ -247,7 +267,7 @@ pub enum AccStatusChange {
 }
 
 impl TlbSerialize for AccStatusChange {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Unchanged => store_tag(builder, "0"),
             Self::Frozen => store_tag(builder, "10"),
@@ -257,16 +277,13 @@ impl TlbSerialize for AccStatusChange {
 }
 
 impl TlbDeserialize for AccStatusChange {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
-        let first = match slice.load_bit() {
-            Ok(bit) => bit,
-            Err(_) => {
-                return Err(TlbError::TagMismatch {
-                    constructor: "AccStatusChange",
-                    expected_bits: "0|10|11",
-                    actual_bits: String::new(),
-                });
-            }
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
+        let Ok(first) = slice.load_bit() else {
+            return Err(TlbError::TagMismatch {
+                constructor: "AccStatusChange",
+                expected_bits: "0|10|11",
+                actual_bits: String::new(),
+            });
         };
         if !first {
             return Ok(Self::Unchanged);
@@ -301,7 +318,7 @@ impl StorageUsed {
 }
 
 impl TlbSerialize for StorageUsed {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         store_var_uint_7(builder, &self.cells, "StorageUsed.cells")?;
         store_var_uint_7(builder, &self.bits, "StorageUsed.bits")?;
         Ok(())
@@ -309,7 +326,7 @@ impl TlbSerialize for StorageUsed {
 }
 
 impl TlbDeserialize for StorageUsed {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             cells: load_var_uint_7(slice, "StorageUsed.cells")?,
             bits: load_var_uint_7(slice, "StorageUsed.bits")?,
@@ -351,14 +368,14 @@ pub struct TrActionPhase {
 }
 
 impl TlbSerialize for TrActionPhase {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_bit(self.success)?;
         builder.store_bit(self.valid)?;
         builder.store_bit(self.no_funds)?;
         self.status_change.store_tlb(builder)?;
         store_maybe(builder, &self.total_fwd_fees)?;
         store_maybe(builder, &self.total_action_fees)?;
-        builder.store_int(self.result_code as i64, 32)?;
+        builder.store_int(i64::from(self.result_code), 32)?;
         store_maybe_i32(builder, self.result_arg)?;
         builder.store_uint::<u16>(self.tot_actions)?;
         builder.store_uint::<u16>(self.spec_actions)?;
@@ -371,7 +388,7 @@ impl TlbSerialize for TrActionPhase {
 }
 
 impl TlbDeserialize for TrActionPhase {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let success = slice.load_bit()?;
         let valid = slice.load_bit()?;
         let no_funds = slice.load_bit()?;
@@ -409,11 +426,11 @@ impl TlbDeserialize for TrActionPhase {
 pub(super) fn store_state_init_prefix(
     builder: &mut Builder,
     fixed_prefix_length: Option<u8>,
-    special: &Option<TickTock>,
-    code: &Option<Arc<Cell>>,
-    data: &Option<Arc<Cell>>,
+    special: Option<&TickTock>,
+    code: Option<&Arc<Cell>>,
+    data: Option<&Arc<Cell>>,
     fixed_prefix_schema: &'static str,
-) -> Result<()> {
+) -> TlbResult<()> {
     match fixed_prefix_length {
         Some(value) => {
             if value >= 32 {
@@ -430,8 +447,8 @@ pub(super) fn store_state_init_prefix(
         }
     }
     store_maybe_tick_tock(builder, special)?;
-    builder.store_maybe_ref(code.clone())?;
-    builder.store_maybe_ref(data.clone())?;
+    builder.store_maybe_ref(code.cloned())?;
+    builder.store_maybe_ref(data.cloned())?;
     Ok(())
 }
 
@@ -442,7 +459,7 @@ type StateInitPrefix = (
     Option<Arc<Cell>>,
 );
 
-pub(super) fn load_state_init_prefix(slice: &mut Slice) -> Result<StateInitPrefix> {
+pub(super) fn load_state_init_prefix(slice: &mut Slice) -> TlbResult<StateInitPrefix> {
     let fixed_prefix_length = if slice.load_bit()? {
         Some(slice.load_uint_custom::<u8>(5)?)
     } else {
@@ -458,8 +475,8 @@ pub(super) fn load_state_init_prefix(slice: &mut Slice) -> Result<StateInitPrefi
 
 pub(super) fn store_message_init(
     builder: &mut Builder,
-    init: &Option<Either<StateInit, StateInit>>,
-) -> Result<()> {
+    init: Option<&Either<StateInit, StateInit>>,
+) -> TlbResult<()> {
     match init {
         Some(Either::Left(init)) => {
             builder.store_bit(true)?;
@@ -478,7 +495,9 @@ pub(super) fn store_message_init(
     Ok(())
 }
 
-pub(super) fn load_message_init(slice: &mut Slice) -> Result<Option<Either<StateInit, StateInit>>> {
+pub(super) fn load_message_init(
+    slice: &mut Slice,
+) -> TlbResult<Option<Either<StateInit, StateInit>>> {
     if slice.load_bit()? {
         if slice.load_bit()? {
             Ok(Some(Either::Right(load_ref_tlb(slice, "StateInit")?)))
@@ -493,7 +512,7 @@ pub(super) fn load_message_init(slice: &mut Slice) -> Result<Option<Either<State
 pub(super) fn store_message_body(
     builder: &mut Builder,
     body: &Either<Arc<Cell>, Arc<Cell>>,
-) -> Result<()> {
+) -> TlbResult<()> {
     match body {
         Either::Left(cell) => {
             builder.store_bit(false)?;
@@ -507,7 +526,7 @@ pub(super) fn store_message_body(
     Ok(())
 }
 
-pub(super) fn load_message_body(slice: &mut Slice) -> Result<Either<Arc<Cell>, Arc<Cell>>> {
+pub(super) fn load_message_body(slice: &mut Slice) -> TlbResult<Either<Arc<Cell>, Arc<Cell>>> {
     if slice.load_bit()? {
         Ok(Either::Right(slice.load_reference()?))
     } else {
@@ -515,20 +534,20 @@ pub(super) fn load_message_body(slice: &mut Slice) -> Result<Either<Arc<Cell>, A
     }
 }
 
-pub(super) fn store_maybe_anycast(builder: &mut Builder, anycast: &Option<Anycast>) -> Result<()> {
-    match anycast {
-        Some(anycast) => {
-            builder.store_bit(true)?;
-            anycast.store_tlb(builder)
-        }
-        None => {
-            builder.store_bit(false)?;
-            Ok(())
-        }
+pub(super) fn store_maybe_anycast(
+    builder: &mut Builder,
+    anycast: Option<&Anycast>,
+) -> TlbResult<()> {
+    if let Some(anycast) = anycast {
+        builder.store_bit(true)?;
+        anycast.store_tlb(builder)
+    } else {
+        builder.store_bit(false)?;
+        Ok(())
     }
 }
 
-pub(super) fn load_maybe_anycast(slice: &mut Slice) -> Result<Option<Anycast>> {
+pub(super) fn load_maybe_anycast(slice: &mut Slice) -> TlbResult<Option<Anycast>> {
     if slice.load_bit()? {
         Ok(Some(Anycast::load_tlb(slice)?))
     } else {
@@ -536,20 +555,20 @@ pub(super) fn load_maybe_anycast(slice: &mut Slice) -> Result<Option<Anycast>> {
     }
 }
 
-pub(super) fn store_maybe_tick_tock(builder: &mut Builder, value: &Option<TickTock>) -> Result<()> {
-    match value {
-        Some(value) => {
-            builder.store_bit(true)?;
-            value.store_tlb(builder)
-        }
-        None => {
-            builder.store_bit(false)?;
-            Ok(())
-        }
+pub(super) fn store_maybe_tick_tock(
+    builder: &mut Builder,
+    value: Option<&TickTock>,
+) -> TlbResult<()> {
+    if let Some(value) = value {
+        builder.store_bit(true)?;
+        value.store_tlb(builder)
+    } else {
+        builder.store_bit(false)?;
+        Ok(())
     }
 }
 
-pub(super) fn load_maybe_tick_tock(slice: &mut Slice) -> Result<Option<TickTock>> {
+pub(super) fn load_maybe_tick_tock(slice: &mut Slice) -> TlbResult<Option<TickTock>> {
     if slice.load_bit()? {
         Ok(Some(TickTock::load_tlb(slice)?))
     } else {
@@ -557,7 +576,7 @@ pub(super) fn load_maybe_tick_tock(slice: &mut Slice) -> Result<Option<TickTock>
     }
 }
 
-pub(super) fn load_maybe_ref_cell(slice: &mut Slice) -> Result<Option<Arc<Cell>>> {
+pub(super) fn load_maybe_ref_cell(slice: &mut Slice) -> TlbResult<Option<Arc<Cell>>> {
     if slice.load_bit()? {
         Ok(Some(slice.load_reference()?))
     } else {
@@ -565,11 +584,11 @@ pub(super) fn load_maybe_ref_cell(slice: &mut Slice) -> Result<Option<Arc<Cell>>
     }
 }
 
-pub(super) fn store_maybe_i32(builder: &mut Builder, value: Option<i32>) -> Result<()> {
+pub(super) fn store_maybe_i32(builder: &mut Builder, value: Option<i32>) -> TlbResult<()> {
     match value {
         Some(value) => {
             builder.store_bit(true)?;
-            builder.store_int(value as i64, 32)?;
+            builder.store_int(i64::from(value), 32)?;
         }
         None => {
             builder.store_bit(false)?;
@@ -578,7 +597,7 @@ pub(super) fn store_maybe_i32(builder: &mut Builder, value: Option<i32>) -> Resu
     Ok(())
 }
 
-pub(super) fn load_maybe_i32(slice: &mut Slice) -> Result<Option<i32>> {
+pub(super) fn load_maybe_i32(slice: &mut Slice) -> TlbResult<Option<i32>> {
     if slice.load_bit()? {
         Ok(Some(slice.load_int(32)? as i32))
     } else {
@@ -590,7 +609,7 @@ pub(super) fn store_var_uint_7(
     builder: &mut Builder,
     value: &BigUint,
     schema: &'static str,
-) -> Result<()> {
+) -> TlbResult<()> {
     let byte_len = value.to_bytes_be().len();
     if byte_len > VAR_UINT_7_MAX_BYTES {
         return Err(TlbError::NonCanonicalValue {
@@ -601,7 +620,7 @@ pub(super) fn store_var_uint_7(
     store_var_uint(builder, value, VAR_UINT_7_LEN_BITS)
 }
 
-pub(super) fn load_var_uint_7(slice: &mut Slice, schema: &'static str) -> Result<BigUint> {
+pub(super) fn load_var_uint_7(slice: &mut Slice, schema: &'static str) -> TlbResult<BigUint> {
     let value = load_var_uint(slice, VAR_UINT_7_LEN_BITS)?;
     let byte_len = value.to_bytes_be().len();
     if byte_len > VAR_UINT_7_MAX_BYTES {
@@ -613,7 +632,7 @@ pub(super) fn load_var_uint_7(slice: &mut Slice, schema: &'static str) -> Result
     Ok(value)
 }
 
-pub(super) fn load_remaining_as_cell(slice: &mut Slice) -> Result<Arc<Cell>> {
+pub(super) fn load_remaining_as_cell(slice: &mut Slice) -> TlbResult<Arc<Cell>> {
     let bits = slice.remaining_bits();
     let refs = slice.remaining_refs();
     let remaining = slice.clone_from_current();
@@ -625,7 +644,11 @@ pub(super) fn load_remaining_as_cell(slice: &mut Slice) -> Result<Arc<Cell>> {
     Ok(cell)
 }
 
-pub(super) fn validate_bit_string(schema: &'static str, data: &[u8], bit_len: usize) -> Result<()> {
+pub(super) fn validate_bit_string(
+    schema: &'static str,
+    data: &[u8],
+    bit_len: usize,
+) -> TlbResult<()> {
     let required_bytes = bit_len.div_ceil(8);
     if data.len() != required_bytes {
         return Err(TlbError::CustomSchema {
@@ -656,7 +679,7 @@ pub(super) fn load_two_bit_tag(
     slice: &mut Slice,
     constructor: &'static str,
     expected_bits: &'static str,
-) -> Result<String> {
+) -> TlbResult<String> {
     let mut actual_bits = String::with_capacity(2);
     for _ in 0..2 {
         match slice.load_bit() {
@@ -677,7 +700,7 @@ pub(super) fn load_one_bit_tag(
     slice: &mut Slice,
     constructor: &'static str,
     expected_bits: &'static str,
-) -> Result<String> {
+) -> TlbResult<String> {
     match slice.load_bit() {
         Ok(bit) => Ok(if bit { "1" } else { "0" }.to_string()),
         Err(_) => Err(TlbError::TagMismatch {
@@ -692,7 +715,7 @@ pub(super) fn load_u32_tag(
     slice: &mut Slice,
     constructor: &'static str,
     expected_bits: &'static str,
-) -> Result<u32> {
+) -> TlbResult<u32> {
     let mut actual_bits = String::with_capacity(32);
     let mut tag = 0u32;
     for _ in 0..32 {

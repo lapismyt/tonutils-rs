@@ -14,4 +14,14 @@
 #[path = "mod.rs"]
 pub mod cli;
 
-pub use cli::*;
+pub use cli::{
+    BalancerAddressArgs, BalancerAddressBlockArgs, BalancerBlockArgs,
+    BalancerBlockTransactionsExtArgs, BalancerCommand, BalancerConfigAllArgs,
+    BalancerConfigParamsArgs, BalancerHeaderArgs, BalancerLibrariesArgs,
+    BalancerLibrariesWithProofArgs, BalancerOneTransactionArgs, BalancerRunGetMethodArgs,
+    BalancerShardInfoArgs, BalancerTransactionsArgs, BlockCommand, BocCommand, Cli, Commands,
+    ConfigCommand, ConfigModeFlags, ContractCommand, HighLevelAccountArgs, HighLevelCallArgs,
+    HighLevelTransactionsArgs, KnownTlbType, LiteClientCommand, Network, OutputFormat,
+    SchemaCommand, TvmCommand, WalletAddressArgs, WalletCommand, WalletTransferArgs,
+    WalletVersionArg,
+};

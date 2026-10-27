@@ -1,7 +1,15 @@
-use super::*;
+use super::{
+    Address, Arc, DhtNode, DiscoveryConfig, DiscoveryRecord, Duration, Int256, OverlayConfig,
+    OverlayError, OverlayId, OverlayPacket, OverlayPeerPool, OverlaySession, OverlaySessionSender,
+    PeerId, PeerManager, PeerStatus, ReconnectFactory, RoutingMetadata, SeedPeer, TlPublicKey,
+    select_discovery_peers, select_typed_dht_peers,
+};
+
+use crate::adnl::tl::{AddressList, DhtNodeBoxed};
 
 use ed25519_dalek::{Signer, SigningKey};
 use futures::future::BoxFuture;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct FlakySession {
     peer: PeerId,
@@ -56,8 +64,6 @@ async fn rejects_unknown_and_oversized_packets() {
 /// polling `receive()`, and the packet already in the queue is kept.
 #[tokio::test]
 async fn saturated_queue_never_freezes_the_session_loop() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
     struct CountingSession {
         peer: PeerId,
         receives: Arc<AtomicUsize>,

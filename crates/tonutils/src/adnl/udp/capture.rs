@@ -21,24 +21,44 @@
 //! why the capture is strictly opt-in and capped.
 
 use std::{
-    fs::OpenOptions,
+    fs::{File, OpenOptions},
     io::Write,
     net::SocketAddr,
+    path::Path,
     sync::{
-        Mutex, OnceLock,
+        OnceLock,
         atomic::{AtomicU64, Ordering},
+        mpsc::{SyncSender, TrySendError, sync_channel},
     },
+    thread::{self, JoinHandle},
 };
 
 /// The record cap when `ADNL_UDP_CAPTURE_MAX` is unset or unparseable.
 const DEFAULT_CAPTURE_MAX: u64 = 64;
+/// Maximum number of formatted records waiting for the writer thread.
+const CAPTURE_QUEUE_CAPACITY: usize = 64;
 
 struct Capture {
-    file: Mutex<std::fs::File>,
+    sender: SyncSender<String>,
     remaining: AtomicU64,
 }
 
 impl Capture {
+    fn start(path: &Path, max: u64) -> std::io::Result<(Self, JoinHandle<()>)> {
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        let (sender, receiver) = sync_channel(CAPTURE_QUEUE_CAPACITY);
+        let worker = thread::Builder::new()
+            .name("adnl-capture-writer".into())
+            .spawn(move || write_records(&mut file, receiver))?;
+        Ok((
+            Self {
+                sender,
+                remaining: AtomicU64::new(max),
+            },
+            worker,
+        ))
+    }
+
     fn record(&self, kind: &str, peer: Option<SocketAddr>, bytes: &[u8]) {
         // A load/compare_exchange loop consumes one slot per written
         // record and stops at zero without underflow (kept on the
@@ -60,12 +80,20 @@ impl Capture {
         let at_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.as_millis());
-        if let Ok(mut file) = self.file.lock() {
-            let _ = writeln!(
-                file,
-                "{{\"kind\":\"{kind}\",\"peer\":\"{peer}\",\"at_unix_ms\":{at_ms},\"hex\":\"{}\"}}",
-                hex::encode(bytes),
-            );
+        let line = format!(
+            "{{\"kind\":\"{kind}\",\"peer\":\"{peer}\",\"at_unix_ms\":{at_ms},\"hex\":\"{}\"}}",
+            hex::encode(bytes),
+        );
+        match self.sender.try_send(line) {
+            Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
+        }
+    }
+}
+
+fn write_records(file: &mut File, receiver: std::sync::mpsc::Receiver<String>) {
+    for line in receiver {
+        if writeln!(file, "{line}").is_err() {
+            break;
         }
     }
 }
@@ -82,16 +110,10 @@ fn capture() -> Option<&'static Capture> {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(DEFAULT_CAPTURE_MAX);
-            let file = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-                .ok()?;
+            let (capture, worker) = Capture::start(Path::new(&path), max).ok()?;
+            drop(worker);
             log::info!("ADNL wire capture armed: path={path} max={max}");
-            Some(Capture {
-                file: Mutex::new(file),
-                remaining: AtomicU64::new(max),
-            })
+            Some(capture)
         })
         .as_ref()
 }
@@ -116,7 +138,7 @@ pub(super) fn record(kind: &str, peer: Option<SocketAddr>, bytes: &[u8]) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AtomicU64, Capture, SocketAddr, sync_channel};
 
     /// A capture writes JSONL records, stops at its cap, and leaves
     /// the file parseable: the fixture tooling downstream consumes
@@ -128,20 +150,14 @@ mod tests {
             std::process::id(),
             std::thread::current().id(),
         ));
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&path)
-            .expect("the temp capture file must open");
-        let capture = Capture {
-            file: Mutex::new(file),
-            remaining: AtomicU64::new(2),
-        };
+        let _ = std::fs::remove_file(&path);
+        let (capture, worker) = Capture::start(&path, 2).expect("the capture writer must start");
         let peer: SocketAddr = "127.0.0.1:30303".parse().unwrap();
         capture.record("datagram", Some(peer), &[0xaa, 0xbb]);
         capture.record("custom", None, &[0xcc]);
         capture.record("datagram", None, &[0xdd]);
+        drop(capture);
+        worker.join().expect("the capture writer must stop");
 
         let body = std::fs::read_to_string(&path).expect("the capture file must read back");
         let lines: Vec<&str> = body.lines().collect();
@@ -162,5 +178,16 @@ mod tests {
             assert!(parsed.get("at_unix_ms").is_some(), "{line}");
         }
         std::fs::remove_file(&path).expect("the temp capture file must clean up");
+    }
+
+    #[test]
+    fn record_does_not_block_without_a_writer() {
+        let (sender, _receiver) = sync_channel(1);
+        let capture = Capture {
+            sender,
+            remaining: AtomicU64::new(2),
+        };
+        capture.record("datagram", None, &[0xaa]);
+        capture.record("datagram", None, &[0xbb]);
     }
 }

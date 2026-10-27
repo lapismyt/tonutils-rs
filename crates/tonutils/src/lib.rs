@@ -1,17 +1,21 @@
 //! Pure-Rust TON SDK.
 //!
-//! The default features enable ADNL and network-config
-//! support; provider helpers for jettons, NFTs, and wallets are opt-in.
+//! Features are opt-in. Enable only the protocol layers your application uses.
 //!
 //! ```toml
-//! tonutils = { version = "2", features = ["wallet-provider"] }
+//! tonutils = { version = "2", features = ["wallet", "liteclient"] }
 //! ```
 //! Network trust and proof assumptions remain the responsibility of the
 //! application.
 //!
-//! Start with the [project guide](https://lapismyt.github.io/tonutils-rs/) for
-//! feature selection and offline/live workflow boundaries. CLI, proc-macro,
-//! and schema-generation binaries remain separate packages.
+//! `tvm` and `tlb` support offline cell and message construction. `liteclient`
+//! and `adnl` add network access. `contracts` adds low-level get-method helpers;
+//! jetton and NFT modules are not currently included. The CLI, proc-macro, and
+//! schema-generation tools remain separate packages.
+
+#![deny(rustdoc::broken_intra_doc_links)]
+
+extern crate self as tonutils;
 
 #[cfg(feature = "adnl")]
 pub mod adnl;

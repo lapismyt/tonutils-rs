@@ -1,3 +1,7 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 use crate::adnl::{AdnlAesParams, AdnlError, primitives::AdnlAes};
 
 use aes::cipher::{KeyIvInit, StreamCipher};
@@ -8,7 +12,8 @@ use tokio_util::{
     codec::{Decoder, Encoder},
 };
 
-/// Implementation of ADNL protocol. Connection must be first initialized with [`crate::AdnlHandshake`] to exchange keys.
+/// Implementation of ADNL protocol. Connection must be first initialized with
+/// [`crate::adnl::AdnlHandshake`] to exchange keys.
 pub struct AdnlCodec {
     aes_rx: AdnlAes,
     aes_tx: AdnlAes,

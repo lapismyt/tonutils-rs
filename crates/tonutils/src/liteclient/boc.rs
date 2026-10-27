@@ -6,21 +6,83 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    tl::{
-        common::{BlockIdExt, Int256},
-        response::{
-            AccountState, AllShardsInfo, BlockData, BlockHeader, BlockTransactionsExt, ConfigInfo,
-            LibraryResultWithProof, ShardInfo, TransactionInfo,
-        },
+    liteclient::tl::{
+        AllShardsInfo, BlockData, BlockHeader, BlockTransactionsExt, ConfigInfo,
+        LibraryResultWithProof, LiteBlockIdExt as BlockIdExt,
+        LiteServerAccountState as AccountState, ShardInfo, TransactionInfo,
     },
+    tl::TlInt256 as Int256,
     tlb::{
-        Account, Block, ConfigParams, MerkleProof, MerkleUpdate, MsgAddressInt, ShardAccount,
-        ShardState, TlbDeserialize, Transaction,
+        Account, AccountState as TlbAccountState, Block, ConfigParams, MerkleProof, MerkleUpdate,
+        MsgAddressInt, ShardAccount, ShardState, TlbDeserialize, TlbError, Transaction,
     },
-    tvm::{Address, BocInspection, Cell, deserialize_boc, deserialize_boc_roots, inspect_boc},
+    tvm::{
+        Address, BocInspection, Cell, TvmError, deserialize_boc, deserialize_boc_roots, inspect_boc,
+    },
 };
 
-use anyhow::{Context, Result, bail}; // TODO: don't use anyhow in libraries
+use thiserror::Error;
+
+/// Errors returned by typed BoC and TL-B decode helpers.
+#[derive(Debug, Error)]
+pub enum LiteBocError {
+    /// A TVM cell or BoC operation failed.
+    #[error("failed to {context}: {source}")]
+    Tvm {
+        /// Operation that failed.
+        context: &'static str,
+        /// Underlying TVM failure.
+        #[source]
+        source: TvmError,
+    },
+    /// A TL-B value could not be decoded from its cell.
+    #[error("failed to {context}: {source}")]
+    Tlb {
+        /// Operation that failed.
+        context: &'static str,
+        /// Underlying TL-B failure.
+        #[source]
+        source: TlbError,
+    },
+    /// The proof root did not match the independently verified shard root.
+    #[error("wrong shard root for shard account proof: expected {expected:?}, got {actual:?}")]
+    RootHashMismatch {
+        /// Expected root hash.
+        expected: [u8; 32],
+        /// Actual proof root hash.
+        actual: [u8; 32],
+    },
+    /// The decoded shard account address did not match the requested account.
+    #[error("wrong account hash in shard account")]
+    AccountMismatch,
+    /// The shard account used an address kind that cannot match a standard account.
+    #[error("shard account uses non-standard account address")]
+    NonStandardAccountAddress,
+    /// The account-state cell did not match the account decoded from the proof.
+    #[error("account state/proof mismatch")]
+    AccountStateMismatch,
+}
+
+/// Result type used by LiteClient BoC decode helpers.
+pub type LiteBocResult<T> = Result<T, LiteBocError>;
+
+impl LiteBocError {
+    fn tvm(context: &'static str, source: TvmError) -> Self {
+        Self::Tvm { context, source }
+    }
+
+    fn tlb(context: &'static str, source: TlbError) -> Self {
+        Self::Tlb { context, source }
+    }
+
+    fn with_context(self, context: &'static str) -> Self {
+        match self {
+            Self::Tvm { source, .. } => Self::Tvm { context, source },
+            Self::Tlb { source, .. } => Self::Tlb { context, source },
+            other => other,
+        }
+    }
+}
 
 /// Raw BoC bytes with a decoded root cell.
 #[derive(Debug, Clone)]
@@ -33,9 +95,10 @@ pub struct DecodedBoc {
 
 impl DecodedBoc {
     /// Decodes a BoC and preserves the original bytes.
-    pub fn decode(raw: impl AsRef<[u8]>) -> Result<Self> {
+    pub fn decode(raw: impl AsRef<[u8]>) -> LiteBocResult<Self> {
         let raw = raw.as_ref().to_vec();
-        let root = deserialize_boc(&raw).context("failed to decode BoC root cell")?;
+        let root = deserialize_boc(&raw)
+            .map_err(|source| LiteBocError::tvm("decode BoC root cell", source))?;
         Ok(Self { raw, root })
     }
 
@@ -56,9 +119,10 @@ pub struct DecodedBocRoots {
 
 impl DecodedBocRoots {
     /// Decodes all BoC roots and preserves the original bytes.
-    pub fn decode(raw: impl AsRef<[u8]>) -> Result<Self> {
+    pub fn decode(raw: impl AsRef<[u8]>) -> LiteBocResult<Self> {
         let raw = raw.as_ref().to_vec();
-        let roots = deserialize_boc_roots(&raw).context("failed to decode BoC root cells")?;
+        let roots = deserialize_boc_roots(&raw)
+            .map_err(|source| LiteBocError::tvm("decode BoC root cells", source))?;
         Ok(Self { raw, roots })
     }
 
@@ -82,9 +146,10 @@ pub struct InspectedProofBoc {
 
 impl InspectedProofBoc {
     /// Inspects a proof BoC without constructing semantic cells.
-    pub fn inspect(raw: impl AsRef<[u8]>) -> Result<Self> {
+    pub fn inspect(raw: impl AsRef<[u8]>) -> LiteBocResult<Self> {
         let raw = raw.as_ref().to_vec();
-        let inspection = inspect_boc(&raw).context("failed to inspect BoC roots")?;
+        let inspection =
+            inspect_boc(&raw).map_err(|source| LiteBocError::tvm("inspect BoC roots", source))?;
         Ok(Self { raw, inspection })
     }
 
@@ -294,39 +359,42 @@ pub struct DecodedLibrariesWithProof {
 }
 
 /// Decodes a raw account-state BoC into `Account`.
-pub fn decode_account_state_boc(raw: impl AsRef<[u8]>) -> Result<DecodedAccountStateBoc> {
+pub fn decode_account_state_boc(raw: impl AsRef<[u8]>) -> LiteBocResult<DecodedAccountStateBoc> {
     let boc = DecodedBoc::decode(raw)?;
-    let account = Account::from_cell(boc.root.clone()).context("failed to decode Account TL-B")?;
+    let account = Account::from_cell(boc.root.clone())
+        .map_err(|source| LiteBocError::tlb("decode Account TL-B", source))?;
     Ok(DecodedAccountStateBoc { boc, account })
 }
 
 /// Decodes a raw block BoC into the Initial compatibility `Block` wrapper.
-pub fn decode_block_boc(raw: impl AsRef<[u8]>) -> Result<DecodedBlockBoc> {
+pub fn decode_block_boc(raw: impl AsRef<[u8]>) -> LiteBocResult<DecodedBlockBoc> {
     let boc = DecodedBoc::decode(raw)?;
-    let block = Block::from_cell(boc.root.clone()).context("failed to decode Block TL-B")?;
+    let block = Block::from_cell(boc.root.clone())
+        .map_err(|source| LiteBocError::tlb("decode Block TL-B", source))?;
     Ok(DecodedBlockBoc { boc, block })
 }
 
 /// Decodes a raw config-params proof payload into `ConfigParams`.
-pub fn decode_config_params_boc(raw: impl AsRef<[u8]>) -> Result<DecodedConfigParamsBoc> {
+pub fn decode_config_params_boc(raw: impl AsRef<[u8]>) -> LiteBocResult<DecodedConfigParamsBoc> {
     let boc = DecodedBoc::decode(raw)?;
-    let config =
-        ConfigParams::from_cell(boc.root.clone()).context("failed to decode ConfigParams TL-B")?;
+    let config = ConfigParams::from_cell(boc.root.clone())
+        .map_err(|source| LiteBocError::tlb("decode ConfigParams TL-B", source))?;
     Ok(DecodedConfigParamsBoc { boc, config })
 }
 
 /// Decodes a raw shard-state BoC.
-pub fn decode_shard_state_boc(raw: impl AsRef<[u8]>) -> Result<DecodedShardStateBoc> {
+pub fn decode_shard_state_boc(raw: impl AsRef<[u8]>) -> LiteBocResult<DecodedShardStateBoc> {
     let boc = DecodedBoc::decode(raw)?;
-    let shard_state =
-        ShardState::from_cell(boc.root.clone()).context("failed to decode ShardState TL-B")?;
+    let shard_state = ShardState::from_cell(boc.root.clone())
+        .map_err(|source| LiteBocError::tlb("decode ShardState TL-B", source))?;
     Ok(DecodedShardStateBoc { boc, shard_state })
 }
 
 /// Decodes a raw shard-account BoC.
-pub fn decode_shard_account_boc(raw: impl AsRef<[u8]>) -> Result<ShardAccount> {
+pub fn decode_shard_account_boc(raw: impl AsRef<[u8]>) -> LiteBocResult<ShardAccount> {
     let boc = DecodedBoc::decode(raw)?;
-    ShardAccount::from_cell(boc.root).context("failed to decode ShardAccount TL-B")
+    ShardAccount::from_cell(boc.root)
+        .map_err(|source| LiteBocError::tlb("decode ShardAccount TL-B", source))
 }
 
 /// Extracts a shard account from proof material and validates it against the
@@ -342,7 +410,7 @@ pub fn extract_verified_shard_account(
     proof_raw: impl AsRef<[u8]>,
     state_raw: impl AsRef<[u8]>,
     account: &Address,
-) -> Result<ExtractedShardAccount> {
+) -> LiteBocResult<ExtractedShardAccount> {
     extract_verified_shard_account_with_root_hash(proof_raw, state_raw, account, None)
 }
 
@@ -353,16 +421,16 @@ pub fn extract_verified_shard_account_with_root_hash(
     state_raw: impl AsRef<[u8]>,
     account: &Address,
     expected_root_hash: Option<[u8; 32]>,
-) -> Result<ExtractedShardAccount> {
+) -> LiteBocResult<ExtractedShardAccount> {
     let proof = DecodedBoc::decode(proof_raw)?;
     if let Some(expected) = expected_root_hash {
         let actual = proof.root.hash();
         if actual != expected {
-            bail!("wrong shard root for shard account proof");
+            return Err(LiteBocError::RootHashMismatch { expected, actual });
         }
     }
     let shard_account = ShardAccount::from_cell(proof.root.clone())
-        .context("failed to decode verified ShardAccount root")?;
+        .map_err(|source| LiteBocError::tlb("decode verified ShardAccount root", source))?;
     validate_shard_account(&shard_account, state_raw.as_ref(), account)?;
     Ok(ExtractedShardAccount {
         proof,
@@ -371,12 +439,13 @@ pub fn extract_verified_shard_account_with_root_hash(
 }
 
 /// Decodes a raw transaction BoC.
-pub fn decode_transaction_boc(raw: impl AsRef<[u8]>) -> Result<Transaction> {
+pub fn decode_transaction_boc(raw: impl AsRef<[u8]>) -> LiteBocResult<Transaction> {
     let boc = DecodedBoc::decode(raw)?;
-    Transaction::from_cell(boc.root).context("failed to decode Transaction TL-B")
+    Transaction::from_cell(boc.root)
+        .map_err(|source| LiteBocError::tlb("decode Transaction TL-B", source))
 }
 
-pub(crate) fn decode_optional_boc(raw: &[u8]) -> Result<Option<DecodedBoc>> {
+pub(crate) fn decode_optional_boc(raw: &[u8]) -> LiteBocResult<Option<DecodedBoc>> {
     if raw.is_empty() {
         Ok(None)
     } else {
@@ -384,7 +453,7 @@ pub(crate) fn decode_optional_boc(raw: &[u8]) -> Result<Option<DecodedBoc>> {
     }
 }
 
-pub(crate) fn inspect_optional_proof_boc(raw: &[u8]) -> Result<Option<InspectedProofBoc>> {
+pub(crate) fn inspect_optional_proof_boc(raw: &[u8]) -> LiteBocResult<Option<InspectedProofBoc>> {
     if raw.is_empty() {
         Ok(None)
     } else {
@@ -392,7 +461,7 @@ pub(crate) fn inspect_optional_proof_boc(raw: &[u8]) -> Result<Option<InspectedP
     }
 }
 
-pub(crate) fn decode_optional_config(raw: &[u8]) -> Result<Option<DecodedConfigParamsBoc>> {
+pub(crate) fn decode_optional_config(raw: &[u8]) -> LiteBocResult<Option<DecodedConfigParamsBoc>> {
     if raw.is_empty() {
         Ok(None)
     } else {
@@ -400,20 +469,24 @@ pub(crate) fn decode_optional_config(raw: &[u8]) -> Result<Option<DecodedConfigP
     }
 }
 
-pub(crate) fn decode_transaction_list(raw: &[u8]) -> Result<Vec<Transaction>> {
+pub(crate) fn decode_transaction_list(raw: &[u8]) -> LiteBocResult<Vec<Transaction>> {
     if raw.is_empty() {
         Ok(Vec::new())
     } else {
-        deserialize_boc_roots(raw)?
+        deserialize_boc_roots(raw)
+            .map_err(|source| LiteBocError::tvm("decode Transaction BoC roots", source))?
             .into_iter()
-            .map(|root| Transaction::from_cell(root).context("failed to decode Transaction TL-B"))
+            .map(|root| {
+                Transaction::from_cell(root)
+                    .map_err(|source| LiteBocError::tlb("decode Transaction TL-B", source))
+            })
             .collect()
     }
 }
 
 impl DecodedAccountState {
     /// Builds a decoded account-state view from the raw LiteAPI response.
-    pub fn from_raw(raw: AccountState) -> Result<Self> {
+    pub fn from_raw(raw: AccountState) -> LiteBocResult<Self> {
         let shard_proof = inspect_optional_proof_boc(&raw.shard_proof)?;
         let proof = inspect_optional_proof_boc(&raw.proof)?;
         let account = if raw.state.is_empty() {
@@ -421,7 +494,7 @@ impl DecodedAccountState {
         } else {
             Some(
                 decode_account_state_boc(&raw.state)
-                    .context("failed to decode liteServer.accountState.state")?
+                    .map_err(|source| source.with_context("decode liteServer.accountState.state"))?
                     .account,
             )
         };
@@ -437,7 +510,7 @@ impl DecodedAccountState {
     /// Builds a decoded account-state view and extracts a proof-anchored
     /// `ShardAccount` when the account proof contains a checked shard-account
     /// root for `account`.
-    pub fn from_raw_verified(raw: AccountState, account: &Address) -> Result<Self> {
+    pub fn from_raw_verified(raw: AccountState, account: &Address) -> LiteBocResult<Self> {
         let mut decoded = Self::from_raw(raw)?;
         if !decoded.raw.proof.is_empty() && !decoded.raw.state.is_empty() {
             decoded.shard_account = Some(
@@ -480,7 +553,7 @@ fn validate_shard_account(
     shard_account: &ShardAccount,
     state_raw: &[u8],
     expected_account: &Address,
-) -> Result<()> {
+) -> LiteBocResult<()> {
     match &shard_account.account {
         Account::None => {}
         Account::Full { addr, .. } => validate_account_address(addr, expected_account)?,
@@ -488,21 +561,23 @@ fn validate_shard_account(
 
     if !state_raw.is_empty() {
         let state = decode_account_state_boc(state_raw)
-            .context("failed to decode liteServer.accountState.state for proof validation")?
+            .map_err(|source| {
+                source.with_context("decode liteServer.accountState.state for proof validation")
+            })?
             .account;
         if state != shard_account.account {
-            bail!("account state/proof mismatch");
+            return Err(LiteBocError::AccountStateMismatch);
         }
     }
 
     Ok(())
 }
 
-fn validate_account_address(actual: &MsgAddressInt, expected: &Address) -> Result<()> {
+fn validate_account_address(actual: &MsgAddressInt, expected: &Address) -> LiteBocResult<()> {
     match actual {
         MsgAddressInt::Std { address, .. } if address == expected => Ok(()),
-        MsgAddressInt::Std { .. } => bail!("wrong account hash in shard account"),
-        MsgAddressInt::Var { .. } => bail!("shard account uses non-standard account address"),
+        MsgAddressInt::Std { .. } => Err(LiteBocError::AccountMismatch),
+        MsgAddressInt::Var { .. } => Err(LiteBocError::NonStandardAccountAddress),
     }
 }
 
@@ -510,23 +585,25 @@ fn simple_account_state(account: &Account) -> SimpleAccountState {
     match account {
         Account::None => SimpleAccountState::None,
         Account::Full { storage, .. } => match &storage.state {
-            AccountState::Uninit => SimpleAccountState::Uninit,
-            AccountState::Frozen { .. } => SimpleAccountState::Frozen,
-            AccountState::Active { .. } => SimpleAccountState::Active,
+            TlbAccountState::Uninit => SimpleAccountState::Uninit,
+            TlbAccountState::Frozen { .. } => SimpleAccountState::Frozen,
+            TlbAccountState::Active { .. } => SimpleAccountState::Active,
         },
     }
 }
 
 /// Decodes an exotic Merkle proof cell. This does not verify trust roots.
-pub fn decode_merkle_proof_boc(raw: impl AsRef<[u8]>) -> Result<MerkleProof> {
+pub fn decode_merkle_proof_boc(raw: impl AsRef<[u8]>) -> LiteBocResult<MerkleProof> {
     let boc = DecodedBoc::decode(raw)?;
-    MerkleProof::from_exotic_cell(boc.root).context("failed to decode MERKLE_PROOF exotic cell")
+    MerkleProof::from_exotic_cell(boc.root)
+        .map_err(|source| LiteBocError::tlb("decode MERKLE_PROOF exotic cell", source))
 }
 
 /// Decodes an exotic Merkle update cell. This does not verify trust roots.
-pub fn decode_merkle_update_boc(raw: impl AsRef<[u8]>) -> Result<MerkleUpdate> {
+pub fn decode_merkle_update_boc(raw: impl AsRef<[u8]>) -> LiteBocResult<MerkleUpdate> {
     let boc = DecodedBoc::decode(raw)?;
-    MerkleUpdate::from_exotic_cell(boc.root).context("failed to decode MERKLE_UPDATE exotic cell")
+    MerkleUpdate::from_exotic_cell(boc.root)
+        .map_err(|source| LiteBocError::tlb("decode MERKLE_UPDATE exotic cell", source))
 }
 
 #[cfg(test)]
@@ -535,9 +612,10 @@ mod tests {
         DecodedAccountState, DecodedBoc, SimpleAccountState, decode_account_state_boc,
         extract_verified_shard_account, extract_verified_shard_account_with_root_hash,
     };
-    use crate::tl::BlockIdExt;
-    use crate::tl::common::Int256;
-    use crate::tl::response::AccountState;
+    use crate::liteclient::tl::{
+        LiteBlockIdExt as BlockIdExt, LiteServerAccountState as AccountState,
+    };
+    use crate::tl::TlInt256 as Int256;
     use crate::tlb::{
         Account, AccountState as TlbAccountState, AccountStatus, AccountStorage,
         CurrencyCollection, Grams, MsgAddressInt, ShardAccount, StateInit, StorageExtraInfo,
@@ -705,8 +783,12 @@ mod tests {
             workchain: -1,
             shard: i64::MIN,
             seqno,
-            root_hash: Int256([seqno as u8; 32]),
-            file_hash: Int256([(seqno + 1) as u8; 32]),
+            root_hash: Int256(
+                [u8::try_from(seqno.rem_euclid(256)).expect("masked seqno fits in u8"); 32],
+            ),
+            file_hash: Int256(
+                [u8::try_from((seqno + 1).rem_euclid(256)).expect("masked seqno fits in u8"); 32],
+            ),
         }
     }
 

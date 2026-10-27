@@ -115,6 +115,10 @@ impl PeerManager {
         self.shutdown.subscribe()
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn add_session(&self, session: Box<dyn OverlaySession>) {
         let peer = session.peer_id();
         if self.sessions.read().await.contains_key(&peer) {
@@ -272,6 +276,10 @@ impl PeerManager {
         self.sessions.read().await.keys().copied().collect()
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn add_session_with_reconnect(
         &self,
         session: Box<dyn OverlaySession>,

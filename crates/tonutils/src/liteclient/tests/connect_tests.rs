@@ -34,7 +34,7 @@ async fn connect_accepts_loopback_adnl_handshake() {
         AdnlPeer::handle_handshake(stream, move |_| Some(server_keypair)).await
     });
 
-    LiteClient::connect(address, server_public).await.unwrap();
+    let _client = LiteClient::connect(address, server_public).await.unwrap();
 
     assert!(server.await.unwrap().is_ok());
 }
@@ -48,9 +48,8 @@ async fn connect_rejects_invalid_public_key_without_masking_adnl_error() {
     });
 
     let invalid_public_key: &[u8] = &[];
-    let error = match LiteClient::connect(address, invalid_public_key).await {
-        Ok(_) => panic!("connect should reject an invalid public key"),
-        Err(error) => error,
+    let Err(error) = LiteClient::connect(address, invalid_public_key).await else {
+        panic!("connect should reject an invalid public key");
     };
 
     assert!(
@@ -74,9 +73,8 @@ async fn connect_reports_end_of_stream_before_handshake_acknowledgement() {
         stream.shutdown().await.unwrap();
     });
 
-    let error = match LiteClient::connect(address, server_public).await {
-        Ok(_) => panic!("connect should reject a closed handshake"),
-        Err(error) => error,
+    let Err(error) = LiteClient::connect(address, server_public).await else {
+        panic!("connect should reject a closed handshake");
     };
 
     assert!(matches!(
@@ -96,9 +94,8 @@ async fn connect_with_timeout_reports_handshake_timeout() {
 
     let server_public = server_keypair().public_key.to_bytes();
     let timeout = Duration::from_millis(10);
-    let error = match LiteClient::connect_with_timeout(address, server_public, timeout).await {
-        Ok(_) => panic!("connect should time out while waiting for handshake"),
-        Err(error) => error,
+    let Err(error) = LiteClient::connect_with_timeout(address, server_public, timeout).await else {
+        panic!("connect should time out while waiting for handshake");
     };
 
     assert!(matches!(
@@ -118,9 +115,8 @@ async fn connect_reports_refused_loopback_connection_as_adnl_io_error() {
     drop(listener);
 
     let server_public = server_keypair().public_key.to_bytes();
-    let error = match LiteClient::connect(address, server_public).await {
-        Ok(_) => panic!("connect should fail for a refused connection"),
-        Err(error) => error,
+    let Err(error) = LiteClient::connect(address, server_public).await else {
+        panic!("connect should fail for a refused connection");
     };
 
     assert!(matches!(

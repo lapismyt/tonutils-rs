@@ -1,4 +1,8 @@
-use super::*;
+use std::collections::BTreeMap;
+
+use super::{
+    BitKey, Builder, HashmapAug, HashmapAugFork, HashmapAugNode, HashmapE, Result, Slice, bail,
+};
 
 pub(super) fn parse_edge<V, F>(
     slice: &mut Slice,
@@ -353,7 +357,14 @@ pub(super) fn load_label(slice: &mut Slice, max_len: usize) -> Result<Vec<bool>>
 
     let second = slice.load_bit()?;
     let width = label_len_width(max_len);
-    if !second {
+    if second {
+        let value = slice.load_bit()?;
+        let len = load_label_len(slice, width)?;
+        if len > max_len {
+            bail!("Same Hashmap label length exceeds remaining key bits");
+        }
+        Ok(vec![value; len])
+    } else {
         let len = load_label_len(slice, width)?;
         if len > max_len {
             bail!("Long Hashmap label length exceeds remaining key bits");
@@ -363,13 +374,6 @@ pub(super) fn load_label(slice: &mut Slice, max_len: usize) -> Result<Vec<bool>>
             bits.push(slice.load_bit()?);
         }
         Ok(bits)
-    } else {
-        let value = slice.load_bit()?;
-        let len = load_label_len(slice, width)?;
-        if len > max_len {
-            bail!("Same Hashmap label length exceeds remaining key bits");
-        }
-        Ok(vec![value; len])
     }
 }
 

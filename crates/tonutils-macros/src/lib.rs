@@ -1,12 +1,13 @@
-//! Procedural derives for the `tonutils-tlb` TL-B runtime traits.
+//! Procedural derives for the `tonutils` TL-B runtime traits.
 //!
-//! Most users should depend on [`tonutils_tlb`](https://docs.rs/tonutils-tlb)
-//! and use its re-exported derive workflow. This crate is the implementation
-//! package for the `Tlb` derive and is normally pulled in transitively.
+//! Most users should depend on [`tonutils`](https://docs.rs/tonutils) with the
+//! `tlb` feature and use its re-exported derive workflow. This crate is the
+//! implementation package for the `Tlb` derive and is normally pulled in
+//! transitively.
 //!
 //! The crate is a compile-time helper with no runtime or network behavior.
-//! Depend on [`tonutils_tlb`](https://docs.rs/tonutils-tlb) for the public
-//! TL-B traits and feature-gated derive workflow.
+//! Depend on [`tonutils`](https://docs.rs/tonutils) for the public TL-B traits
+//! and feature-gated derive workflow.
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
@@ -63,7 +64,7 @@ fn expand_struct(
 
     Ok(quote! {
         impl ::tonutils::tlb::TlbSerialize for #name {
-            fn store_tlb(&self, builder: &mut ::tonutils::tvm::Builder) -> ::tonutils::tlb::Result<()> {
+            fn store_tlb(&self, builder: &mut ::tonutils::tvm::Builder) -> ::tonutils::tlb::TlbResult<()> {
                 #store_tag
                 #(#store_fields)*
                 Ok(())
@@ -71,7 +72,7 @@ fn expand_struct(
         }
 
         impl ::tonutils::tlb::TlbDeserialize for #name {
-            fn load_tlb(slice: &mut ::tonutils::tvm::Slice) -> ::tonutils::tlb::Result<Self> {
+            fn load_tlb(slice: &mut ::tonutils::tvm::Slice) -> ::tonutils::tlb::TlbResult<Self> {
                 #load_tag
                 #(#load_fields)*
                 Ok(#construct)
@@ -135,7 +136,7 @@ fn expand_enum(name: &Ident, variants: &[syn::Variant]) -> Result<proc_macro2::T
 
     Ok(quote! {
         impl ::tonutils::tlb::TlbSerialize for #name {
-            fn store_tlb(&self, builder: &mut ::tonutils::tvm::Builder) -> ::tonutils::tlb::Result<()> {
+            fn store_tlb(&self, builder: &mut ::tonutils::tvm::Builder) -> ::tonutils::tlb::TlbResult<()> {
                 match self {
                     #(#store_arms),*
                 }
@@ -144,7 +145,7 @@ fn expand_enum(name: &Ident, variants: &[syn::Variant]) -> Result<proc_macro2::T
         }
 
         impl ::tonutils::tlb::TlbDeserialize for #name {
-            fn load_tlb(slice: &mut ::tonutils::tvm::Slice) -> ::tonutils::tlb::Result<Self> {
+            fn load_tlb(slice: &mut ::tonutils::tvm::Slice) -> ::tonutils::tlb::TlbResult<Self> {
                 let mut actual = String::new();
                 while actual.len() < #max_tag_len {
                     let bit = slice.load_bit()?;

@@ -1,10 +1,14 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 //! Building blocks for TON overlay networks.
 //!
-//! This crate deliberately separates protocol-neutral peer management from
-//! discovery and wire schemas. It provides bounded fan-out, peer scoring, and
-//! routing metadata that can be driven by an ADNL session implementation.
-//! DHT and overlay packet schemas are not guessed here; they are tracked in
-//! `docs/reference/network/overlay.md` until upstream fixtures are available.
+//! The module owns the complete overlay stack: ADNL/UDP and QUIC sessions,
+//! discovery, peer management and persistence, inbound query answering,
+//! signed simple/FEC broadcasting, and protocol statistics. Applications that
+//! only need pending external messages build an [`OverlayClient`] here and
+//! hand it to [`crate::mempool::MempoolServer`].
 
 use std::{
     collections::{HashMap, HashSet},
@@ -17,21 +21,76 @@ use std::{
 };
 
 use crate::{
-    overlay::manager::{CancelRegistration, SharedSession},
-    tl::{
-        Int256,
-        network::{Address, DhtNode, TlPublicKey, TonNodeShardPublicOverlayId},
+    adnl::tl::{AdnlNetAddress as Address, AdnlTlPublicKey as TlPublicKey, DhtNode},
+    overlay::{
+        manager::{CancelRegistration, SharedSession},
+        tl::TonNodeShardPublicOverlayId,
     },
+    tl::common::TlInt256 as Int256,
 };
 
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use futures::future::BoxFuture;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use tokio::sync::{RwLock, broadcast, mpsc, watch};
+use tokio::sync::{RwLock, broadcast as tokio_broadcast, mpsc, watch};
+
+mod bootstrap;
+mod broadcast;
+mod client;
+mod discovery_task;
+mod endpoints;
+mod inbound;
+mod node_builder;
+mod packet_dedup;
+mod peer_growth;
+mod peer_quality;
+mod peer_store;
+mod protocol_stats;
+mod quic_session;
+mod server;
+mod udp_session;
+
+pub use broadcast::{
+    FEC_SYMBOL_SIZE, FecBroadcastPart, OverlayBroadcastPeer, SIMPLE_BROADCAST_MAX, SignedBroadcast,
+    fec_broadcast_parts, fec_wire_symbol_id_to_internal, signed_broadcast, signed_simple_broadcast,
+};
+pub use client::OverlayClient;
+pub use endpoints::{
+    MemberEndpoint, OverlayMemberEndpoints, QuicEndpointSource, known_member_seeds,
+    member_quic_target, record_member, record_member_quic, registered_member_count,
+};
+pub use inbound::OverlayMemberCache;
+pub use node_builder::OverlayNodeBuilder;
+pub use packet_dedup::PacketPreDedup;
+pub use peer_quality::{PeerQualityConfig, PeerQualityRegistry, PeerQualitySnapshot};
+pub use peer_store::{
+    DEFAULT_PEER_STORE_SAVE_INTERVAL, MAX_STORED_PEERS, PEER_STORE_VERSION, PeerStore,
+    PeerStoreFile, StoredPeer,
+};
+pub use protocol_stats::{ProtocolStats, protocol_stats};
+pub use quic_session::{
+    QuicOverlaySession, quic_overlay_factory, quic_overlay_factory_with_endpoints,
+    quic_overlay_lookup, quic_overlay_lookup_with_endpoints,
+};
+pub use server::OverlayServer;
+pub use udp_session::{
+    AdnlUdpOverlaySession, DhtAddressPublisher, PUBLISH_FIRST_ROUND_STAGGER_MAX, PUBLISH_INTERVAL,
+    address_publisher, channel_factory, direct_factory, overlay_factory,
+    overlay_factory_with_endpoints, udp_dht_lookup, udp_iterative_dht_lookup, udp_overlay_lookup,
+    udp_overlay_lookup_with_endpoints, udp_peer_growth, udp_peer_growth_with_resolvers,
+};
+
+/// One session factory used by bootstrap, growth, and reconnect paths.
+pub type OverlaySessionFactory = Arc<
+    dyn Fn(SeedPeer) -> BoxFuture<'static, Result<Box<dyn OverlaySession>, String>> + Send + Sync,
+>;
 
 /// A 256-bit overlay identifier.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct OverlayId([u8; 32]);
+
+pub mod tl;
 
 impl OverlayId {
     /// Derives an overlay ID from its canonical name.
@@ -262,7 +321,6 @@ impl DiscoveryRecord {
     }
 
     pub fn verify(&self) -> bool {
-        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
         let Ok(key) = VerifyingKey::from_bytes(&self.node_key) else {
             return false;
         };
@@ -448,6 +506,8 @@ pub struct OverlayConfig {
     pub queue_capacity: usize,
     pub max_packet_size: usize,
     pub peer_idle_timeout: Duration,
+    /// Interval between periodic peer-growth rounds after bootstrap.
+    pub growth_interval: Duration,
 }
 
 impl Default for OverlayConfig {
@@ -456,6 +516,7 @@ impl Default for OverlayConfig {
             queue_capacity: 1024,
             max_packet_size: 1 << 20,
             peer_idle_timeout: Duration::from_secs(60),
+            growth_interval: Duration::from_secs(10),
         }
     }
 }
@@ -470,6 +531,37 @@ pub enum OverlayError {
     UnknownPeer,
     #[error("overlay receive queue is closed")]
     QueueClosed,
+    #[error("overlay has no validated bootstrap peers")]
+    NoBootstrapPeers,
+    #[error("invalid bootstrap peer address: {0}")]
+    InvalidBootstrapAddress(String),
+    #[error("global configuration download failed: {0}")]
+    ConfigDownload(String),
+    #[error("overlay discovery failed: {0}")]
+    Discovery(String),
+    #[error("overlay session connection failed: {0}")]
+    Session(String),
+    #[error("overlay peer-store operation failed: {0}")]
+    PeerStore(String),
+    #[error("overlay configuration is invalid: {0}")]
+    Configuration(String),
+    #[error("overlay broadcast requires a local ADNL key")]
+    MissingLocalKey,
+    #[error("overlay broadcast failed: {0}")]
+    Broadcast(String),
+}
+
+/// Outcome of the bootstrap discovery performed by [`OverlayNodeBuilder`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct DiscoveryStats {
+    /// Seed records resolved from configuration and bootstrap sources.
+    pub seeds: u64,
+    /// Overlay peers returned by the configured discovery lookup on top of
+    /// the seeds. Zero means the lookup timed out, was empty, or was not
+    /// configured, and the raw seeds were used as-is.
+    pub discovered: u64,
+    /// Total peer records handed to the session bootstrap.
+    pub peers: u64,
 }
 
 /// Bounded wait on [`OverlayPeerPool::ingest`] from a session receive
@@ -489,7 +581,7 @@ pub struct OverlayPeerPool {
     config: OverlayConfig,
     packets: mpsc::Sender<OverlayPacket>,
     packet_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<OverlayPacket>>>,
-    statuses: broadcast::Sender<PeerStatus>,
+    statuses: tokio_broadcast::Sender<PeerStatus>,
     peers: Arc<RwLock<HashSet<PeerId>>>,
     /// Packets dropped by session receive loops after the bounded
     /// [`INGEST_WAIT_TIMEOUT`] elapsed with the queue still full.
@@ -520,7 +612,7 @@ impl OverlayPeerPool {
             return Err(OverlayError::InvalidCapacity);
         }
         let (packets, packet_rx) = mpsc::channel(config.queue_capacity);
-        let (statuses, _) = broadcast::channel(config.queue_capacity);
+        let (statuses, _) = tokio_broadcast::channel(config.queue_capacity);
         Ok(Self {
             config,
             packets,
@@ -559,7 +651,7 @@ impl OverlayPeerPool {
     }
 
     /// Counts one packet a session loop had to drop because the queue
-    /// stayed full past [`INGEST_WAIT_TIMEOUT`], returning the new
+    /// stayed full past `INGEST_WAIT_TIMEOUT`, returning the new
     /// total.
     ///
     /// Called only from the session receive loops under that bounded
@@ -579,12 +671,23 @@ impl OverlayPeerPool {
         self.ingest_drops.load(Ordering::Relaxed)
     }
 
-    pub fn subscribe_statuses(&self) -> broadcast::Receiver<PeerStatus> {
+    pub fn subscribe_statuses(&self) -> tokio_broadcast::Receiver<PeerStatus> {
         self.statuses.subscribe()
     }
 
     pub fn packet_sender(&self) -> mpsc::Sender<OverlayPacket> {
         self.packets.clone()
+    }
+
+    /// Whether the packet queue has at least `ratio` of its capacity free.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "Queue capacities are bounded runtime settings compared against a caller-supplied fraction"
+    )]
+    pub fn is_idle(&self, ratio: f64) -> bool {
+        let free = self.packets.capacity() as f64;
+        let total = self.packets.max_capacity() as f64;
+        total <= 0.0 || free / total >= ratio
     }
 
     pub(crate) fn report_status(&self, status: PeerStatus) -> Result<(), OverlayError> {

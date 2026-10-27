@@ -1,6 +1,13 @@
-use super::*;
+use super::{
+    AccStatusChange, Account, AccountBlock, AccountState, AccountStatus, AccountStorage, BigUint,
+    Builder, ComputeSkipReason, CurrencyCollection, DepthBalanceInfo, Grams, HashUpdateAccount,
+    HashmapE, Message, MsgAddressInt, OUT_MSG_KEY_BITS, ShardAccount, ShardAccountBlocks,
+    ShardAccounts, Slice, SplitMergeInfo, StateInit, StorageExtraInfo, StorageInfo, StorageUsed,
+    TlbDeserialize, TlbError, TrActionPhase, TrComputePhase, TrCreditPhase, TrStoragePhase,
+    Transaction, TransactionDescr, load_maybe, store_ref_tlb, tlb_to_tvm_error,
+};
 
-use crate::{CommonMsgInfo, Either, TlbSerialize, store_tag};
+use crate::tlb::{CommonMsgInfo, Either, MsgAddressExt, TlbSerialize, store_tag};
 use std::sync::Arc;
 use tonutils::tvm::{Address, BitKey, Cell, HashmapAug, HashmapAugE, HashmapAugLeaf};
 
@@ -91,7 +98,7 @@ pub(super) fn account_address() -> MsgAddressInt {
 pub(super) fn message() -> Message {
     Message {
         info: CommonMsgInfo::ExternalIn {
-            src: crate::MsgAddressExt::None,
+            src: MsgAddressExt::None,
             dest: account_address(),
             import_fee: Grams::from(1),
         },
@@ -412,7 +419,7 @@ pub(super) fn account_block_reports_malformed_references() {
                 builder.store_ref(cell.clone())?;
                 Ok(())
             },
-            |builder, extra| extra.store_tlb(builder).map_err(anyhow::Error::from),
+            |builder, extra| extra.store_tlb(builder).map_err(tlb_to_tvm_error),
         )
         .unwrap();
     store_ref_tlb(&mut builder, &hash_update()).unwrap();
@@ -431,8 +438,8 @@ pub(super) fn account_block_reports_malformed_references() {
     builder
         .store_hashmap_aug_with(
             &account_block_with_lts(&[7]).transactions,
-            |builder, transaction| store_ref_tlb(builder, transaction).map_err(anyhow::Error::from),
-            |builder, extra| extra.store_tlb(builder).map_err(anyhow::Error::from),
+            |builder, transaction| store_ref_tlb(builder, transaction).map_err(tlb_to_tvm_error),
+            |builder, extra| extra.store_tlb(builder).map_err(tlb_to_tvm_error),
         )
         .unwrap();
     builder.store_ref(cell_with_bits(&[0x71], 8)).unwrap();

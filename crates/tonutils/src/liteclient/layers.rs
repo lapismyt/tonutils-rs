@@ -1,13 +1,12 @@
 use std::task::{Context, Poll};
 
 use crate::{
-    liteclient::types::{LiteError, LiteService},
-    tl::{
-        AdnlMessage, TlError,
-        common::Int256,
-        request::{LiteQuery, RawWrappedRequest, WrappedRequest},
-        response::{Error, Response},
+    adnl::tl::AdnlMessage,
+    liteclient::{
+        tl::{LiteQuery, LiteServerError as Error, RawWrappedRequest, Response, WrappedRequest},
+        types::{LiteError, LiteService},
     },
+    tl::{TlError, TlInt256 as Int256},
 };
 
 use futures::future::{self, BoxFuture};
@@ -244,7 +243,7 @@ where
 // Implement From<Error> for LiteError
 impl From<TlError> for LiteError {
     fn from(error: TlError) -> Self {
-        LiteError::ServerError(error)
+        LiteError::TlError(error)
     }
 }
 
@@ -262,9 +261,9 @@ impl<S> Layer<S> for UnwrapErrorLayer {
 mod tests {
     use tower::{Layer, Service, service_fn};
 
-    use crate::tl::LiteQueryRaw;
+    use crate::liteclient::tl::LiteQueryRaw;
 
-    use super::*;
+    use super::{AdnlMessage, LiteError, RawWrappedRequest, WrapRawMessagesLayer};
 
     #[tokio::test]
     async fn test_wrap_raw_messages_layer_preserves_unknown_request_and_response_bytes() {

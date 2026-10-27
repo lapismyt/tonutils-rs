@@ -1,5 +1,9 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 //! Live mainnet wire fixtures: bytes captured from official TON nodes
-//! through the opt-in ADNL capture facility (`tonutils_adnl`'s
+//! through the opt-in ADNL capture facility (`tonutils::adnl`'s
 //! `adnl::udp::capture`, armed by `ADNL_UDP_CAPTURE_FILE`).
 //!
 //! Unlike the cross-SDK fixtures these are not reproducible reference
@@ -13,9 +17,11 @@
 
 use serde_json::Value;
 
-use crate::tl::network::{
-    OverlayBroadcast, OverlayBroadcastFec, OverlayMessage, PacketContents,
-    TonNodeExternalMessageBroadcast,
+use crate::{
+    adnl::tl::PacketContents,
+    overlay::tl::{
+        OverlayBroadcast, OverlayBroadcastFec, OverlayMessage, TonNodeExternalMessageBroadcast,
+    },
 };
 
 /// Live wire fixtures bundled with the crate; the cross-SDK manifest
@@ -23,15 +29,15 @@ use crate::tl::network::{
 pub(super) const LIVE_WIRE_FIXTURE_FILES: [(&str, &str); 3] = [
     (
         "live_adnl_udp_datagrams.json",
-        include_str!("../../../../../fixtures/cross_sdk/live_adnl_udp_datagrams.json"),
+        include_str!("../../../../fixtures/cross_sdk/live_adnl_udp_datagrams.json"),
     ),
     (
         "live_packet_contents.json",
-        include_str!("../../../../../fixtures/cross_sdk/live_packet_contents.json"),
+        include_str!("../../../../fixtures/cross_sdk/live_packet_contents.json"),
     ),
     (
         "live_overlay_broadcasts.json",
-        include_str!("../../../../../fixtures/cross_sdk/live_overlay_broadcasts.json"),
+        include_str!("../../../../fixtures/cross_sdk/live_overlay_broadcasts.json"),
     ),
 ];
 

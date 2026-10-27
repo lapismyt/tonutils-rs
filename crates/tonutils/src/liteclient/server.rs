@@ -1,9 +1,8 @@
 use std::{future::poll_fn, io::ErrorKind, net::SocketAddr, time::Duration};
 
 use crate::{
-    adnl::{AdnlPeer, crypto::AdnlKeyPair},
+    adnl::{AdnlPeer, crypto::AdnlKeyPair, tl::AdnlMessage},
     liteclient::peer::LitePeer,
-    tl::AdnlMessage,
 };
 
 use tokio::net::{TcpListener, ToSocketAddrs};
@@ -52,13 +51,13 @@ where
         };
         log::debug!("[{addr:?}] Accepted socket");
         if let Err(e) = poll_fn(|cx| service_maker.poll_ready(cx)).await {
-            log::error!("[{addr:?}] Polling failed: {:?}", e);
+            log::error!("[{addr:?}] Polling failed: {e:?}");
             continue;
-        };
+        }
         let service = match service_maker.make_service(addr).await {
             Ok(x) => x,
             Err(e) => {
-                log::error!("[{addr:?}] Making service failed: {:?}", e);
+                log::error!("[{addr:?}] Making service failed: {e:?}");
                 continue;
             }
         };
@@ -66,14 +65,14 @@ where
             let adnl = match AdnlPeer::handle_handshake(socket, |_| Some(private_key)).await {
                 Ok(x) => x,
                 Err(e) => {
-                    log::error!("[{addr:?}] Handshake failed: {:?}", e);
+                    log::error!("[{addr:?}] Handshake failed: {e:?}");
                     return;
                 }
             };
             log::debug!("[{addr:?}] Handshake performed");
             let lite = LitePeer::new(adnl);
             if let Err(e) = Server::new(lite, service).await {
-                log::error!("[{addr:?}] Server failed: {:?}", e);
+                log::error!("[{addr:?}] Server failed: {e:?}");
             }
         });
     }

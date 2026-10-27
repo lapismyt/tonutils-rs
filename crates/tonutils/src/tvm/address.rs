@@ -1,11 +1,19 @@
+#![expect(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 //! TON Address implementation
 //!
 //! Supports both internal addresses (workchain + hash) and external addresses.
 
-use anyhow::{Result, bail};
+#[cfg(feature = "liteclient")]
+use crate::liteclient::tl::LiteAccountId as AccountId;
+use crate::tvm::{TvmError, TvmResult as Result, error::address_bail as bail};
 use base64::Engine;
 use std::fmt;
-use tonutils::tl::{Int256, common::AccountId};
+#[cfg(feature = "liteclient")]
+use tonutils::tl::TlInt256 as Int256;
 
 const BOUNCEABLE_TAG: u8 = 0x11;
 const NON_BOUNCEABLE_TAG: u8 = 0x51;
@@ -17,7 +25,7 @@ const RAW_HASH_HEX_LEN: usize = 64;
 fn crc16(data: &[u8]) -> [u8; 2] {
     let mut crc: u16 = 0;
     for &byte in data {
-        crc ^= (byte as u16) << 8;
+        crc ^= u16::from(byte) << 8;
         for _ in 0..8 {
             if crc & 0x8000 != 0 {
                 crc = (crc << 1) ^ 0x1021;
@@ -54,7 +62,7 @@ impl Address {
     }
 
     /// Parses an address from string (supports both hex and base64 formats)
-    pub fn from_str(address: &str) -> Result<Self> {
+    pub fn parse(address: &str) -> Result<Self> {
         // Try hex format first (faster)
         if let Ok(addr) = Self::from_hex(address) {
             return Ok(addr);
@@ -70,9 +78,9 @@ impl Address {
 
     /// Parses address from raw format: "workchain:hash".
     pub fn from_hex(address: &str) -> Result<Self> {
-        let (workchain, hash_hex) = address
-            .split_once(':')
-            .ok_or_else(|| anyhow::anyhow!("Invalid raw address format: missing separator"))?;
+        let (workchain, hash_hex) = address.split_once(':').ok_or_else(|| {
+            TvmError::Address("Invalid raw address format: missing separator".to_owned())
+        })?;
 
         if hash_hex.contains(':') {
             bail!("Invalid raw address format: too many separators");
@@ -80,7 +88,7 @@ impl Address {
 
         let workchain = workchain
             .parse::<i8>()
-            .map_err(|_| anyhow::anyhow!("Invalid address workchain"))?;
+            .map_err(|_| TvmError::Address("Invalid address workchain".to_owned()))?;
         validate_workchain(workchain)?;
 
         if hash_hex.len() != RAW_HASH_HEX_LEN {
@@ -90,8 +98,8 @@ impl Address {
             );
         }
 
-        let hash_bytes =
-            hex::decode(hash_hex).map_err(|_| anyhow::anyhow!("Invalid address hash hex"))?;
+        let hash_bytes = hex::decode(hash_hex)
+            .map_err(|_| TvmError::Address("Invalid address hash hex".to_owned()))?;
         let mut hash_part = [0u8; 32];
         hash_part.copy_from_slice(&hash_bytes);
 
@@ -146,6 +154,10 @@ impl Address {
     }
 
     /// Converts address to string representation
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub fn to_string(
         &self,
         user_friendly: bool,
@@ -237,9 +249,10 @@ impl Address {
     }
 
     /// Converts to TL AccountId
+    #[cfg(feature = "liteclient")]
     pub fn to_account_id(&self) -> AccountId {
         AccountId {
-            workchain: self.workchain as i32,
+            workchain: i32::from(self.workchain),
             id: Int256(self.hash_part),
         }
     }
@@ -276,10 +289,10 @@ impl fmt::Display for Address {
 }
 
 impl std::str::FromStr for Address {
-    type Err = anyhow::Error;
+    type Err = TvmError;
 
     fn from_str(s: &str) -> Result<Self> {
-        Address::from_str(s)
+        Address::parse(s)
     }
 }
 
@@ -309,7 +322,7 @@ impl ExternalAddress {
 
         let mut value = 0u64;
         for (i, &byte) in bytes.iter().take(8).enumerate() {
-            value |= (byte as u64) << ((bytes.len() - 1 - i) * 8);
+            value |= u64::from(byte) << ((bytes.len() - 1 - i) * 8);
         }
 
         Self::new(Some(value), Some(bytes.len() * 8))
@@ -325,7 +338,7 @@ impl ExternalAddress {
 impl fmt::Display for ExternalAddress {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.value {
-            Some(v) if self.bit_len > 0 => write!(f, "ExternalAddress<{:#x}>", v),
+            Some(v) if self.bit_len > 0 => write!(f, "ExternalAddress<{v:#x}>"),
             _ => write!(f, "ExternalAddress<null>"),
         }
     }
@@ -333,7 +346,7 @@ impl fmt::Display for ExternalAddress {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Address, Engine, ExternalAddress, crc16};
 
     struct AddressFixture {
         name: &'static str,
@@ -590,15 +603,15 @@ mod tests {
 
         // Print in raw format
         let raw = zero_addr.to_hex();
-        println!("Raw format: {}", raw);
+        println!("Raw format: {raw}");
 
         // Print in base64 bounceable format
         let base64_bounceable = zero_addr.to_string(true, true, true, false);
-        println!("Base64 bounceable: {}", base64_bounceable);
+        println!("Base64 bounceable: {base64_bounceable}");
 
         // Print in base64 non-bounceable format
         let base64_non_bounceable = zero_addr.to_string(true, true, false, false);
-        println!("Base64 non-bounceable: {}", base64_non_bounceable);
+        println!("Base64 non-bounceable: {base64_non_bounceable}");
 
         // Verify the formats
         assert_eq!(

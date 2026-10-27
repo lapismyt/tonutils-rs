@@ -1,7 +1,21 @@
-use super::*;
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
+use super::{
+    ComputeSkipReason, TrComputePhase, TrCreditPhase, TrStoragePhase, Transaction,
+    VAR_UINT_3_LEN_BITS, VAR_UINT_3_MAX_BYTES, VAR_UINT_7_LEN_BITS, VAR_UINT_7_MAX_BYTES,
+};
+use crate::tlb::{
+    Grams, Message, StorageUsed, TlbDeserialize, TlbError, TlbResult, TlbSerialize, TrActionPhase,
+    ensure_empty, load_maybe, load_ref_tlb, load_var_uint, store_maybe, store_ref_tlb, store_tag,
+    store_var_uint,
+};
+use num_bigint::BigUint;
+use tonutils::tvm::{Builder, Slice};
 
 impl TlbDeserialize for TrComputePhase {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         if !load_tag_bit(slice, "TrComputePhase", "0|1", "")? {
             return Ok(Self::Skipped {
                 reason: ComputeSkipReason::load_tlb(slice)?,
@@ -57,7 +71,7 @@ pub enum TrBouncePhase {
 }
 
 impl TlbSerialize for TrBouncePhase {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::NegativeFunds => store_tag(builder, "00")?,
             Self::NoFunds {
@@ -84,7 +98,7 @@ impl TlbSerialize for TrBouncePhase {
 }
 
 impl TlbDeserialize for TrBouncePhase {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let first = load_tag_bit(slice, "TrBouncePhase", "00|01|1", "")?;
         if first {
             return Ok(Self::Ok {
@@ -120,7 +134,7 @@ pub struct SplitMergeInfo {
 }
 
 impl TlbSerialize for SplitMergeInfo {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         validate_u6("SplitMergeInfo.cur_shard_pfx_len", self.cur_shard_pfx_len)?;
         validate_u6("SplitMergeInfo.acc_split_depth", self.acc_split_depth)?;
         builder.store_uint_custom::<u8>(self.cur_shard_pfx_len, 6)?;
@@ -132,7 +146,7 @@ impl TlbSerialize for SplitMergeInfo {
 }
 
 impl TlbDeserialize for SplitMergeInfo {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let mut this_addr = [0; 32];
         let mut sibling_addr = [0; 32];
         let cur_shard_pfx_len = slice.load_uint_custom::<u8>(6)?;
@@ -245,7 +259,7 @@ pub enum TransactionDescr {
 }
 
 impl TlbSerialize for TransactionDescr {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Ordinary {
                 credit_first,
@@ -262,7 +276,7 @@ impl TlbSerialize for TransactionDescr {
                 store_maybe(builder, storage_ph)?;
                 store_maybe(builder, credit_ph)?;
                 compute_ph.store_tlb(builder)?;
-                store_maybe_ref_action_phase(builder, action)?;
+                store_maybe_ref_action_phase(builder, action.as_ref())?;
                 builder.store_bit(*aborted)?;
                 store_maybe(builder, bounce)?;
                 builder.store_bit(*destroyed)?;
@@ -283,7 +297,7 @@ impl TlbSerialize for TransactionDescr {
                 builder.store_bit(*is_tock)?;
                 storage_ph.store_tlb(builder)?;
                 compute_ph.store_tlb(builder)?;
-                store_maybe_ref_action_phase(builder, action)?;
+                store_maybe_ref_action_phase(builder, action.as_ref())?;
                 builder.store_bit(*aborted)?;
                 builder.store_bit(*destroyed)?;
             }
@@ -299,7 +313,7 @@ impl TlbSerialize for TransactionDescr {
                 split_info.store_tlb(builder)?;
                 store_maybe(builder, storage_ph)?;
                 compute_ph.store_tlb(builder)?;
-                store_maybe_ref_action_phase(builder, action)?;
+                store_maybe_ref_action_phase(builder, action.as_ref())?;
                 builder.store_bit(*aborted)?;
                 builder.store_bit(*destroyed)?;
             }
@@ -339,7 +353,7 @@ impl TlbSerialize for TransactionDescr {
                 store_maybe(builder, storage_ph)?;
                 store_maybe(builder, credit_ph)?;
                 compute_ph.store_tlb(builder)?;
-                store_maybe_ref_action_phase(builder, action)?;
+                store_maybe_ref_action_phase(builder, action.as_ref())?;
                 builder.store_bit(*aborted)?;
                 builder.store_bit(*destroyed)?;
             }
@@ -349,7 +363,7 @@ impl TlbSerialize for TransactionDescr {
 }
 
 impl TlbDeserialize for TransactionDescr {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         match load_transaction_descr_tag(slice)? {
             TransactionDescrTag::Ordinary => Ok(Self::Ordinary {
                 credit_first: slice.load_bit()?,
@@ -421,7 +435,7 @@ pub(super) fn load_compute_vm_tail(
     msg_state_used: bool,
     account_activated: bool,
     gas_fees: Grams,
-) -> Result<TrComputePhase> {
+) -> TlbResult<TrComputePhase> {
     let gas_used = load_var_uint_7(slice, "TrComputePhase.gas_used")?;
     let gas_limit = load_var_uint_7(slice, "TrComputePhase.gas_limit")?;
     let gas_credit = load_maybe_var_uint_3(slice)?;
@@ -452,8 +466,8 @@ pub(super) fn load_compute_vm_tail(
 
 pub(super) fn store_maybe_ref_action_phase(
     builder: &mut Builder,
-    action: &Option<TrActionPhase>,
-) -> Result<()> {
+    action: Option<&TrActionPhase>,
+) -> TlbResult<()> {
     match action {
         Some(action) => {
             builder.store_bit(true)?;
@@ -466,7 +480,7 @@ pub(super) fn store_maybe_ref_action_phase(
     Ok(())
 }
 
-pub(super) fn load_maybe_ref_action_phase(slice: &mut Slice) -> Result<Option<TrActionPhase>> {
+pub(super) fn load_maybe_ref_action_phase(slice: &mut Slice) -> TlbResult<Option<TrActionPhase>> {
     if slice.load_bit()? {
         Ok(Some(load_ref_tlb(slice, "TrActionPhase")?))
     } else {
@@ -474,11 +488,11 @@ pub(super) fn load_maybe_ref_action_phase(slice: &mut Slice) -> Result<Option<Tr
     }
 }
 
-pub(super) fn store_maybe_i32(builder: &mut Builder, value: Option<i32>) -> Result<()> {
+pub(super) fn store_maybe_i32(builder: &mut Builder, value: Option<i32>) -> TlbResult<()> {
     match value {
         Some(value) => {
             builder.store_bit(true)?;
-            builder.store_int(value as i64, 32)?;
+            builder.store_int(i64::from(value), 32)?;
         }
         None => {
             builder.store_bit(false)?;
@@ -487,7 +501,7 @@ pub(super) fn store_maybe_i32(builder: &mut Builder, value: Option<i32>) -> Resu
     Ok(())
 }
 
-pub(super) fn load_maybe_i32(slice: &mut Slice) -> Result<Option<i32>> {
+pub(super) fn load_maybe_i32(slice: &mut Slice) -> TlbResult<Option<i32>> {
     if slice.load_bit()? {
         Ok(Some(slice.load_int(32)? as i32))
     } else {
@@ -495,7 +509,10 @@ pub(super) fn load_maybe_i32(slice: &mut Slice) -> Result<Option<i32>> {
     }
 }
 
-pub(super) fn store_maybe_var_uint_3(builder: &mut Builder, value: &Option<BigUint>) -> Result<()> {
+pub(super) fn store_maybe_var_uint_3(
+    builder: &mut Builder,
+    value: Option<&BigUint>,
+) -> TlbResult<()> {
     match value {
         Some(value) => {
             builder.store_bit(true)?;
@@ -508,7 +525,7 @@ pub(super) fn store_maybe_var_uint_3(builder: &mut Builder, value: &Option<BigUi
     Ok(())
 }
 
-pub(super) fn load_maybe_var_uint_3(slice: &mut Slice) -> Result<Option<BigUint>> {
+pub(super) fn load_maybe_var_uint_3(slice: &mut Slice) -> TlbResult<Option<BigUint>> {
     if slice.load_bit()? {
         Ok(Some(load_var_uint_3(slice, "TrComputePhase.gas_credit")?))
     } else {
@@ -520,7 +537,7 @@ pub(super) fn store_var_uint_7(
     builder: &mut Builder,
     value: &BigUint,
     schema: &'static str,
-) -> Result<()> {
+) -> TlbResult<()> {
     let byte_len = value.to_bytes_be().len();
     if byte_len > VAR_UINT_7_MAX_BYTES {
         return Err(TlbError::NonCanonicalValue {
@@ -531,7 +548,7 @@ pub(super) fn store_var_uint_7(
     store_var_uint(builder, value, VAR_UINT_7_LEN_BITS)
 }
 
-pub(super) fn load_var_uint_7(slice: &mut Slice, schema: &'static str) -> Result<BigUint> {
+pub(super) fn load_var_uint_7(slice: &mut Slice, schema: &'static str) -> TlbResult<BigUint> {
     let value = load_var_uint(slice, VAR_UINT_7_LEN_BITS)?;
     let byte_len = value.to_bytes_be().len();
     if byte_len > VAR_UINT_7_MAX_BYTES {
@@ -547,7 +564,7 @@ pub(super) fn store_var_uint_3(
     builder: &mut Builder,
     value: &BigUint,
     schema: &'static str,
-) -> Result<()> {
+) -> TlbResult<()> {
     let byte_len = value.to_bytes_be().len();
     if byte_len > VAR_UINT_3_MAX_BYTES {
         return Err(TlbError::NonCanonicalValue {
@@ -558,7 +575,7 @@ pub(super) fn store_var_uint_3(
     store_var_uint(builder, value, VAR_UINT_3_LEN_BITS)
 }
 
-pub(super) fn load_var_uint_3(slice: &mut Slice, schema: &'static str) -> Result<BigUint> {
+pub(super) fn load_var_uint_3(slice: &mut Slice, schema: &'static str) -> TlbResult<BigUint> {
     let value = load_var_uint(slice, VAR_UINT_3_LEN_BITS)?;
     let byte_len = value.to_bytes_be().len();
     if byte_len > VAR_UINT_3_MAX_BYTES {
@@ -570,7 +587,7 @@ pub(super) fn load_var_uint_3(slice: &mut Slice, schema: &'static str) -> Result
     Ok(value)
 }
 
-pub(super) fn validate_u6(schema: &'static str, value: u8) -> Result<()> {
+pub(super) fn validate_u6(schema: &'static str, value: u8) -> TlbResult<()> {
     if value > 63 {
         Err(TlbError::CustomSchema {
             schema,
@@ -583,8 +600,8 @@ pub(super) fn validate_u6(schema: &'static str, value: u8) -> Result<()> {
 
 pub(super) fn store_maybe_ref_message(
     builder: &mut Builder,
-    message: &Option<Message>,
-) -> Result<()> {
+    message: Option<&Message>,
+) -> TlbResult<()> {
     match message {
         Some(message) => {
             builder.store_bit(true)?;
@@ -597,7 +614,7 @@ pub(super) fn store_maybe_ref_message(
     Ok(())
 }
 
-pub(super) fn load_maybe_ref_message(slice: &mut Slice) -> Result<Option<Message>> {
+pub(super) fn load_maybe_ref_message(slice: &mut Slice) -> TlbResult<Option<Message>> {
     if slice.load_bit()? {
         Ok(Some(load_ref_tlb(slice, "Message Any")?))
     } else {
@@ -609,7 +626,7 @@ pub(super) fn expect_tag_bits(
     slice: &mut Slice,
     constructor: &'static str,
     expected_bits: &'static str,
-) -> Result<()> {
+) -> TlbResult<()> {
     let mut actual_bits = String::with_capacity(expected_bits.len());
     for expected in expected_bits.bytes() {
         let bit = slice.load_bit().map_err(|_| TlbError::TagMismatch {
@@ -634,7 +651,7 @@ pub(super) fn expect_u8_tag(
     constructor: &'static str,
     expected_bits: &'static str,
     expected_tag: u8,
-) -> Result<()> {
+) -> TlbResult<()> {
     let mut actual_bits = String::with_capacity(8);
     let mut tag = 0u8;
     for _ in 0..8 {
@@ -661,7 +678,7 @@ pub(super) fn load_two_bit_tag(
     slice: &mut Slice,
     constructor: &'static str,
     expected_bits: &'static str,
-) -> Result<String> {
+) -> TlbResult<String> {
     let mut actual_bits = String::with_capacity(2);
     for _ in 0..2 {
         match slice.load_bit() {
@@ -682,7 +699,7 @@ pub(super) fn load_three_bit_tag(
     slice: &mut Slice,
     constructor: &'static str,
     expected_bits: &'static str,
-) -> Result<String> {
+) -> TlbResult<String> {
     let mut actual_bits = String::with_capacity(3);
     for _ in 0..3 {
         match slice.load_bit() {
@@ -699,19 +716,12 @@ pub(super) fn load_three_bit_tag(
     Ok(actual_bits)
 }
 
-pub(super) fn anyhow_to_tlb_error(error: anyhow::Error) -> TlbError {
-    match error.downcast::<TlbError>() {
-        Ok(error) => error,
-        Err(error) => TlbError::Tvm(error),
-    }
-}
-
 pub(super) fn load_tag_bit(
     slice: &mut Slice,
     constructor: &'static str,
     expected_bits: &'static str,
     actual_prefix: &'static str,
-) -> Result<bool> {
+) -> TlbResult<bool> {
     slice.load_bit().map_err(|_| TlbError::TagMismatch {
         constructor,
         expected_bits,
@@ -719,7 +729,7 @@ pub(super) fn load_tag_bit(
     })
 }
 
-pub(super) fn load_transaction_descr_tag(slice: &mut Slice) -> Result<TransactionDescrTag> {
+pub(super) fn load_transaction_descr_tag(slice: &mut Slice) -> TlbResult<TransactionDescrTag> {
     let b0 = load_descr_tag_bit(slice, "")?;
     if b0 {
         return Err(TlbError::TagMismatch {
@@ -732,23 +742,35 @@ pub(super) fn load_transaction_descr_tag(slice: &mut Slice) -> Result<Transactio
     let b1 = load_descr_tag_bit(slice, "0")?;
     let b2 = load_descr_tag_bit(slice, if b1 { "01" } else { "00" })?;
     match (b1, b2) {
-        (false, false) => match load_descr_tag_bit(slice, "000")? {
-            false => Ok(TransactionDescrTag::Ordinary),
-            true => Ok(TransactionDescrTag::Storage),
-        },
+        (false, false) => {
+            if load_descr_tag_bit(slice, "000")? {
+                Ok(TransactionDescrTag::Storage)
+            } else {
+                Ok(TransactionDescrTag::Ordinary)
+            }
+        }
         (false, true) => Ok(TransactionDescrTag::TickTock),
-        (true, false) => match load_descr_tag_bit(slice, "010")? {
-            false => Ok(TransactionDescrTag::SplitPrepare),
-            true => Ok(TransactionDescrTag::SplitInstall),
-        },
-        (true, true) => match load_descr_tag_bit(slice, "011")? {
-            false => Ok(TransactionDescrTag::MergePrepare),
-            true => Ok(TransactionDescrTag::MergeInstall),
-        },
+        (true, false) => {
+            if load_descr_tag_bit(slice, "010")? {
+                Ok(TransactionDescrTag::SplitInstall)
+            } else {
+                Ok(TransactionDescrTag::SplitPrepare)
+            }
+        }
+        (true, true) => {
+            if load_descr_tag_bit(slice, "011")? {
+                Ok(TransactionDescrTag::MergeInstall)
+            } else {
+                Ok(TransactionDescrTag::MergePrepare)
+            }
+        }
     }
 }
 
-pub(super) fn load_descr_tag_bit(slice: &mut Slice, actual_prefix: &'static str) -> Result<bool> {
+pub(super) fn load_descr_tag_bit(
+    slice: &mut Slice,
+    actual_prefix: &'static str,
+) -> TlbResult<bool> {
     load_tag_bit(
         slice,
         "TransactionDescr",

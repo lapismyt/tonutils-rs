@@ -1,32 +1,42 @@
 //! Tests for liteclient module
 
 mod connect_tests;
+mod live_workflows;
 
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use crate::{
     adnl::AdnlError,
-    contracts::RUN_METHOD_MODE_RETURN_RESULT,
-    liteclient::{LiteClient, rate_limit::RequestRateLimit, types::LiteError},
-    network_config::ConfigGlobal,
-    tl::{
-        BlockId, BlockIdExt, Int256, NonfinalCandidateId, NonfinalCandidateInfo, RawWrappedRequest,
-        TlError, ZeroStateIdExt,
-        common::LibraryEntry,
-        request::{LookupBlock, LookupBlockWithProof, Request},
-        response::{
-            AccountDispatchQueueInfo, AccountState, BlockData, BlockHeader, BlockOutMsgQueueSize,
-            BlockState, ConfigInfo, CurrentTime, DispatchQueueInfo, DispatchQueueMessages, Error,
-            LibraryResult, LibraryResultWithProof, LookupBlockResult, MasterchainInfo,
-            MasterchainInfoExt, NonfinalCandidate, NonfinalPendingShardBlocks,
-            NonfinalValidatorGroupInfo, NonfinalValidatorGroups, OutMsgQueueSize, OutMsgQueueSizes,
-            Response, RunMethodResult, SendMsgStatus, ShardBlockLink, ShardBlockProof,
-            ValidatorStats, Version,
+    liteclient::{
+        LiteClient,
+        boc::SimpleAccountState,
+        rate_limit::RequestRateLimit,
+        tl::{
+            AccountDispatchQueueInfo, BlockData, BlockHeader, BlockOutMsgQueueSize, BlockState,
+            ConfigInfo, CurrentTime, DispatchQueueInfo, DispatchQueueMessages, LibraryResult,
+            LibraryResultWithProof, LiteBlockId as BlockId, LiteBlockIdExt as BlockIdExt,
+            LiteLibraryEntry as LibraryEntry, LiteNonfinalCandidate as NonfinalCandidate,
+            LiteNonfinalCandidateId as NonfinalCandidateId,
+            LiteNonfinalCandidateInfo as NonfinalCandidateInfo,
+            LiteNonfinalPendingShardBlocks as NonfinalPendingShardBlocks,
+            LiteNonfinalValidatorGroupInfo as NonfinalValidatorGroupInfo,
+            LiteNonfinalValidatorGroups as NonfinalValidatorGroups,
+            LiteServerAccountState as AccountState, LiteServerError as Error,
+            LiteZeroStateIdExt as ZeroStateIdExt, LookupBlock, LookupBlockResult,
+            LookupBlockWithProof, MasterchainInfo, MasterchainInfoExt, OutMsgQueueSize,
+            OutMsgQueueSizes, RawWrappedRequest, Request, Response, RunMethodResult, SendMsgStatus,
+            ShardBlockLink, ShardBlockProof, ValidatorStats, Version,
         },
+        types::LiteError,
     },
-    tlb::{Account, Block},
+    network_config::ConfigGlobal,
+    tl::{TlError, TlInt256 as Int256},
+    tlb::{Account, Block, TlbSerialize},
     tvm::{Address, Builder, TvmStack, serialize_boc},
 };
+
+#[cfg(feature = "contracts")]
+use crate::contracts::{Contract, RUN_METHOD_MODE_RETURN_RESULT};
 
 use tokio::sync::Mutex;
 use tower::service_fn;
@@ -59,7 +69,7 @@ fn test_lite_error_unexpected_message() {
 #[test]
 fn test_lite_error_display() {
     let err = LiteError::UnexpectedMessage;
-    let error_string = format!("{}", err);
+    let error_string = format!("{err}");
 
     assert!(error_string.contains("Unexpected"));
 }
@@ -87,7 +97,7 @@ fn test_lite_error_display_includes_server_details() {
 #[test]
 fn test_lite_error_debug() {
     let err = LiteError::UnexpectedMessage;
-    let debug_string = format!("{:?}", err);
+    let debug_string = format!("{err:?}");
 
     assert!(debug_string.contains("UnexpectedMessage"));
 }
@@ -95,7 +105,7 @@ fn test_lite_error_debug() {
 #[test]
 fn test_tl_error_unexpected_eof() {
     let err = TlError::UnexpectedEof;
-    let debug_str = format!("{:?}", err);
+    let debug_str = format!("{err:?}");
 
     assert!(debug_str.contains("UnexpectedEof"));
 }
@@ -124,8 +134,8 @@ async fn query_raw_waits_through_limiter_before_calling_service() {
             Ok::<_, LiteError>(request.request)
         }
     });
-    let mut client = super::client::LiteClient::from_service(service)
-        .with_rate_limit(super::rate_limit::RequestRateLimit::with_burst(1, 1).unwrap());
+    let mut client = LiteClient::from_service(service)
+        .with_rate_limit(RequestRateLimit::with_burst(1, 1).unwrap());
 
     assert_eq!(client.query_raw([1]).await.unwrap(), vec![1]);
     assert_eq!(*calls.lock().await, 1);
@@ -193,7 +203,7 @@ fn test_candidate_id() -> NonfinalCandidateId {
 
 fn response_client(response: Response) -> LiteClient {
     let bytes = tl_proto::serialize(response);
-    super::client::LiteClient::from_service(service_fn(move |_request: RawWrappedRequest| {
+    LiteClient::from_service(service_fn(move |_request: RawWrappedRequest| {
         let bytes = bytes.clone();
         async move { Ok::<_, LiteError>(bytes) }
     }))
@@ -211,6 +221,7 @@ fn request_response_client(requests: Arc<Mutex<Vec<Vec<u8>>>>, response: Respons
     }))
 }
 
+#[cfg(feature = "contracts")]
 #[tokio::test]
 async fn contract_get_method_requests_result_stack() {
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -335,6 +346,10 @@ async fn liteclient_basic_methods_build_requests_and_decode_responses() {
 }
 
 #[tokio::test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+)]
 async fn liteclient_extended_methods_cover_flagged_request_paths() {
     let config = ConfigInfo {
         mode: (),
@@ -590,7 +605,7 @@ async fn query_raw_preserves_unknown_request_and_response_bytes() {
             Ok::<_, LiteError>(service_response)
         }
     });
-    let mut client = super::client::LiteClient::from_service(service);
+    let mut client = LiteClient::from_service(service);
 
     let request = vec![0xfe, 0xed, 0xfa, 0xce, 0x01, 0x02];
     assert_eq!(client.query_raw(&request).await.unwrap(), response);
@@ -603,7 +618,7 @@ async fn query_raw_request_timeout_maps_to_lite_error_timeout() {
         tokio::time::sleep(std::time::Duration::from_secs(60)).await;
         Ok::<_, LiteError>(Vec::new())
     });
-    let mut client = super::client::LiteClient::from_service(service)
+    let mut client = LiteClient::from_service(service)
         .with_request_timeout(std::time::Duration::from_millis(10));
 
     let error = client.query_raw([1]).await.unwrap_err();
@@ -623,7 +638,7 @@ async fn query_raw_without_request_timeout_preserves_existing_behavior() {
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         Ok::<_, LiteError>(request.request)
     });
-    let mut client = super::client::LiteClient::from_service(service);
+    let mut client = LiteClient::from_service(service);
 
     assert_eq!(client.query_raw([7]).await.unwrap(), vec![7]);
 }
@@ -632,9 +647,8 @@ async fn query_raw_without_request_timeout_preserves_existing_behavior() {
 #[tokio::test]
 async fn config_connection_errors_are_reported_before_network_io() {
     let empty = ConfigGlobal::from_str(r#"{"liteservers":[]}"#).unwrap();
-    let error = match super::client::LiteClient::connect_first(&empty).await {
-        Ok(_) => panic!("empty config must fail before network I/O"),
-        Err(error) => error,
+    let Err(error) = LiteClient::connect_first(&empty).await else {
+        panic!("empty config must fail before network I/O");
     };
     assert!(matches!(
         error,
@@ -646,9 +660,8 @@ async fn config_connection_errors_are_reported_before_network_io() {
         r#"{"liteservers":[{"ip":16777343,"port":8001,"id":{"@type":"pub.ed25519","key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}]}"#,
     )
     .unwrap();
-    let error = match super::client::LiteClient::connect_config(&config, 1).await {
-        Ok(_) => panic!("invalid liteserver index must fail before network I/O"),
-        Err(error) => error,
+    let Err(error) = LiteClient::connect_config(&config, 1).await else {
+        panic!("invalid liteserver index must fail before network I/O");
     };
     assert!(matches!(
         error,
@@ -807,7 +820,7 @@ async fn typed_boc_helpers_return_decode_errors_for_malformed_payloads() {
         .raw_get_block_data(test_block_id())
         .await
         .unwrap_err();
-    assert!(matches!(error, LiteError::TlError(_)));
+    assert!(error.to_string().contains("failed to decode BoC root"));
 
     let mut client = response_client(Response::LibraryResult(LibraryResult {
         result: vec![LibraryEntry {
@@ -819,7 +832,7 @@ async fn typed_boc_helpers_return_decode_errors_for_malformed_payloads() {
         .get_libraries_typed(vec![Int256([9; 32])])
         .await
         .unwrap_err();
-    assert!(matches!(error, LiteError::TlError(_)));
+    assert!(error.to_string().contains("BoC data too short"), "{error}");
 }
 
 #[tokio::test]
@@ -840,7 +853,7 @@ async fn get_account_state_typed_extracts_simple_account() {
         .await
         .unwrap();
     let simple = decoded.simple();
-    assert_eq!(simple.state, super::boc::SimpleAccountState::None);
+    assert_eq!(simple.state, SimpleAccountState::None);
     assert_eq!(simple.last_transaction_lt, None);
     assert_eq!(simple.last_transaction_hash, None);
 }

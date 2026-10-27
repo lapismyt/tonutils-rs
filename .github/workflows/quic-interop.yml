@@ -5,17 +5,15 @@ on:
     branches:
       - main
     paths:
-      - "crates/tonutils/src/adnl/quic.rs"
-      - "crates/tonutils/src/adnl/quic_tls.rs"
-      - "crates/tonutils/src/adnl/quic_interop_tests.rs"
+      - "crates/tonutils/src/adnl/quic/**"
+      - "crates/tonutils/src/adnl/tests/quic_interop_tests.rs"
       - ".github/workflows/quic-interop.yml"
   pull_request:
     branches:
       - main
     paths:
-      - "crates/tonutils/src/adnl/quic.rs"
-      - "crates/tonutils/src/adnl/quic_tls.rs"
-      - "crates/tonutils/src/adnl/quic_interop_tests.rs"
+      - "crates/tonutils/src/adnl/quic/**"
+      - "crates/tonutils/src/adnl/tests/quic_interop_tests.rs"
       - ".github/workflows/quic-interop.yml"
   workflow_dispatch:
 

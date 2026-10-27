@@ -1,4 +1,17 @@
-use super::*;
+use super::{
+    AccountStateView, Address, Arc, BackendView, BalancerStatusView, BestEffortAccountStateView,
+    BlockIdExt, BlockIdExtView, BocDecodeView, Builder, Cell, CellView, HighLevelCallView,
+    HighLevelTransactionsView, Int256, MasterchainInfoView, NetworkView, RawBytesView,
+    RunGetMethodView, SchemaCheckView, StatusView, TimeView, TvmStackEntryView, TvmStackView,
+    Value, VersionView, WALLET_V4R2_DEFAULT_ID, WalletAddressView, WalletGenerateView,
+    WalletPreparedTransferView, WalletSendView, WalletSeqnoView, WalletVersionArg,
+    account_state_value, account_status_name, account_value, anycast_value, cell_value, cell_view,
+    config_params_value, currency_collection_value, json, latest_or_explicit_block,
+    libraries_value, msg_address_int_value, parse_account_id, parse_after_transaction,
+    parse_block_id_ext, parse_i64_decimal_or_hex, parse_int256, parse_libraries, parse_method_ref,
+    parse_params, parse_u64_decimal_or_hex, raw_bytes_view, shard_state_value,
+    simple_account_state_name, simple_account_value,
+};
 use num_bigint::BigUint;
 use tonutils::wallet::WALLET_V5R1_MAINNET_DEFAULT_ID;
 
@@ -31,6 +44,10 @@ fn empty_cell() -> Arc<Cell> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The test intentionally serializes every CLI view shape in one exhaustive table"
+)]
 fn serializes_cli_view_shapes() {
     let block = block_view(10);
     let raw = raw(&[1, 2, 3]);
@@ -241,13 +258,10 @@ fn parses_cli_value_helpers_and_errors() {
             .workchain,
         0
     );
-    assert_eq!(parse_method_ref("0x14").unwrap(), (None, 20));
+    assert_eq!(parse_method_ref("0x14"), (None, 20));
+    assert_eq!(parse_method_ref("seqno").0.as_deref(), Some("seqno"));
     assert_eq!(
-        parse_method_ref("seqno").unwrap().0.as_deref(),
-        Some("seqno")
-    );
-    assert_eq!(
-        parse_after_transaction(&Some("44".repeat(32)), Some(5))
+        parse_after_transaction(Some(&"44".repeat(32)), Some(5))
             .unwrap()
             .unwrap()
             .lt,
@@ -262,10 +276,14 @@ fn parses_cli_value_helpers_and_errors() {
     assert!(parse_int256("00").is_err());
     assert!(parse_account_id("0:1:2").is_err());
     assert!(parse_params("1,,2").is_err());
-    assert!(parse_after_transaction(&Some("44".repeat(32)), None).is_err());
+    assert!(parse_after_transaction(Some(&"44".repeat(32)), None).is_err());
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The test intentionally checks every TL-B helper conversion in one exhaustive table"
+)]
 fn converts_tlb_helpers_to_json_values() {
     let cell = empty_cell();
     assert_eq!(cell_value(&cell)["refs"], 0);
@@ -325,17 +343,17 @@ fn converts_tlb_helpers_to_json_values() {
     }
 
     for (state, name) in [
-        (tonutils_liteclient::boc::SimpleAccountState::None, "none"),
+        (tonutils::liteclient::boc::SimpleAccountState::None, "none"),
         (
-            tonutils_liteclient::boc::SimpleAccountState::Uninit,
+            tonutils::liteclient::boc::SimpleAccountState::Uninit,
             "uninit",
         ),
         (
-            tonutils_liteclient::boc::SimpleAccountState::Frozen,
+            tonutils::liteclient::boc::SimpleAccountState::Frozen,
             "frozen",
         ),
         (
-            tonutils_liteclient::boc::SimpleAccountState::Active,
+            tonutils::liteclient::boc::SimpleAccountState::Active,
             "active",
         ),
     ] {
@@ -368,12 +386,12 @@ fn converts_tlb_helpers_to_json_values() {
     libraries.insert(Int256([0x55; 32]), None);
     assert_eq!(libraries_value(&libraries).as_object().unwrap().len(), 2);
 
-    let simple = tonutils_liteclient::boc::SimpleAccount {
+    let simple = tonutils::liteclient::boc::SimpleAccount {
         block_id: block_id(1),
         shard_block_id: block_id(2),
         last_transaction_lt: Some(3),
         last_transaction_hash: Some([0x66; 32]),
-        state: tonutils_liteclient::boc::SimpleAccountState::None,
+        state: tonutils::liteclient::boc::SimpleAccountState::None,
         account: Some(tonutils::tlb::Account::None),
     };
     assert_eq!(simple_account_value(&simple)["state"], "none");

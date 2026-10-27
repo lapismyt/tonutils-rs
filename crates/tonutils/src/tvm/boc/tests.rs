@@ -1,10 +1,24 @@
-use super::*;
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "Test fixtures intentionally narrow generated values to protocol widths"
+)]
+use super::{
+    Arc, Cell, base64_to_boc, boc_to_base64, boc_to_hex, deserialize_boc, deserialize_boc_roots,
+    hex_to_boc, inspect_boc, serialize_boc,
+};
 
 #[cfg(test)]
+#[expect(
+    clippy::module_inception,
+    reason = "The test file mirrors the owner module name for discoverability"
+)]
 mod tests {
-    use super::*;
-    use crate::cell::ExoticCellKind;
-    use crate::cell::{CellBuilder, MAX_CELL_BITS};
+    use super::{
+        Arc, Cell, base64_to_boc, boc_to_base64, boc_to_hex, deserialize_boc,
+        deserialize_boc_roots, hex_to_boc, inspect_boc, serialize_boc,
+    };
+    use crate::tvm::cell::ExoticCellKind;
+    use crate::tvm::cell::{CellBuilder, MAX_CELL_BITS};
 
     const EMPTY_CELL_BOC_HEX: &str = "b5ee9c72010101010002000000";
     const ONE_BYTE_CELL_BOC_HEX: &str = "b5ee9c72010101010003000002aa";

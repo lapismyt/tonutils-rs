@@ -10,17 +10,28 @@
 //! share one session - which is the whole point of the shared
 //! transport - without stealing each other's packets.
 
-use std::{net::SocketAddr, time::Duration};
+#[cfg(feature = "overlay")]
+use std::net::SocketAddr;
+use std::time::Duration;
 
 use crate::{
-    adnl::{AdnlError, AdnlPublicKey, AdnlUdpSession, now_i32, udp::session::SessionInner},
-    tl::{
-        AdnlMessage, Int256,
-        network::{
-            AdnlIdShort, DhtMessage, DhtNodes, DhtNodesBoxed, DhtStored, DhtValue, DhtValueBare,
-            DhtValueResult, OverlayMemberCertificate, OverlayNode, OverlayNodeToSign,
-            OverlayNodeV2, OverlayNodes, OverlayNodesBoxed, OverlayQuery, PacketContents,
+    adnl::{
+        AdnlError, AdnlUdpSession, now_i32,
+        tl::{
+            AdnlMessage, DhtMessage, DhtNodes, DhtNodesBoxed, DhtStored, DhtValue, DhtValueBare,
+            DhtValueResult, PacketContents,
         },
+        udp::session::SessionInner,
+    },
+    tl::TlInt256 as Int256,
+};
+
+#[cfg(feature = "overlay")]
+use crate::{
+    adnl::tl::{AdnlIdShort, AdnlTlPublicKey},
+    overlay::tl::{
+        OverlayMemberCertificate, OverlayNode, OverlayNodeToSign, OverlayNodeV2, OverlayNodes,
+        OverlayNodesBoxed, OverlayQuery,
     },
 };
 
@@ -140,18 +151,19 @@ impl AdnlUdpSession {
             .exchange(query_id, query, timeout, "DHT store")
             .await?;
         match tl_proto::deserialize::<DhtStored>(&answer) {
-            Ok(dht_stored) => Ok(()),
+            Ok(_) => Ok(()),
             Err(error) => Err(AdnlError::MalformedPacket(error.to_string())),
         }
     }
 
+    #[cfg(feature = "overlay")]
     pub async fn overlay_get_random_peers(
         &self,
         overlay: Int256,
         timeout: Duration,
     ) -> Result<OverlayNodesBoxed, AdnlError> {
         let query_id = Int256::random();
-        let rx = self.inner.register_pending(query_id.clone());
+        let rx = self.inner.register_pending(&query_id);
         let sent = self
             .send_overlay_get_random_peers_with_id(overlay, query_id.clone(), None)
             .await;
@@ -176,6 +188,7 @@ impl AdnlUdpSession {
     /// steady-state traffic uses.  The destination rides on the query
     /// itself, so a sweep over the recorded endpoints cannot repoint the
     /// manager's keepalives at a stale one.
+    #[cfg(feature = "overlay")]
     pub async fn overlay_get_random_peers_to(
         &self,
         dest: SocketAddr,
@@ -183,7 +196,7 @@ impl AdnlUdpSession {
         timeout: Duration,
     ) -> Result<OverlayNodesBoxed, AdnlError> {
         let query_id = Int256::random();
-        let rx = self.inner.register_pending(query_id.clone());
+        let rx = self.inner.register_pending(&query_id);
         let sent = self
             .send_overlay_get_random_peers_with_id(overlay, query_id.clone(), Some(dest))
             .await;
@@ -211,6 +224,7 @@ impl AdnlUdpSession {
     /// registered it (see [`AdnlUdpSession::overlay_get_random_peers`]);
     /// a fire-and-forget send leaves the answer to be consumed by the
     /// session's regular receive path.
+    #[cfg(feature = "overlay")]
     pub async fn send_overlay_get_random_peers(&self, overlay: Int256) -> Result<usize, AdnlError> {
         self.send_overlay_get_random_peers_with_id(overlay, Int256::random(), None)
             .await
@@ -223,6 +237,7 @@ impl AdnlUdpSession {
     /// with the destination carried by this packet only; see
     /// [`Self::overlay_get_random_peers_to`] for the answer-awaiting
     /// form used by the growth path.
+    #[cfg(feature = "overlay")]
     pub async fn send_overlay_get_random_peers_to(
         &self,
         dest: SocketAddr,
@@ -232,6 +247,7 @@ impl AdnlUdpSession {
             .await
     }
 
+    #[cfg(feature = "overlay")]
     async fn send_overlay_get_random_peers_with_id(
         &self,
         overlay: Int256,
@@ -306,6 +322,7 @@ impl AdnlUdpSession {
     /// address through the DHT `address` value for our node id.  It is
     /// what `overlay.getRandomPeers` answers must contain, see
     /// `adnl.message.query` handling in the overlay session.
+    #[cfg(feature = "overlay")]
     pub fn local_overlay_node(&self, overlay: Int256) -> OverlayNode {
         let version = now_i32();
         let to_sign = OverlayNodeToSign {
@@ -316,7 +333,7 @@ impl AdnlUdpSession {
             version,
         };
         OverlayNode {
-            id: AdnlPublicKey::Ed25519 {
+            id: AdnlTlPublicKey::Ed25519 {
                 key: Int256(self.inner.local.public_key.to_bytes()),
             },
             overlay,
@@ -336,6 +353,7 @@ impl AdnlUdpSession {
     /// `overlay/overlay-id.hpp` picks `overlay_node_toSign` for
     /// `flags_ == 0`), and a peer validating the answer accepts it
     /// exactly like the V1 record.
+    #[cfg(feature = "overlay")]
     pub fn local_overlay_node_v2(&self, overlay: Int256) -> OverlayNodeV2 {
         let ours = self.local_overlay_node(overlay);
         OverlayNodeV2 {
@@ -361,7 +379,7 @@ impl SessionInner {
         timeout: Duration,
         operation: &'static str,
     ) -> Result<Vec<u8>, AdnlError> {
-        let rx = self.register_pending(query_id.clone());
+        let rx = self.register_pending(&query_id);
         let sent = self
             .send_contents(PacketContents {
                 rand1: vec![0; 7],

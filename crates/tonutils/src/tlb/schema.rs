@@ -4,7 +4,7 @@
 //! and drift checks. Typed codecs remain hand-written for the public model
 //! types that this crate exposes.
 
-use crate::tlb::{Result, TlbError};
+use crate::tlb::{TlbError, TlbResult};
 
 /// Local checked snapshot of upstream `crypto/block/block.tlb` constructors.
 pub const BLOCK_TLB: &str = include_str!("schemas/block.tlb");
@@ -50,7 +50,7 @@ pub struct Field {
 }
 
 /// Parses a TL-B schema into constructors.
-pub fn parse_schema(schema: &str) -> Result<Vec<Constructor>> {
+pub fn parse_schema(schema: &str) -> TlbResult<Vec<Constructor>> {
     let schema = strip_block_comments(schema);
     let schema = schema
         .lines()
@@ -95,11 +95,11 @@ pub fn generate_summary(constructors: &[Constructor]) -> String {
 }
 
 /// Regenerates the canonical block summary from the local schema snapshot.
-pub fn generate_block_summary() -> Result<String> {
+pub fn generate_block_summary() -> TlbResult<String> {
     Ok(generate_summary(&parse_schema(BLOCK_TLB)?))
 }
 
-fn parse_constructor(statement: &str) -> Result<Constructor> {
+fn parse_constructor(statement: &str) -> TlbResult<Constructor> {
     let (lhs, result) = statement
         .rsplit_once('=')
         .ok_or_else(|| schema_error("missing result separator"))?;
@@ -108,24 +108,19 @@ fn parse_constructor(statement: &str) -> Result<Constructor> {
 
     let (name, tag, rest) = if lhs.starts_with("_ ") {
         ("_".to_string(), ConstructorTag::Implicit, lhs[1..].trim())
+    } else if let Some(name_end) = lhs.find(['$', '#']) {
+        let name = lhs[..name_end].trim().to_string();
+        let (tag, rest) = parse_tag(&lhs[name_end..])?;
+        (name, tag, rest)
     } else {
-        match lhs.find(['$', '#']) {
-            Some(name_end) => {
-                let name = lhs[..name_end].trim().to_string();
-                let (tag, rest) = parse_tag(&lhs[name_end..])?;
-                (name, tag, rest)
-            }
-            None => {
-                let name_end = lhs.find(char::is_whitespace).unwrap_or(lhs.len());
-                (
-                    lhs[..name_end].to_string(),
-                    ConstructorTag::Implicit,
-                    lhs[name_end..].trim(),
-                )
-            }
-        }
+        let name_end = lhs.find(char::is_whitespace).unwrap_or(lhs.len());
+        (
+            lhs[..name_end].to_string(),
+            ConstructorTag::Implicit,
+            lhs[name_end..].trim(),
+        )
     };
-    let fields = parse_fields(rest)?;
+    let fields = parse_fields(rest);
     Ok(Constructor {
         name,
         tag,
@@ -134,7 +129,7 @@ fn parse_constructor(statement: &str) -> Result<Constructor> {
     })
 }
 
-fn parse_tag(input: &str) -> Result<(ConstructorTag, &str)> {
+fn parse_tag(input: &str) -> TlbResult<(ConstructorTag, &str)> {
     let marker = input
         .chars()
         .next()
@@ -144,7 +139,7 @@ fn parse_tag(input: &str) -> Result<(ConstructorTag, &str)> {
     let tag_text = &rest[..tag_end];
     let remaining = rest[tag_end..].trim();
     let tag = match (marker, tag_text) {
-        ('$', "_") | ('#', "_") => ConstructorTag::Implicit,
+        ('$' | '#', "_") => ConstructorTag::Implicit,
         ('$', bits) if bits.bytes().all(|byte| byte == b'0' || byte == b'1') => {
             ConstructorTag::Binary(bits.to_string())
         }
@@ -160,7 +155,7 @@ fn parse_tag(input: &str) -> Result<(ConstructorTag, &str)> {
     Ok((tag, remaining))
 }
 
-fn parse_fields(input: &str) -> Result<Vec<Field>> {
+fn parse_fields(input: &str) -> Vec<Field> {
     let tokens = split_top_level_ws(input);
     let mut fields = Vec::new();
     for token in tokens {
@@ -190,7 +185,7 @@ fn parse_fields(input: &str) -> Result<Vec<Field>> {
             grouped,
         });
     }
-    Ok(fields)
+    fields
 }
 
 fn split_statements(schema: &str) -> Vec<&str> {
@@ -286,7 +281,8 @@ impl std::fmt::Display for ConstructorTag {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{BLOCK_SUMMARY, BLOCK_TLB, generate_block_summary, parse_schema};
+    use crate::tlb::generated::schema_block::CONSTRUCTOR_COUNT;
 
     #[test]
     fn parses_upstream_schema_constructs_needed_by_models() {
@@ -309,10 +305,7 @@ mod tests {
     #[test]
     fn generated_block_summary_is_deterministic() {
         let constructors = parse_schema(BLOCK_TLB).unwrap();
-        assert_eq!(
-            constructors.len(),
-            crate::generated::schema_block::CONSTRUCTOR_COUNT
-        );
+        assert_eq!(constructors.len(), CONSTRUCTOR_COUNT);
         let generated = generate_block_summary().unwrap();
         for constructor in constructors {
             assert!(generated.contains(&format!("\"{}\"", constructor.name)));

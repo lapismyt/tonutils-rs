@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use crate::adnl::{
     AdnlAesParams, AdnlCodec, AdnlError, AdnlKeyPair, AdnlPeer, AdnlPublicKey,
-    crypto::{SecretKey, tl::PublicKeyOwned},
+    crypto::SecretKey,
+    tl::{AdnlTlPublicKeyOwned as PublicKeyOwned, AdnlTlPublicKeyRef as TlPublicKey},
 };
 
 use rand::rngs::OsRng;
@@ -188,13 +189,11 @@ async fn adnl_connect_with_timeout_maps_handshake_timeout() {
 
     let server_secret = SecretKey::from_bytes([9u8; 32]);
     let server_public = AdnlKeyPair::from(&server_secret).public_key.to_bytes();
-    let error =
-        match AdnlPeer::connect_with_timeout(server_public, address, Duration::from_millis(10))
-            .await
-        {
-            Ok(_) => panic!("connect should time out while waiting for ADNL handshake"),
-            Err(error) => error,
-        };
+    let Err(error) =
+        AdnlPeer::connect_with_timeout(server_public, address, Duration::from_millis(10)).await
+    else {
+        panic!("connect should time out while waiting for ADNL handshake");
+    };
 
     server.abort();
     assert!(matches!(
@@ -266,7 +265,7 @@ fn test_public_key_display() {
     ]);
 
     let pubkey = AdnlPublicKey::from(&secret);
-    let display_str = format!("{}", pubkey);
+    let display_str = format!("{pubkey}");
 
     // Should be 64 hex characters (32 bytes)
     assert_eq!(display_str.len(), 64);
@@ -278,7 +277,7 @@ fn test_public_key_display() {
 fn test_public_key_debug() {
     let secret = SecretKey::from_bytes([42u8; 32]);
     let pubkey = AdnlPublicKey::from(&secret);
-    let debug_str = format!("{:?}", pubkey);
+    let debug_str = format!("{pubkey:?}");
 
     // Debug should produce hex output
     assert_eq!(debug_str.len(), 64);
@@ -421,10 +420,10 @@ fn test_compute_shared_secret_value() {
 #[test]
 fn test_tl_public_key_ed25519() {
     let key_bytes = [42u8; 32];
-    let tl_key = AdnlPublicKey::Ed25519 { key: &key_bytes };
+    let tl_key = TlPublicKey::Ed25519 { key: &key_bytes };
 
     match tl_key {
-        AdnlPublicKey::Ed25519 { key } => {
+        TlPublicKey::Ed25519 { key } => {
             assert_eq!(key, &key_bytes);
         }
         _ => panic!("Wrong variant"),
@@ -434,13 +433,13 @@ fn test_tl_public_key_ed25519() {
 #[test]
 fn test_tl_public_key_owned_conversion() {
     let key_bytes = [42u8; 32];
-    let tl_key = AdnlPublicKey::Ed25519 { key: &key_bytes };
+    let tl_key = TlPublicKey::Ed25519 { key: &key_bytes };
 
     let owned = tl_key.as_equivalent_owned();
     let back_to_ref = owned.as_equivalent_ref();
 
     match (tl_key, back_to_ref) {
-        (AdnlPublicKey::Ed25519 { key: k1 }, AdnlPublicKey::Ed25519 { key: k2 }) => {
+        (TlPublicKey::Ed25519 { key: k1 }, TlPublicKey::Ed25519 { key: k2 }) => {
             assert_eq!(k1, k2);
         }
         _ => panic!("Conversion failed"),
@@ -450,7 +449,7 @@ fn test_tl_public_key_owned_conversion() {
 #[test]
 fn test_tl_public_key_aes() {
     let key_bytes = [99u8; 32];
-    let tl_key = AdnlPublicKey::Aes { key: &key_bytes };
+    let tl_key = TlPublicKey::Aes { key: &key_bytes };
 
     let owned = tl_key.as_equivalent_owned();
     match owned {
@@ -464,7 +463,7 @@ fn test_tl_public_key_aes() {
 #[test]
 fn test_tl_public_key_overlay() {
     let name = b"overlay_name";
-    let tl_key = AdnlPublicKey::Overlay { name };
+    let tl_key = TlPublicKey::Overlay { name };
 
     let owned = tl_key.as_equivalent_owned();
     match owned {
@@ -478,7 +477,7 @@ fn test_tl_public_key_overlay() {
 #[test]
 fn test_tl_public_key_unencoded() {
     let data = b"unencoded_data";
-    let tl_key = AdnlPublicKey::Unencoded { data };
+    let tl_key = TlPublicKey::Unencoded { data };
 
     let owned = tl_key.as_equivalent_owned();
     match owned {
@@ -502,7 +501,7 @@ fn test_public_key_from_tl() {
 
 #[test]
 fn test_public_key_from_tl_non_ed25519() {
-    let tl_key = AdnlPublicKey::Aes { key: &[42u8; 32] };
+    let tl_key = TlPublicKey::Aes { key: &[42u8; 32] };
     let pubkey = AdnlPublicKey::from_tl(tl_key);
 
     // Should return None for non-Ed25519 keys
@@ -550,6 +549,7 @@ fn test_keypair_sign_tl_vs_raw() {
 }
 
 #[test]
+#[cfg(feature = "serde")]
 fn test_public_key_serialization_roundtrip() {
     let secret = SecretKey::from_bytes([42u8; 32]);
     let pubkey = AdnlPublicKey::from(&secret);

@@ -1,17 +1,16 @@
 use crate::{
-    liteclient::types::LiteError,
-    tl::{
-        Response, TlError,
-        response::{
-            AccountState, AllShardsInfo, BlockData, BlockHeader, BlockOutMsgQueueSize, BlockState,
-            BlockTransactions, BlockTransactionsExt, ConfigInfo, CurrentTime, DispatchQueueInfo,
-            DispatchQueueMessages, LibraryResult, LibraryResultWithProof, LookupBlockResult,
-            MasterchainInfo, MasterchainInfoExt, NonfinalCandidate, NonfinalPendingShardBlocks,
-            NonfinalValidatorGroups, OutMsgQueueSizes, PartialBlockProof, RunMethodResult,
-            SendMsgStatus, ShardBlockProof, ShardInfo, TransactionId, TransactionInfo,
-            TransactionList, ValidatorStats, Version,
-        },
+    liteclient::tl::{
+        AllShardsInfo, BlockData, BlockHeader, BlockOutMsgQueueSize, BlockState, BlockTransactions,
+        BlockTransactionsExt, ConfigInfo, CurrentTime, DispatchQueueInfo, DispatchQueueMessages,
+        LibraryResult, LibraryResultWithProof, LiteNonfinalCandidate as NonfinalCandidate,
+        LiteNonfinalPendingShardBlocks as NonfinalPendingShardBlocks,
+        LiteNonfinalValidatorGroups as NonfinalValidatorGroups,
+        LiteServerAccountState as AccountState, LiteServerError,
+        LiteTransactionId as TransactionId, LookupBlockResult, MasterchainInfo, MasterchainInfoExt,
+        OutMsgQueueSizes, PartialBlockProof, Response, RunMethodResult, SendMsgStatus,
+        ShardBlockProof, ShardInfo, TransactionInfo, TransactionList, ValidatorStats, Version,
     },
+    liteclient::types::LiteError,
 };
 
 pub trait FromResponse: Sized {
@@ -297,7 +296,7 @@ impl FromResponse for NonfinalPendingShardBlocks {
     }
 }
 
-impl FromResponse for TlError {
+impl FromResponse for LiteServerError {
     fn from_response(response: Response) -> Result<Self, LiteError> {
         match response {
             Response::Error(s) => Ok(s),

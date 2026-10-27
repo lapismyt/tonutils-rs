@@ -1,5 +1,9 @@
-use crate::uint::UnsignedInteger;
-use anyhow::{Result, bail};
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
+use crate::tvm::uint::UnsignedInteger;
+use crate::tvm::{TvmError, TvmResult as Result, error::cell_bail as bail};
 use num_bigint::{BigInt, BigUint};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -89,6 +93,10 @@ impl Cell {
     }
 
     /// Creates a cell with the given data and bit length
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub fn with_data(data: Vec<u8>, bit_len: usize) -> Result<Self> {
         if bit_len > MAX_CELL_BITS {
             bail!(
@@ -274,12 +282,16 @@ impl Cell {
     }
 
     /// Creates an exotic cell from raw data and already resolved references.
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub fn with_exotic_data(
         data: Vec<u8>,
         bit_len: usize,
         references: Vec<Arc<Cell>>,
     ) -> Result<Self> {
-        let (data, bit_len) = validate_cell_data(data, bit_len)?;
+        let (data, bit_len) = validate_cell_data(&data, bit_len)?;
         if references.len() > MAX_CELL_REFS {
             bail!(
                 "Exotic cell has {} references, maximum is {}",
@@ -309,7 +321,7 @@ impl Default for Cell {
     }
 }
 
-pub(super) fn validate_cell_data(data: Vec<u8>, bit_len: usize) -> Result<(Vec<u8>, usize)> {
+pub(super) fn validate_cell_data(data: &[u8], bit_len: usize) -> Result<(Vec<u8>, usize)> {
     if bit_len > MAX_CELL_BITS {
         bail!(
             "Cell bit length {} exceeds maximum {}",
@@ -507,7 +519,7 @@ pub(super) fn exotic_level(exotic: &ExoticCellKind, references: &[Arc<Cell>]) ->
 /// Low-level builder for constructing cells
 ///
 /// This is the core, minimal builder that provides basic bit/byte operations.
-/// For a higher-level API with TON-specific convenience methods, see [`Builder`](crate::Builder).
+/// For a higher-level API with TON-specific convenience methods, see [`Builder`](crate::tvm::Builder).
 ///
 /// # When to use CellBuilder
 ///
@@ -712,11 +724,11 @@ impl CellBuilder {
         let unsigned = if value < &BigInt::from(0) {
             (BigInt::from(BigUint::from(1u8) << bits) + value)
                 .to_biguint()
-                .ok_or_else(|| anyhow::anyhow!("Invalid two's-complement value"))?
+                .ok_or_else(|| TvmError::Cell("Invalid two's-complement value".to_owned()))?
         } else {
             value
                 .to_biguint()
-                .ok_or_else(|| anyhow::anyhow!("Invalid signed integer value"))?
+                .ok_or_else(|| TvmError::Cell("Invalid signed integer value".to_owned()))?
         };
 
         self.store_big_uint(&unsigned, bits)

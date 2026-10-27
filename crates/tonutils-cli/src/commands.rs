@@ -1,7 +1,18 @@
-use super::*;
+use super::{
+    AccountId, Address, Arc, BackendView, BestEffortAccountStateView, BlockIdExt, Builder, Cell,
+    Cli, ConfigModeFlags, Context, DecodedRunMethodResult, FromStr, Int256, LiteBalancer,
+    LiteClient, MAINNET_GLOBAL_ID, MasterchainInfoView, Network, Read, Result, RunGetMethodView,
+    RunMethodResultExt, SystemTime, TESTNET_GLOBAL_ID, TonMnemonic, TvmStack, TvmStackEntry,
+    UNIX_EPOCH, WALLET_V4R2_DEFAULT_ID, WalletAddressView, WalletMessage,
+    WalletPreparedTransferView, WalletTransferArgs, WalletV4R2, WalletV5R1, WalletV5R1WalletId,
+    WalletVersionArg, account_value, block_id_ext_view, fs, get_config_all_balancer,
+    get_config_all_client, get_config_params_balancer, get_config_params_client, grams_decimal, io,
+    raw_bytes_view, shard_account_value, simple_account_state_name, stack_view, wallet_v4r2_code,
+    wallet_v5r1_code,
+};
 
 pub(super) fn run_get_method_view(
-    result: tonutils::tl::response::RunMethodResult,
+    result: &tonutils::liteclient::tl::RunMethodResult,
     method: Option<String>,
     method_id: u64,
 ) -> Result<RunGetMethodView> {
@@ -27,7 +38,7 @@ pub(super) fn run_get_method_view(
 }
 
 pub(super) fn masterchain_info_view(
-    info: tonutils::tl::response::MasterchainInfo,
+    info: &tonutils::liteclient::tl::MasterchainInfo,
 ) -> MasterchainInfoView {
     MasterchainInfoView {
         last: block_id_ext_view(&info.last),
@@ -78,7 +89,7 @@ impl HighLevelBackend {
 
     pub(super) async fn get_masterchain_info(
         &mut self,
-    ) -> Result<tonutils::tl::response::MasterchainInfo> {
+    ) -> Result<tonutils::liteclient::tl::MasterchainInfo> {
         match self {
             HighLevelBackend::Single(client) => Ok(client.get_masterchain_info().await?),
             HighLevelBackend::Balanced(balancer) => Ok(balancer.get_masterchain_info().await?),
@@ -89,7 +100,7 @@ impl HighLevelBackend {
         &mut self,
         block: BlockIdExt,
         account: AccountId,
-    ) -> Result<tonutils::tl::response::AccountState> {
+    ) -> Result<tonutils::liteclient::tl::LiteServerAccountState> {
         match self {
             HighLevelBackend::Single(client) => {
                 Ok(client.get_account_state(block, account).await?)
@@ -103,7 +114,7 @@ impl HighLevelBackend {
     pub(super) async fn raw_get_block_data(
         &mut self,
         block: BlockIdExt,
-    ) -> Result<tonutils_liteclient::boc::DecodedBlockData> {
+    ) -> Result<tonutils::liteclient::boc::DecodedBlockData> {
         match self {
             HighLevelBackend::Single(client) => Ok(client.raw_get_block_data(block).await?),
             HighLevelBackend::Balanced(balancer) => Ok(balancer.raw_get_block_data(block).await?),
@@ -116,7 +127,7 @@ impl HighLevelBackend {
         address: Address,
         method_id: u64,
         stack: TvmStack,
-    ) -> Result<tonutils::tl::response::RunMethodResult> {
+    ) -> Result<tonutils::liteclient::tl::RunMethodResult> {
         match self {
             HighLevelBackend::Single(client) => Ok(client
                 .run_get_method(
@@ -167,7 +178,7 @@ impl HighLevelBackend {
         &mut self,
         block: BlockIdExt,
         flags: &ConfigModeFlags,
-    ) -> Result<tonutils_liteclient::boc::DecodedConfigInfo> {
+    ) -> Result<tonutils::liteclient::boc::DecodedConfigInfo> {
         match self {
             HighLevelBackend::Single(client) => {
                 Ok(get_config_all_client(client, block, flags).await?)
@@ -183,7 +194,7 @@ impl HighLevelBackend {
         block: BlockIdExt,
         params: Vec<i32>,
         flags: &ConfigModeFlags,
-    ) -> Result<tonutils_liteclient::boc::DecodedConfigInfo> {
+    ) -> Result<tonutils::liteclient::boc::DecodedConfigInfo> {
         match self {
             HighLevelBackend::Single(client) => {
                 Ok(get_config_params_client(client, block, params, flags).await?)
@@ -197,7 +208,7 @@ impl HighLevelBackend {
 
 pub(super) fn best_effort_account_state_view(
     address: &str,
-    raw: tonutils::tl::response::AccountState,
+    raw: &tonutils::liteclient::tl::LiteServerAccountState,
 ) -> BestEffortAccountStateView {
     let mut decode_errors = Vec::new();
     let (shard_proof_root_count, shard_proof_root_hashes) =
@@ -210,7 +221,7 @@ pub(super) fn best_effort_account_state_view(
 
     let decoded = match tonutils::tvm::Address::from_str(address) {
         Ok(address) => {
-            tonutils_liteclient::boc::DecodedAccountState::from_raw_verified(raw.clone(), &address)
+            tonutils::liteclient::boc::DecodedAccountState::from_raw_verified(raw.clone(), &address)
                 .ok()
         }
         Err(error) => {
@@ -227,7 +238,7 @@ pub(super) fn best_effort_account_state_view(
             if raw.state.is_empty() {
                 None
             } else {
-                match tonutils_liteclient::boc::decode_account_state_boc(&raw.state) {
+                match tonutils::liteclient::boc::decode_account_state_boc(&raw.state) {
                     Ok(value) => Some(value.account),
                     Err(error) => {
                         decode_errors.push(format!("state TL-B decode failed: {error}"));
@@ -302,7 +313,7 @@ pub(super) fn decode_root_hash(
     if raw.is_empty() {
         return None;
     }
-    match tonutils_liteclient::boc::DecodedBoc::decode(raw) {
+    match tonutils::liteclient::boc::DecodedBoc::decode(raw) {
         Ok(decoded) => Some(decoded.root_hash_hex()),
         Err(error) => {
             errors.push(format!("{label} BoC decode failed: {error:#}"));
@@ -319,13 +330,13 @@ pub(super) fn account_summary(
         Some(tonutils::tlb::Account::Full { storage, .. }) => (
             simple_account_state_name(&match &storage.state {
                 tonutils::tlb::AccountState::Uninit => {
-                    tonutils_liteclient::boc::SimpleAccountState::Uninit
+                    tonutils::liteclient::boc::SimpleAccountState::Uninit
                 }
                 tonutils::tlb::AccountState::Frozen { .. } => {
-                    tonutils_liteclient::boc::SimpleAccountState::Frozen
+                    tonutils::liteclient::boc::SimpleAccountState::Frozen
                 }
                 tonutils::tlb::AccountState::Active { .. } => {
-                    tonutils_liteclient::boc::SimpleAccountState::Active
+                    tonutils::liteclient::boc::SimpleAccountState::Active
                 }
             })
             .to_owned(),
@@ -379,7 +390,7 @@ pub(super) fn wallet_address_view(
     })
 }
 
-pub(super) fn read_mnemonic_phrase(file: &Option<String>, env: &Option<String>) -> Result<String> {
+pub(super) fn read_mnemonic_phrase(file: Option<&String>, env: Option<&String>) -> Result<String> {
     match (file, env) {
         (Some(path), None) if path == "-" => {
             let mut phrase = String::new();
@@ -402,17 +413,16 @@ pub(super) fn read_mnemonic_phrase(file: &Option<String>, env: &Option<String>) 
     }
 }
 
-pub(super) fn read_mnemonic_password(env: &Option<String>) -> Result<Option<String>> {
-    env.as_ref()
-        .map(|name| {
-            std::env::var(name).with_context(|| {
-                format!("failed to read mnemonic password from environment variable {name}")
-            })
+pub(super) fn read_mnemonic_password(env: Option<&String>) -> Result<Option<String>> {
+    env.map(|name| {
+        std::env::var(name).with_context(|| {
+            format!("failed to read mnemonic password from environment variable {name}")
         })
-        .transpose()
+    })
+    .transpose()
 }
 
-pub(super) fn comment_body(comment: &Option<String>) -> Result<Option<Arc<Cell>>> {
+pub(super) fn comment_body(comment: Option<&String>) -> Result<Option<Arc<Cell>>> {
     let Some(comment) = comment else {
         return Ok(None);
     };
@@ -428,12 +438,12 @@ pub(super) fn valid_until_from_timeout(timeout: u32) -> Result<u32> {
         .context("system clock is before unix epoch")?
         .as_secs();
     let valid_until = now
-        .checked_add(timeout as u64)
+        .checked_add(u64::from(timeout))
         .context("valid_until overflow")?;
     u32::try_from(valid_until).context("valid_until does not fit into uint32")
 }
 
-pub(super) fn seqno_from_stack(result: tonutils::tl::response::RunMethodResult) -> Result<u32> {
+pub(super) fn seqno_from_stack(result: &tonutils::liteclient::tl::RunMethodResult) -> Result<u32> {
     let stack = match result.result_stack_lossless() {
         DecodedRunMethodResult::Decoded(stack) => stack,
         DecodedRunMethodResult::Missing => anyhow::bail!("seqno get-method returned no stack"),
@@ -451,7 +461,7 @@ pub(super) fn seqno_from_stack(result: tonutils::tl::response::RunMethodResult) 
 }
 
 pub(super) fn seqno_from_stack_or_deploy_zero(
-    result: tonutils::tl::response::RunMethodResult,
+    result: &tonutils::liteclient::tl::RunMethodResult,
     deploy: bool,
 ) -> Result<u32> {
     if deploy
@@ -479,7 +489,7 @@ pub(super) fn build_wallet_transfer(
         args.amount,
     )
     .with_mode(args.mode);
-    if let Some(body) = comment_body(&args.comment)? {
+    if let Some(body) = comment_body(args.comment.as_ref())? {
         message = message.with_body(body);
     }
     let valid_until = valid_until_from_timeout(args.timeout)?;
@@ -523,11 +533,12 @@ pub(super) async fn download_config(network: Network) -> Result<String> {
         Network::Mainnet => "https://ton.org/global.config.json",
         Network::Testnet => "https://ton.org/testnet-global.config.json",
     };
-    let mut response = ureq::get(url)
-        .call()
-        .map_err(|e| anyhow::anyhow!("failed to fetch config from {url}: {e:?}"))?;
-    if response.status() != 200 {
-        anyhow::bail!("config URL {url} returned HTTP {}", response.status());
+    let response = reqwest::get(url)
+        .await
+        .with_context(|| format!("failed to fetch config from {url}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("config URL {url} returned HTTP {status}");
     }
-    Ok(response.body_mut().read_to_string()?)
+    Ok(response.text().await?)
 }

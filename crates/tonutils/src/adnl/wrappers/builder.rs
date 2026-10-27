@@ -3,7 +3,8 @@ use crate::adnl::{
     helper_types::CryptoRandom,
 };
 
-/// Builder of [`AdnlHandshake`] values, which can then create a [`crate::AdnlPeer`].
+/// Builder of [`AdnlHandshake`] values, which can then create a
+/// [`crate::adnl::AdnlPeer`].
 pub struct AdnlBuilder {
     aes_params: AdnlAesParams,
 }

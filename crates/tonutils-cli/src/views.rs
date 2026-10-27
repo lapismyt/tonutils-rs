@@ -1,4 +1,14 @@
-use super::*;
+use super::{
+    Account, AccountId, BTreeMap, BigInt, BlockIdExt, BlockIdExtView, Cell, ConfigModeFlags,
+    Context, Engine, Int256, LiteBalancer, LiteClient, RawBytesView, Result, Serialize,
+    TransactionId3, TvmStack, TvmStackEntry, Value, WalletVersionArg, deserialize_boc, json,
+    lite_boc, method_name_to_id, serialize_boc,
+};
+#[cfg(test)]
+use super::{
+    Address, Arc, Builder, Cli, Commands, ContractCommand, MasterchainInfoView, Parser, TimeView,
+    VersionView, WALLET_V4R2_DEFAULT_ID,
+};
 
 #[derive(Debug, Serialize)]
 pub(super) struct CellView {
@@ -68,6 +78,10 @@ pub(super) enum TvmStackEntryView {
 }
 
 #[derive(Debug, Serialize)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "The JSON fields intentionally mirror the balancer peer-count metrics"
+)]
 pub(super) struct BalancerStatusView {
     pub(super) total_peers: usize,
     pub(super) alive_peers: usize,
@@ -281,7 +295,8 @@ pub(super) fn parse_i64_decimal_or_hex(value: &str) -> Result<i64> {
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))
     {
-        Ok(u64::from_str_radix(hex, 16)? as i64)
+        let value = u64::from_str_radix(hex, 16)?;
+        Ok(i64::from_ne_bytes(value.to_ne_bytes()))
     } else {
         Ok(value.parse::<i64>()?)
     }
@@ -470,10 +485,10 @@ pub(super) fn parse_boc_hex_cell(value: &str) -> Result<std::sync::Arc<Cell>> {
     deserialize_boc(&bytes).context("failed to decode stack BoC")
 }
 
-pub(super) fn parse_method_ref(value: &str) -> Result<(Option<String>, u64)> {
+pub(super) fn parse_method_ref(value: &str) -> (Option<String>, u64) {
     match parse_u64_decimal_or_hex(value) {
-        Ok(method_id) => Ok((None, method_id)),
-        Err(_) => Ok((Some(value.to_owned()), method_name_to_id(value))),
+        Ok(method_id) => (None, method_id),
+        Err(_) => (Some(value.to_owned()), method_name_to_id(value)),
     }
 }
 
@@ -497,7 +512,7 @@ pub(super) fn parse_comma_list<T>(
 }
 
 pub(super) fn parse_after_transaction(
-    account: &Option<String>,
+    account: Option<&String>,
     lt: Option<u64>,
 ) -> Result<Option<TransactionId3>> {
     match (account, lt) {
@@ -520,7 +535,7 @@ pub(super) fn latest_or_explicit_block(
     }
 }
 
-pub(super) fn decoded_boc_view(boc: &boc::DecodedBoc) -> Value {
+pub(super) fn decoded_boc_view(boc: &lite_boc::DecodedBoc) -> Value {
     json!({
         "raw": raw_bytes_view(&boc.raw),
         "root": cell_value(&boc.root),
@@ -595,7 +610,7 @@ pub(super) fn transaction_value(tx: &tonutils::tlb::Transaction) -> Value {
     })
 }
 
-pub(super) fn simple_account_value(account: &tonutils_liteclient::boc::SimpleAccount) -> Value {
+pub(super) fn simple_account_value(account: &tonutils::liteclient::boc::SimpleAccount) -> Value {
     json!({
         "block_id": block_id_ext_view(&account.block_id),
         "shard_block_id": block_id_ext_view(&account.shard_block_id),
@@ -676,13 +691,13 @@ pub(super) fn account_status_name(status: tonutils::tlb::AccountStatus) -> &'sta
 }
 
 pub(super) fn simple_account_state_name(
-    state: &tonutils_liteclient::boc::SimpleAccountState,
+    state: &tonutils::liteclient::boc::SimpleAccountState,
 ) -> &'static str {
     match state {
-        tonutils_liteclient::boc::SimpleAccountState::None => "none",
-        tonutils_liteclient::boc::SimpleAccountState::Uninit => "uninit",
-        tonutils_liteclient::boc::SimpleAccountState::Frozen => "frozen",
-        tonutils_liteclient::boc::SimpleAccountState::Active => "active",
+        tonutils::liteclient::boc::SimpleAccountState::None => "none",
+        tonutils::liteclient::boc::SimpleAccountState::Uninit => "uninit",
+        tonutils::liteclient::boc::SimpleAccountState::Frozen => "frozen",
+        tonutils::liteclient::boc::SimpleAccountState::Active => "active",
     }
 }
 
@@ -701,7 +716,7 @@ pub(super) fn transaction_description_name(
 }
 
 pub(super) fn decoded_block_data_value(
-    decoded: &tonutils_liteclient::boc::DecodedBlockData,
+    decoded: &tonutils::liteclient::boc::DecodedBlockData,
 ) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
@@ -713,7 +728,7 @@ pub(super) fn decoded_block_data_value(
 }
 
 pub(super) fn decoded_block_header_value(
-    decoded: &tonutils_liteclient::boc::DecodedBlockHeader,
+    decoded: &tonutils::liteclient::boc::DecodedBlockHeader,
 ) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
@@ -723,7 +738,7 @@ pub(super) fn decoded_block_header_value(
 }
 
 pub(super) fn decoded_shard_info_value(
-    decoded: &tonutils_liteclient::boc::DecodedShardInfo,
+    decoded: &tonutils::liteclient::boc::DecodedShardInfo,
 ) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
@@ -734,7 +749,7 @@ pub(super) fn decoded_shard_info_value(
 }
 
 pub(super) fn decoded_all_shards_info_value(
-    decoded: &tonutils_liteclient::boc::DecodedAllShardsInfo,
+    decoded: &tonutils::liteclient::boc::DecodedAllShardsInfo,
 ) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
@@ -744,7 +759,7 @@ pub(super) fn decoded_all_shards_info_value(
 }
 
 pub(super) fn decoded_config_info_value(
-    decoded: &tonutils_liteclient::boc::DecodedConfigInfo,
+    decoded: &tonutils::liteclient::boc::DecodedConfigInfo,
 ) -> Value {
     json!({
         "mode": decoded.raw.mode,
@@ -794,7 +809,7 @@ pub(super) fn libraries_value(
 }
 
 pub(super) fn decoded_libraries_with_proof_value(
-    decoded: &tonutils_liteclient::boc::DecodedLibrariesWithProof,
+    decoded: &tonutils::liteclient::boc::DecodedLibrariesWithProof,
 ) -> Value {
     json!({
         "mode": decoded.raw.mode,
@@ -839,8 +854,8 @@ pub(super) async fn get_config_all_client(
     block: BlockIdExt,
     flags: &ConfigModeFlags,
 ) -> std::result::Result<
-    tonutils_liteclient::boc::DecodedConfigInfo,
-    tonutils_liteclient::types::LiteError,
+    tonutils::liteclient::boc::DecodedConfigInfo,
+    tonutils::liteclient::types::LiteError,
 > {
     client
         .get_config_all_typed(
@@ -866,8 +881,8 @@ pub(super) async fn get_config_params_client(
     params: Vec<i32>,
     flags: &ConfigModeFlags,
 ) -> std::result::Result<
-    tonutils_liteclient::boc::DecodedConfigInfo,
-    tonutils_liteclient::types::LiteError,
+    tonutils::liteclient::boc::DecodedConfigInfo,
+    tonutils::liteclient::types::LiteError,
 > {
     client
         .get_config_params_typed(
@@ -893,8 +908,8 @@ pub(super) async fn get_config_all_balancer(
     block: BlockIdExt,
     flags: &ConfigModeFlags,
 ) -> std::result::Result<
-    tonutils_liteclient::boc::DecodedConfigInfo,
-    tonutils_liteclient::balancer::BalancerError,
+    tonutils::liteclient::boc::DecodedConfigInfo,
+    tonutils::liteclient::balancer::BalancerError,
 > {
     balancer
         .get_config_all_typed(
@@ -920,8 +935,8 @@ pub(super) async fn get_config_params_balancer(
     params: Vec<i32>,
     flags: &ConfigModeFlags,
 ) -> std::result::Result<
-    tonutils_liteclient::boc::DecodedConfigInfo,
-    tonutils_liteclient::balancer::BalancerError,
+    tonutils::liteclient::boc::DecodedConfigInfo,
+    tonutils::liteclient::balancer::BalancerError,
 > {
     balancer
         .get_config_params_typed(
@@ -942,7 +957,9 @@ pub(super) async fn get_config_params_balancer(
         .await
 }
 
-pub(super) fn account_state_view(state: tonutils::tl::response::AccountState) -> AccountStateView {
+pub(super) fn account_state_view(
+    state: &tonutils::liteclient::tl::LiteServerAccountState,
+) -> AccountStateView {
     AccountStateView {
         block: block_id_ext_view(&state.id),
         shard_block: block_id_ext_view(&state.shardblk),

@@ -1,8 +1,17 @@
-use super::*;
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
+use super::{
+    load_maybe_anycast, load_maybe_ref_cell, load_maybe_tick_tock, load_message_body,
+    load_message_init, load_state_init_prefix, load_two_bit_tag, store_maybe_anycast,
+    store_maybe_tick_tock, store_message_body, store_message_init, store_state_init_prefix,
+    validate_bit_string,
+};
 
-use crate::{
-    Either, Result, TlbDeserialize, TlbError, TlbSerialize, load_var_uint, store_tag,
-    store_var_uint,
+use crate::tlb::{
+    Either, TlbDeserialize, TlbError, TlbResult, TlbSerialize, load_var_uint, store_tag,
+    store_var_uint, tlb_to_tvm_error,
 };
 use num_bigint::BigUint;
 use std::sync::Arc;
@@ -30,7 +39,7 @@ pub struct Anycast {
 }
 
 impl TlbSerialize for Anycast {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         validate_bit_string(
             "Anycast.rewrite_pfx",
             &self.rewrite_pfx,
@@ -49,7 +58,7 @@ impl TlbSerialize for Anycast {
 }
 
 impl TlbDeserialize for Anycast {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let depth = slice.load_uint_custom::<u8>(5)?;
         if !(1..=30).contains(&depth) {
             return Err(TlbError::CustomSchema {
@@ -96,12 +105,12 @@ impl MsgAddressInt {
 }
 
 impl TlbSerialize for MsgAddressInt {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Std { anycast, address } => {
                 store_tag(builder, "10")?;
-                store_maybe_anycast(builder, anycast)?;
-                builder.store_int(address.workchain as i64, 8)?;
+                store_maybe_anycast(builder, anycast.as_ref())?;
+                builder.store_int(i64::from(address.workchain), 8)?;
                 builder.store_bytes(&address.hash_part)?;
             }
             Self::Var {
@@ -118,9 +127,9 @@ impl TlbSerialize for MsgAddressInt {
                     });
                 }
                 store_tag(builder, "11")?;
-                store_maybe_anycast(builder, anycast)?;
+                store_maybe_anycast(builder, anycast.as_ref())?;
                 builder.store_uint_custom::<u16>(*bit_len as u16, 9)?;
-                builder.store_int(*workchain_id as i64, 32)?;
+                builder.store_int(i64::from(*workchain_id), 32)?;
                 builder.store_bits(address, *bit_len)?;
             }
         }
@@ -129,7 +138,7 @@ impl TlbSerialize for MsgAddressInt {
 }
 
 impl TlbDeserialize for MsgAddressInt {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         match load_two_bit_tag(slice, "MsgAddressInt", "10|11")?.as_str() {
             "10" => {
                 let anycast = load_maybe_anycast(slice)?;
@@ -177,7 +186,7 @@ pub enum MsgAddressExt {
 }
 
 impl TlbSerialize for MsgAddressExt {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::None => store_tag(builder, "00")?,
             Self::Extern { data, bit_len } => {
@@ -198,7 +207,7 @@ impl TlbSerialize for MsgAddressExt {
 }
 
 impl TlbDeserialize for MsgAddressExt {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         match load_two_bit_tag(slice, "MsgAddressExt", "00|01")?.as_str() {
             "00" => Ok(Self::None),
             "01" => {
@@ -225,7 +234,7 @@ pub enum MsgAddress {
 }
 
 impl TlbSerialize for MsgAddress {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Int(address) => address.store_tlb(builder),
             Self::Ext(address) => address.store_tlb(builder),
@@ -234,7 +243,7 @@ impl TlbSerialize for MsgAddress {
 }
 
 impl TlbDeserialize for MsgAddress {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         match load_two_bit_tag(slice, "MsgAddress", "00|01|10|11")?.as_str() {
             "00" => Ok(Self::Ext(MsgAddressExt::None)),
             "01" => {
@@ -284,13 +293,13 @@ impl From<u64> for Grams {
 }
 
 impl TlbSerialize for Grams {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         store_var_uint(builder, &self.0, VAR_UINT_16_LEN_BITS)
     }
 }
 
 impl TlbDeserialize for Grams {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self(load_var_uint(slice, VAR_UINT_16_LEN_BITS)?))
     }
 }
@@ -315,7 +324,7 @@ impl CurrencyCollection {
 }
 
 impl TlbSerialize for CurrencyCollection {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         if self.other.key_bits() != EXTRA_CURRENCY_KEY_BITS {
             return Err(TlbError::CustomSchema {
                 schema: "CurrencyCollection",
@@ -335,10 +344,10 @@ impl TlbSerialize for CurrencyCollection {
 }
 
 impl TlbDeserialize for CurrencyCollection {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let grams = Grams::load_tlb(slice)?;
         let other = slice.load_hashmap_e_with(EXTRA_CURRENCY_KEY_BITS, |slice| {
-            load_var_uint(slice, VAR_UINT_32_LEN_BITS).map_err(anyhow::Error::from)
+            load_var_uint(slice, VAR_UINT_32_LEN_BITS).map_err(tlb_to_tvm_error)
         })?;
         Ok(Self { grams, other })
     }
@@ -354,7 +363,7 @@ pub struct TickTock {
 }
 
 impl TlbSerialize for TickTock {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_bit(self.tick)?;
         builder.store_bit(self.tock)?;
         Ok(())
@@ -362,7 +371,7 @@ impl TlbSerialize for TickTock {
 }
 
 impl TlbDeserialize for TickTock {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             tick: slice.load_bit()?,
             tock: slice.load_bit()?,
@@ -399,7 +408,7 @@ impl StateInit {
 }
 
 impl TlbSerialize for StateInit {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self.fixed_prefix_length {
             Some(value) => {
                 if value >= 32 {
@@ -415,7 +424,7 @@ impl TlbSerialize for StateInit {
                 builder.store_bit(false)?;
             }
         }
-        store_maybe_tick_tock(builder, &self.special)?;
+        store_maybe_tick_tock(builder, self.special.as_ref())?;
         builder.store_maybe_ref(self.code.clone())?;
         builder.store_maybe_ref(self.data.clone())?;
         builder.store_maybe_ref(self.library.clone())?;
@@ -424,7 +433,7 @@ impl TlbSerialize for StateInit {
 }
 
 impl TlbDeserialize for StateInit {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let fixed_prefix_length = if slice.load_bit()? {
             Some(slice.load_uint_custom::<u8>(5)?)
         } else {
@@ -450,7 +459,7 @@ pub struct SimpleLib {
 }
 
 impl TlbSerialize for SimpleLib {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_bit(self.public)?;
         builder.store_ref(self.root.clone())?;
         Ok(())
@@ -458,7 +467,7 @@ impl TlbSerialize for SimpleLib {
 }
 
 impl TlbDeserialize for SimpleLib {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             public: slice.load_bit()?,
             root: slice.load_reference()?,
@@ -495,13 +504,13 @@ impl StateInitWithLibs {
 }
 
 impl TlbSerialize for StateInitWithLibs {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         store_state_init_prefix(
             builder,
             self.fixed_prefix_length,
-            &self.special,
-            &self.code,
-            &self.data,
+            self.special.as_ref(),
+            self.code.as_ref(),
+            self.data.as_ref(),
             "StateInitWithLibs.fixed_prefix_length",
         )?;
         if self.library.key_bits() != STATE_INIT_LIBRARY_KEY_BITS {
@@ -514,18 +523,17 @@ impl TlbSerialize for StateInitWithLibs {
             });
         }
         builder.store_hashmap_e_with(&self.library, |builder, value| {
-            value.store_tlb(builder)?;
-            Ok(())
+            value.store_tlb(builder).map_err(tlb_to_tvm_error)
         })?;
         Ok(())
     }
 }
 
 impl TlbDeserialize for StateInitWithLibs {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let (fixed_prefix_length, special, code, data) = load_state_init_prefix(slice)?;
         let library = slice.load_hashmap_e_with(STATE_INIT_LIBRARY_KEY_BITS, |slice| {
-            SimpleLib::load_tlb(slice).map_err(anyhow::Error::from)
+            SimpleLib::load_tlb(slice).map_err(tlb_to_tvm_error)
         })?;
         Ok(Self {
             fixed_prefix_length,
@@ -586,7 +594,7 @@ pub enum CommonMsgInfo {
 }
 
 impl TlbSerialize for CommonMsgInfo {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Internal {
                 ihr_disabled,
@@ -640,7 +648,7 @@ impl TlbSerialize for CommonMsgInfo {
 }
 
 impl TlbDeserialize for CommonMsgInfo {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let first = slice.load_bit()?;
         if !first {
             return Ok(Self::Internal {
@@ -714,7 +722,7 @@ pub enum CommonMsgInfoRelaxed {
 }
 
 impl TlbSerialize for CommonMsgInfoRelaxed {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Internal {
                 ihr_disabled,
@@ -758,7 +766,7 @@ impl TlbSerialize for CommonMsgInfoRelaxed {
 }
 
 impl TlbDeserialize for CommonMsgInfoRelaxed {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let first = slice.load_bit()?;
         if !first {
             return Ok(Self::Internal {
@@ -804,16 +812,16 @@ pub struct Message {
 }
 
 impl TlbSerialize for Message {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         self.info.store_tlb(builder)?;
-        store_message_init(builder, &self.init)?;
+        store_message_init(builder, self.init.as_ref())?;
         store_message_body(builder, &self.body)?;
         Ok(())
     }
 }
 
 impl TlbDeserialize for Message {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let info = CommonMsgInfo::load_tlb(slice)?;
         let init = load_message_init(slice)?;
         let body = load_message_body(slice)?;
@@ -833,9 +841,9 @@ pub struct MessageRelaxed {
 }
 
 impl TlbSerialize for MessageRelaxed {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         self.info.store_tlb(builder)?;
-        store_message_init(builder, &self.init)?;
+        store_message_init(builder, self.init.as_ref())?;
         store_message_body(builder, &self.body)?;
         Ok(())
     }

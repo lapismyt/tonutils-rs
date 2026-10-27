@@ -19,16 +19,14 @@
 //!   is never answered - the wait loop only looks for a matching `Answer` - so
 //!   an `overlay.ping` received there leaves no trace in the overlay counters.
 
-use crate::{
-    adnl::udp::{
-        note_our_addr_version, note_peer_holds_our_addr, our_addr_view, session::SessionInner,
-    },
-    tl::{
-        AdnlMessage,
-        network::{OverlayQuery, PacketContents},
-    },
+use crate::adnl::{
+    tl::{AdnlMessage, PacketContents},
+    udp::{note_our_addr_version, note_peer_holds_our_addr, our_addr_view, session::SessionInner},
 };
 
+#[cfg(feature = "overlay")]
+use crate::overlay::tl::OverlayQuery;
+#[cfg(feature = "overlay")]
 use tl_proto::TlRead;
 
 impl SessionInner {
@@ -134,12 +132,17 @@ impl SessionInner {
             let AdnlMessage::Query { query_id, query } = message else {
                 continue;
             };
-            let mut wrapped: Option<(u32, String)> = None;
-            let mut rest: &[u8] = query;
-            if let Ok(OverlayQuery::Query { overlay }) = OverlayQuery::read_from(&mut rest) {
-                let inner = peek_u32(rest);
-                wrapped = inner.map(|id| (id, hex::encode(overlay.0)));
-            }
+            #[cfg(feature = "overlay")]
+            let wrapped = {
+                let mut rest: &[u8] = query;
+                if let Ok(OverlayQuery::Query { overlay }) = OverlayQuery::read_from(&mut rest) {
+                    peek_u32(rest).map(|id| (id, hex::encode(overlay.0)))
+                } else {
+                    None
+                }
+            };
+            #[cfg(not(feature = "overlay"))]
+            let wrapped: Option<(u32, String)> = None;
             match wrapped {
                 Some((inner, overlay)) => log::debug!(
                     "ADNL inbound overlay query: peer={:?} query_id={} inner=0x{inner:08x} overlay={overlay} len={}",

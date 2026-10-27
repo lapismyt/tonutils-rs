@@ -1,3 +1,8 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 //! Enhanced Builder for constructing cells with convenient methods
 //!
 //! This module provides a high-level builder (`Builder`) that wraps the low-level
@@ -46,11 +51,11 @@
 //! let cell = builder.build().unwrap();
 //! ```
 
-use crate::address::{Address, ExternalAddress};
-use crate::cell::{Cell, CellBuilder, MAX_CELL_BITS, MAX_CELL_REFS};
-use crate::slice::Slice;
-use crate::uint::UnsignedInteger;
-use anyhow::{Result, bail};
+use crate::tvm::address::{Address, ExternalAddress};
+use crate::tvm::cell::{Cell, CellBuilder, MAX_CELL_BITS, MAX_CELL_REFS};
+use crate::tvm::slice::Slice;
+use crate::tvm::uint::UnsignedInteger;
+use crate::tvm::{TvmResult as Result, error::builder_bail as bail};
 use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
 
@@ -360,7 +365,7 @@ impl Builder {
                 // addr_std$10 anycast:(Maybe Anycast) workchain_id:int8 address:bits256
                 self.store_bits(&[0b10], 2)?; // addr_std$10
                 self.store_bit(false)?; // no anycast
-                self.store_int(addr.workchain as i64, 8)?;
+                self.store_int(i64::from(addr.workchain), 8)?;
                 self.store_bytes(&addr.hash_part)?;
             }
         }
@@ -410,7 +415,7 @@ impl Default for Builder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Address, Builder};
 
     #[test]
     fn test_builder_basic() {

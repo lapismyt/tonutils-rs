@@ -10,16 +10,14 @@ use std::net::SocketAddr;
 use crate::{
     adnl::{
         AdnlError, encrypt_direct, now_i32,
+        tl::{AddressList, AdnlMessage, AdnlTlPublicKey as TlPublicKey, PacketContents},
         udp::{
             MAX_TRACKED_QUERIES, MAX_UDP_PACKET_SIZE, highest_received_seqno, local_reinit_date,
             next_outgoing_seqno, peer_reinit_date,
             session::{SessionInner, SessionState},
         },
     },
-    tl::{
-        AdnlMessage, Int256,
-        network::{AddressList, PacketContents, TlPublicKey},
-    },
+    tl::TlInt256 as Int256,
 };
 
 impl SessionInner {
@@ -80,6 +78,7 @@ impl SessionInner {
     /// the recorded endpoints could leave the whole session pinned to a
     /// dead one.  Everything else matches [`Self::send_contents`]; the
     /// adopted address is left untouched.
+    #[cfg(feature = "overlay")]
     pub(super) async fn send_contents_to(
         &self,
         contents: PacketContents,
@@ -99,7 +98,7 @@ impl SessionInner {
         contents: PacketContents,
         dest: Option<SocketAddr>,
     ) -> Result<usize, AdnlError> {
-        self.note_sent_queries(state, &contents);
+        Self::note_sent_queries(state, &contents);
         if state.channels.is_empty() {
             return self.send_direct_locked(state, contents, dest).await;
         }
@@ -232,7 +231,7 @@ impl SessionInner {
     /// the address, so an answer can arrive on a session that did not
     /// ask for it.  Recording the ids is what lets that be told apart
     /// from a peer that never replies.
-    fn note_sent_queries(&self, state: &mut SessionState, contents: &PacketContents) {
+    fn note_sent_queries(state: &mut SessionState, contents: &PacketContents) {
         for message in contents
             .message
             .iter()
@@ -252,7 +251,7 @@ impl SessionInner {
     /// Seeing this line while a sibling lookup session times out is the
     /// direct evidence that the peer answered for a query another
     /// session of the same ADNL node id is the one waiting for.
-    pub(super) fn log_stray_answers(&self, state: &SessionState, contents: &PacketContents) {
+    pub(super) fn log_stray_answers(state: &SessionState, contents: &PacketContents) {
         for message in contents
             .message
             .iter()

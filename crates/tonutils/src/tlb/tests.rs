@@ -1,8 +1,19 @@
-use super::*;
+use super::{
+    Either, Tlb, TlbDeserialize, TlbError, TlbResult, TlbSerialize, ensure_empty, expect_tag,
+    load_maybe, load_ref_tlb, load_var_uint, store_maybe, store_ref_tlb, store_tag, store_var_uint,
+};
 
 #[cfg(test)]
+#[expect(
+    clippy::module_inception,
+    reason = "The test file mirrors the owner module name for discoverability"
+)]
 mod tests {
-    use super::*;
+    use super::{
+        Either, Tlb, TlbDeserialize, TlbError, TlbResult, TlbSerialize, ensure_empty, expect_tag,
+        load_maybe, load_ref_tlb, load_var_uint, store_maybe, store_ref_tlb, store_tag,
+        store_var_uint,
+    };
     use num_bigint::BigUint;
     use tonutils::tvm::{Builder, Slice};
 
@@ -12,7 +23,7 @@ mod tests {
     }
 
     impl TlbSerialize for Tiny {
-        fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
             store_tag(builder, "101")?;
             builder.store_uint_custom::<u8>(self.value, 5)?;
             Ok(())
@@ -20,7 +31,7 @@ mod tests {
     }
 
     impl TlbDeserialize for Tiny {
-        fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
             expect_tag(slice, "tiny$101", "101")?;
             let value = slice.load_uint_custom::<u8>(5)?;
             Ok(Self { value })
@@ -30,15 +41,21 @@ mod tests {
     #[derive(Debug, Clone, PartialEq, Eq)]
     struct BitValue(bool);
 
+    #[derive(Debug, Clone, PartialEq, Eq, Tlb)]
+    #[tlb(tag = "0x1234")]
+    struct DerivedValue {
+        value: u32,
+    }
+
     impl TlbSerialize for BitValue {
-        fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+        fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
             builder.store_bit(self.0)?;
             Ok(())
         }
     }
 
     impl TlbDeserialize for BitValue {
-        fn load_tlb(slice: &mut Slice) -> Result<Self> {
+        fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
             Ok(Self(slice.load_bit()?))
         }
     }
@@ -48,6 +65,14 @@ mod tests {
         let original = Tiny { value: 0b1_0110 };
         let cell = original.to_cell().unwrap();
         let decoded = Tiny::from_cell(cell).unwrap();
+        assert_eq!(decoded, original);
+    }
+
+    #[test]
+    fn derive_roundtrip_uses_typed_tlb_results() {
+        let original = DerivedValue { value: 0xdead_beef };
+        let cell = original.to_cell().unwrap();
+        let decoded = DerivedValue::from_cell(cell).unwrap();
         assert_eq!(decoded, original);
     }
 
@@ -100,16 +125,20 @@ mod tests {
     #[test]
     fn either_left_and_right_paths() {
         let mut builder = Builder::new();
-        store_either::<BitValue, Tiny>(&mut builder, &Either::Left(BitValue(false))).unwrap();
-        store_either::<BitValue, Tiny>(&mut builder, &Either::Right(Tiny { value: 7 })).unwrap();
+        builder
+            .store_either(&Either::<BitValue, Tiny>::Left(BitValue(false)))
+            .unwrap();
+        builder
+            .store_either(&Either::<BitValue, Tiny>::Right(Tiny { value: 7 }))
+            .unwrap();
 
         let mut slice = Slice::new(builder.build().unwrap());
         assert_eq!(
-            load_either::<BitValue, Tiny>(&mut slice).unwrap(),
+            slice.load_either::<BitValue, Tiny>().unwrap(),
             Either::Left(BitValue(false))
         );
         assert_eq!(
-            load_either::<BitValue, Tiny>(&mut slice).unwrap(),
+            slice.load_either::<BitValue, Tiny>().unwrap(),
             Either::Right(Tiny { value: 7 })
         );
         ensure_empty(&slice).unwrap();

@@ -3,14 +3,15 @@
 //! A Slice provides a way to read data from a Cell sequentially,
 //! tracking the current position in both bits and references.
 
-use crate::cell::{Cell, MAX_CELL_BITS};
-use crate::uint::UnsignedInteger;
-use anyhow::{Result, bail};
+use crate::tvm::cell::{Cell, MAX_CELL_BITS};
+use crate::tvm::uint::UnsignedInteger;
+use crate::tvm::{TvmError, TvmResult as Result, error::slice_bail as bail};
 use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
 
 /// A slice for reading data from a cell
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct Slice {
     /// The cell being read
     cell: Arc<Cell>,
@@ -163,7 +164,8 @@ impl Slice {
         }
 
         let value = self.load_big_int(bits)?;
-        i64::try_from(value).map_err(|_| anyhow::anyhow!("Loaded signed integer does not fit i64"))
+        i64::try_from(value)
+            .map_err(|_| TvmError::Slice("Loaded signed integer does not fit i64".to_owned()))
     }
 
     /// Loads a signed big integer with a specific number of bits using two's complement.
@@ -177,10 +179,10 @@ impl Slice {
 
         let unsigned = self.load_big_uint(bits)?;
         let sign_bit = BigUint::from(1u8) << (bits - 1);
-        if (&unsigned & &sign_bit) != BigUint::from(0u8) {
-            Ok(BigInt::from(unsigned) - BigInt::from(BigUint::from(1u8) << bits))
-        } else {
+        if (&unsigned & &sign_bit) == BigUint::from(0u8) {
             Ok(BigInt::from(unsigned))
+        } else {
+            Ok(BigInt::from(unsigned) - BigInt::from(BigUint::from(1u8) << bits))
         }
     }
 
@@ -193,7 +195,7 @@ impl Slice {
         let reference = self
             .cell
             .reference(self.ref_pos)
-            .ok_or_else(|| anyhow::anyhow!("Reference not found"))?
+            .ok_or_else(|| TvmError::Slice("Reference not found".to_owned()))?
             .clone();
 
         self.ref_pos += 1;
@@ -205,7 +207,7 @@ impl Slice {
         let actual_index = self.ref_pos + index;
         self.cell
             .reference(actual_index)
-            .ok_or_else(|| anyhow::anyhow!("Reference not found at index {}", actual_index))
+            .ok_or_else(|| TvmError::Slice(format!("Reference not found at index {actual_index}")))
             .cloned()
     }
 
@@ -303,8 +305,10 @@ impl Slice {
 
     /// Loads a variable-length unsigned big integer (VarUInteger).
     pub fn load_var_big_uint(&mut self, length_bits: usize) -> Result<BigUint> {
-        let byte_len = usize::try_from(self.load_uint_custom::<u64>(length_bits)?)
-            .map_err(|_| anyhow::anyhow!("VarUInteger byte length does not fit usize"))?;
+        let byte_len =
+            usize::try_from(self.load_uint_custom::<u64>(length_bits)?).map_err(|_| {
+                TvmError::Slice("VarUInteger byte length does not fit usize".to_owned())
+            })?;
         if BigUint::from(byte_len) >= (BigUint::from(1u8) << length_bits) {
             bail!(
                 "VarUInteger byte length {} does not fit in {} length bits",
@@ -314,7 +318,7 @@ impl Slice {
         }
         let value_bits = byte_len
             .checked_mul(8)
-            .ok_or_else(|| anyhow::anyhow!("VarUInteger byte length overflow"))?;
+            .ok_or_else(|| TvmError::Slice("VarUInteger byte length overflow".to_owned()))?;
         if value_bits > self.remaining_bits() {
             bail!(
                 "Not enough bits remaining: requested {}, available {}",
@@ -347,7 +351,7 @@ impl Slice {
         let bytes = self.load_bytes(len)?;
         let mut result = 0u128;
         for &byte in &bytes {
-            result = (result << 8) | (byte as u128);
+            result = (result << 8) | u128::from(byte);
         }
 
         Ok(result)
@@ -362,8 +366,8 @@ impl From<Arc<Cell>> for Slice {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::cell::CellBuilder;
+    use super::Slice;
+    use crate::tvm::cell::CellBuilder;
 
     #[test]
     fn test_slice_load_bits() {

@@ -6,13 +6,17 @@
 
 use std::time::Duration;
 
-use crate::{
-    adnl::{AdnlKeyPair, AdnlUdpSession, AdnlUdpTransport},
-    tl::{AdnlMessage, Int256, network::PacketContents},
+use crate::adnl::{
+    AdnlKeyPair, AdnlUdpSession, AdnlUdpTransport,
+    tl::{AdnlMessage, PacketContents},
 };
+
+#[cfg(feature = "overlay")]
+use crate::tl::TlInt256 as Int256;
 
 /// One peer advertises several endpoints; a probe of one of them must
 /// not repoint the session at it.
+#[cfg(feature = "overlay")]
 #[tokio::test]
 async fn probe_sessions_keep_the_adopted_address() {
     let transport = AdnlUdpTransport::bind(

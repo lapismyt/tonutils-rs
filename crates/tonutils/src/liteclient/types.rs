@@ -2,11 +2,12 @@ use std::time::Duration;
 
 use crate::{
     adnl::helper_types::AdnlError,
-    tl::{
-        TlError,
-        request::WrappedRequest,
-        response::{Error, Response},
+    liteclient::{
+        boc::LiteBocError,
+        tl::{LiteServerError as Error, Response, WrappedRequest},
     },
+    tl::TlError,
+    tvm::TvmError,
 };
 
 use tower::Service;
@@ -26,11 +27,21 @@ pub enum LiteError {
     UnexpectedMessage,
     #[error("ADNL error: {0}")]
     AdnlError(#[from] AdnlError),
+    #[error("BoC decode error: {0}")]
+    Boc(#[from] LiteBocError),
+    #[error("typed decode error: {0}")]
+    Decode(#[from] TvmError),
     #[error("Unknown error: {0}")]
     UnknownError(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 pub type LiteResult<T> = Result<T, LiteError>;
+
+impl From<Error> for LiteError {
+    fn from(error: Error) -> Self {
+        Self::ServerError(error)
+    }
+}
 
 pub trait LiteService: Service<WrappedRequest, Response = Response, Error = LiteError>
 where

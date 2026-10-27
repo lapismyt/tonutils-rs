@@ -1,24 +1,37 @@
+#![expect(
+    clippy::cast_possible_wrap,
+    reason = "Test fixtures intentionally narrow generated values to protocol widths"
+)]
 use tl_proto::{deserialize, serialize};
 
-use crate::tl::{
-    BlockId, BlockIdExt, Error, Int256, NonfinalCandidateId, NonfinalCandidateInfo, Request,
-    Response, ZeroStateIdExt,
-    common::{BlockLink, LibraryEntry, Signature, SignatureSet, TlString},
-    request::{GetConfigAll, GetConfigParams, GetDispatchQueueMessages, LookupBlockWithProof},
-    response::{
-        AccountDispatchQueueInfo, AccountState, AllShardsInfo, BlockData, BlockHeader,
-        BlockOutMsgQueueSize, BlockState, BlockTransactions, BlockTransactionsExt, ConfigInfo,
-        CurrentTime, DispatchQueueInfo, DispatchQueueMessages, LibraryResult,
-        LibraryResultWithProof, LookupBlockResult, MasterchainInfo, MasterchainInfoExt,
-        NonfinalCandidate, NonfinalPendingShardBlocks, NonfinalValidatorGroupInfo,
-        NonfinalValidatorGroups, OutMsgQueueSize, OutMsgQueueSizes, PartialBlockProof,
-        RunMethodResult, SendMsgStatus, ShardBlockLink, ShardBlockProof, ShardInfo, TransactionId,
-        TransactionInfo, TransactionList, ValidatorStats, Version,
+use crate::{
+    liteclient::tl::{
+        AccountDispatchQueueInfo, AllShardsInfo, BlockData, BlockHeader, BlockOutMsgQueueSize,
+        BlockState, BlockTransactions, BlockTransactionsExt, ConfigInfo, CurrentTime,
+        DispatchQueueInfo, DispatchQueueMessages, GetConfigAll, GetConfigParams,
+        GetDispatchQueueMessages, LibraryResult, LibraryResultWithProof, LiteBlockId as BlockId,
+        LiteBlockIdExt as BlockIdExt, LiteBlockLink as BlockLink, LiteLibraryEntry as LibraryEntry,
+        LiteNonfinalCandidate as NonfinalCandidate, LiteNonfinalCandidateId as NonfinalCandidateId,
+        LiteNonfinalCandidateInfo as NonfinalCandidateInfo,
+        LiteNonfinalPendingShardBlocks as NonfinalPendingShardBlocks,
+        LiteNonfinalValidatorGroupInfo as NonfinalValidatorGroupInfo,
+        LiteNonfinalValidatorGroups as NonfinalValidatorGroups,
+        LiteServerAccountState as AccountState, LiteServerError as Error,
+        LiteSignature as Signature, LiteSignatureSet as SignatureSet,
+        LiteTransactionId as TransactionId, LiteZeroStateIdExt as ZeroStateIdExt,
+        LookupBlockResult, LookupBlockWithProof, MasterchainInfo, MasterchainInfoExt,
+        OutMsgQueueSize, OutMsgQueueSizes, PartialBlockProof, Request, Response, RunMethodResult,
+        SendMsgStatus, ShardBlockLink, ShardBlockProof, ShardInfo, TransactionInfo,
+        TransactionList, ValidatorStats, Version,
     },
-    tests::to_hex,
+    tl::{TlInt256 as Int256, TlString, tests::to_hex},
 };
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+)]
 fn response_roundtrip_all_constructors() {
     fn i(fill: u8) -> Int256 {
         Int256([fill; 32])
@@ -318,6 +331,10 @@ fn from_hex(input: &str) -> Vec<u8> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+)]
 fn golden_fixtures_high_risk_constructors() {
     const GET_CONFIG_ALL_HEX: &str = "b7261b9155810000ffffffff00000000000000800a00000011111111111111111111111111111111111111111111111111111111111111112222222222222222222222222222222222222222222222222222222222222222";
     const GET_CONFIG_PARAMS_HEX: &str = "191c112a03020000ffffffff00000000000000800b00000033333333333333333333333333333333333333333333333333333333333333334444444444444444444444444444444444444444444444444444444444444444030000000000000001000000e8030000";

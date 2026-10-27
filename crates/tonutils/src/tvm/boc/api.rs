@@ -1,5 +1,11 @@
-use crate::cell::Cell;
-use anyhow::{Result, bail};
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
+use crate::crc::CRC32;
+use crate::tvm::cell::Cell;
+use crate::tvm::{TvmError, TvmResult as Result, error::boc_bail as bail};
+use base64::Engine;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,7 +47,7 @@ pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
     let root_index = cells
         .iter()
         .position(|cell| cell.hash() == root.hash())
-        .ok_or_else(|| anyhow::anyhow!("Root cell not found in collected cells"))?;
+        .ok_or_else(|| TvmError::Boc("Root cell not found in collected cells".to_owned()))?;
 
     // Serialize each cell
     let mut serialized_cells = Vec::new();
@@ -54,7 +60,7 @@ pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
     }
 
     // Calculate total size of serialized cells
-    let cells_size: usize = serialized_cells.iter().map(|c| c.len()).sum();
+    let cells_size: usize = serialized_cells.iter().map(std::vec::Vec::len).sum();
 
     // Determine size parameters
     let offset_bytes = bytes_needed(cells_size);
@@ -67,7 +73,7 @@ pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
 
     // Flags and size
     let has_idx = 0u8;
-    let has_crc32_flag = if has_crc32 { 1u8 } else { 0u8 };
+    let has_crc32_flag = u8::from(has_crc32);
     let has_cache_bits = 0u8;
     let flags = (has_idx << 7) | (has_crc32_flag << 6) | (has_cache_bits << 5);
     let flags_and_size = flags | (size_bytes as u8);
@@ -98,7 +104,7 @@ pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
 
     // Add CRC32 if requested
     if has_crc32 {
-        let crc = tonutils::crc::CRC32.checksum(&result);
+        let crc = CRC32.checksum(&result);
         result.extend_from_slice(&crc.to_le_bytes());
     }
 
@@ -131,7 +137,7 @@ pub fn deserialize_boc(data: &[u8]) -> Result<Arc<Cell>> {
     roots
         .into_iter()
         .next()
-        .ok_or_else(|| anyhow::anyhow!("Expected single-root BoC, got 0 roots"))
+        .ok_or_else(|| TvmError::Boc("Expected single-root BoC, got 0 roots".to_owned()))
 }
 
 /// Inspects a generic BoC structurally and returns root hashes without
@@ -253,7 +259,7 @@ pub(super) fn parse_boc_generic_layout(
         let mut previous_offset = 0usize;
         for index in 0..cells_count {
             let offset = read_uint(data, &mut pos, offset_bytes)
-                .map_err(|_| anyhow::anyhow!("Malformed BoC index table"))?;
+                .map_err(|_| TvmError::Boc("Malformed BoC index table".to_owned()))?;
             if offset < previous_offset || offset > cells_size {
                 bail!("Malformed BoC index table");
             }
@@ -268,13 +274,13 @@ pub(super) fn parse_boc_generic_layout(
     let cells_start = pos;
     let cells_end = cells_start
         .checked_add(cells_size)
-        .ok_or_else(|| anyhow::anyhow!("Invalid cells size"))?;
+        .ok_or_else(|| TvmError::Boc("Invalid cells size".to_owned()))?;
 
     let checksum_size = if has_crc32 { 4 } else { 0 };
     let payload_end = data
         .len()
         .checked_sub(checksum_size)
-        .ok_or_else(|| anyhow::anyhow!("Missing CRC32"))?;
+        .ok_or_else(|| TvmError::Boc("Missing CRC32".to_owned()))?;
 
     if cells_end > payload_end {
         bail!("Invalid cells size");
@@ -296,7 +302,7 @@ pub(super) fn parse_boc_generic_layout(
             data[cells_end + 2],
             data[cells_end + 3],
         ]);
-        let actual_crc = tonutils::crc::CRC32.checksum(&data[..cells_end]);
+        let actual_crc = CRC32.checksum(&data[..cells_end]);
         if expected_crc != actual_crc {
             bail!(
                 "CRC32 mismatch: expected 0x{:08x}, got 0x{:08x}",
@@ -363,7 +369,7 @@ pub(super) fn parse_raw_cells(
         let mut refs = Vec::with_capacity(ref_count);
         for _ in 0..ref_count {
             refs.push(read_uint(data, &mut pos, ref_index_size).map_err(|_| {
-                anyhow::anyhow!("Unexpected end of cells data while reading references")
+                TvmError::Boc("Unexpected end of cells data while reading references".to_owned())
             })?);
         }
 
@@ -505,7 +511,7 @@ pub(super) fn parse_cells(
         let mut refs = Vec::new();
         for _ in 0..ref_count {
             refs.push(read_uint(data, &mut pos, ref_index_size).map_err(|_| {
-                anyhow::anyhow!("Unexpected end of cells data while reading references")
+                TvmError::Boc("Unexpected end of cells data while reading references".to_owned())
             })?);
         }
         cell_refs.push(refs);
@@ -543,7 +549,7 @@ pub(super) fn parse_cells(
 
     cells
         .into_iter()
-        .map(|cell| cell.ok_or_else(|| anyhow::anyhow!("BoC cell was not resolved")))
+        .map(|cell| cell.ok_or_else(|| TvmError::Boc("BoC cell was not resolved".to_owned())))
         .collect()
 }
 
@@ -569,7 +575,7 @@ pub(super) fn build_parsed_cell(
         ParsedCellState::Done => {
             return cells[index]
                 .clone()
-                .ok_or_else(|| anyhow::anyhow!("BoC cell was not resolved"));
+                .ok_or_else(|| TvmError::Boc("BoC cell was not resolved".to_owned()));
         }
         ParsedCellState::Visiting => bail!("BoC cell graph contains a reference cycle"),
         ParsedCellState::Unvisited => {}
@@ -599,7 +605,7 @@ pub(super) fn build_parsed_cell(
             cell_bit_lens[index],
             references,
         )
-        .map_err(|err| anyhow::anyhow!("Invalid exotic cell: {}", err))?
+        .map_err(|err| TvmError::Boc(format!("Invalid exotic cell: {err}")))?
     } else {
         let mut cell = Cell::with_data(cell_raw_data[index].clone(), cell_bit_lens[index])?;
         for reference in references {
@@ -639,15 +645,15 @@ pub(super) fn decode_cell_data(data: &[u8], d2: u8) -> Result<(Vec<u8>, usize)> 
     let mut cell_data = data.to_vec();
     let last_byte = *cell_data
         .last()
-        .ok_or_else(|| anyhow::anyhow!("Partial cell data is missing top-up byte"))?;
+        .ok_or_else(|| TvmError::Boc("Partial cell data is missing top-up byte".to_owned()))?;
     if last_byte == 0 {
         bail!("Malformed partial cell data: missing top-up bit");
     }
 
     let zero_padding_bits = last_byte.trailing_zeros() as usize;
-    let data_bits_in_last_byte = 7usize
-        .checked_sub(zero_padding_bits)
-        .ok_or_else(|| anyhow::anyhow!("Malformed partial cell data: invalid top-up bit"))?;
+    let data_bits_in_last_byte = 7usize.checked_sub(zero_padding_bits).ok_or_else(|| {
+        TvmError::Boc("Malformed partial cell data: invalid top-up bit".to_owned())
+    })?;
     if data_bits_in_last_byte == 0 {
         bail!("Malformed partial cell data: top-up bit without data bits");
     }
@@ -680,7 +686,7 @@ pub(super) fn serialize_cell(
         let ref_hash = cell_hash(reference);
         let ref_idx = cell_map
             .get(&ref_hash)
-            .ok_or_else(|| anyhow::anyhow!("Reference not found in cell map"))?;
+            .ok_or_else(|| TvmError::Boc("Reference not found in cell map".to_owned()))?;
 
         write_uint(&mut result, *ref_idx, ref_index_size);
     }
@@ -757,8 +763,8 @@ pub(super) fn read_uint(data: &[u8], pos: &mut usize, size: usize) -> Result<usi
 
 /// Converts a hex string to a BoC
 pub fn hex_to_boc(hex: &str) -> Result<Arc<Cell>> {
-    let hex = hex.trim().replace(" ", "").replace("\n", "");
-    let bytes = hex::decode(&hex).map_err(|e| anyhow::anyhow!("Failed to decode hex: {}", e))?;
+    let hex = hex.trim().replace([' ', '\n'], "");
+    let bytes = hex::decode(&hex).map_err(TvmError::Hex)?;
     deserialize_boc(&bytes)
 }
 
@@ -770,16 +776,14 @@ pub fn boc_to_hex(cell: &Arc<Cell>, has_crc32: bool) -> Result<String> {
 
 /// Converts a BoC to base64
 pub fn boc_to_base64(cell: &Arc<Cell>, has_crc32: bool) -> Result<String> {
-    use base64::Engine;
     let bytes = serialize_boc(cell, has_crc32)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
 /// Converts a base64 string to a BoC
 pub fn base64_to_boc(b64: &str) -> Result<Arc<Cell>> {
-    use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64)
-        .map_err(|e| anyhow::anyhow!("Failed to decode base64: {}", e))?;
+        .map_err(TvmError::Base64)?;
     deserialize_boc(&bytes)
 }

@@ -8,9 +8,10 @@ use crate::{
     liteclient::{
         LiteBalancer, LiteClient,
         balancer::types::{PeerState, PeerStats},
+        tl::{RawWrappedRequest, Response, SendMsgStatus},
         types::LiteError,
     },
-    tl::{RawWrappedRequest, Response, TlError, response::SendMsgStatus},
+    tl::TlError,
 };
 
 use tokio::sync::Mutex;

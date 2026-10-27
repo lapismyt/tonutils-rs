@@ -48,7 +48,7 @@ pub(super) fn mark_inbound_thread() {
 
 /// Whether the caller runs on the inbound executor thread.
 pub(super) fn on_inbound_thread() -> bool {
-    ON_INBOUND_THREAD.with(|flag| flag.get())
+    ON_INBOUND_THREAD.with(std::cell::Cell::get)
 }
 
 /// Handle to the inbound executor, created on its first use.
@@ -84,7 +84,7 @@ pub(super) fn handle() -> &'static tokio::runtime::Handle {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{handle, on_inbound_thread};
 
     /// The marker distinguishes the inbound executor thread from every
     /// other thread: the shared-socket send path relies on it to take

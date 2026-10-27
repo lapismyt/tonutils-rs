@@ -1,3 +1,9 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "Wallet IDs and TON wire fields intentionally use their protocol widths"
+)]
 use bip39::{Language, Mnemonic};
 use ed25519_dalek::SigningKey;
 use hmac::{Hmac, Mac};
@@ -8,8 +14,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, OnceLock};
 use std::thread;
-use tonutils::tlb::{TlbDeserialize, TlbError, TlbSerialize};
-use tonutils::tvm::{Address, BitKey, Builder, Cell, HashmapE, Slice};
+use tonutils::tlb::{TlbDeserialize, TlbError, TlbResult, TlbSerialize};
+use tonutils::tvm::{Address, BitKey, Builder, Cell, HashmapE, Slice, TvmError, deserialize_boc};
 
 pub(super) const TON_MNEMONIC_WORD_COUNT: usize = 24;
 pub(super) const TON_DEFAULT_SEED: &[u8] = b"TON default seed";
@@ -87,7 +93,7 @@ pub enum WalletError {
     #[error("failed to serialize wallet TL-B value: {0}")]
     Tlb(#[from] TlbError),
     #[error("failed to build wallet cell or BoC: {0}")]
-    Tvm(#[from] anyhow::Error),
+    Tvm(#[from] TvmError),
 }
 
 /// Wallet contract versions supported by the offline helpers and CLI.
@@ -136,7 +142,7 @@ impl TonMnemonic {
             let phrase = mnemonic.to_string();
             if validate_ton_mnemonic_phrase(&phrase, password).is_ok() {
                 let words = mnemonic.words().map(str::to_owned).collect::<Vec<_>>();
-                return Self::from_validated_words(words, password);
+                return Ok(Self::from_validated_words(words, password));
             }
         }
     }
@@ -191,10 +197,10 @@ impl TonMnemonic {
             }
             drop(tx);
             rx.recv()
-                .unwrap_or_else(|_| Err(WalletError::InvalidMnemonicSeedVersion))
+                .unwrap_or(Err(WalletError::InvalidMnemonicSeedVersion))
         })?;
 
-        Self::from_validated_words(words, password)
+        Ok(Self::from_validated_words(words, password))
     }
 
     /// Imports and validates a TON mnemonic.
@@ -209,13 +215,10 @@ impl TonMnemonic {
     /// Imports and validates TON mnemonic words.
     pub fn from_words(words: Vec<String>, password: Option<&str>) -> Result<Self, WalletError> {
         validate_ton_mnemonic_words(&words, password)?;
-        Self::from_validated_words(words, password)
+        Ok(Self::from_validated_words(words, password))
     }
 
-    fn from_validated_words(
-        words: Vec<String>,
-        password: Option<&str>,
-    ) -> Result<Self, WalletError> {
+    fn from_validated_words(words: Vec<String>, password: Option<&str>) -> Self {
         let seed = ton_mnemonic_seed(
             &words,
             TON_DEFAULT_SEED,
@@ -224,10 +227,10 @@ impl TonMnemonic {
         );
         let mut secret = [0u8; 32];
         secret.copy_from_slice(&seed[..32]);
-        Ok(Self {
+        Self {
             words,
             signing_key: SigningKey::from_bytes(&secret),
-        })
+        }
     }
 
     /// Returns mnemonic words.
@@ -331,7 +334,7 @@ pub(super) fn validate_ton_seed_version_byte(
     byte: u8,
     password: Option<&str>,
 ) -> Result<(), WalletError> {
-    let expected = if password.is_some() { 1 } else { 0 };
+    let expected = u8::from(password.is_some());
     if byte != expected {
         return Err(WalletError::InvalidMnemonicSeedVersion);
     }
@@ -461,7 +464,7 @@ impl Default for WalletV5R1Extensions {
 }
 
 impl TlbSerialize for WalletV5R1Extensions {
-    fn store_tlb(&self, builder: &mut Builder) -> tonutils::tlb::Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_hashmap_e_with(&self.inner, |builder, value| {
             builder.store_bit(*value)?;
             Ok(())
@@ -471,9 +474,8 @@ impl TlbSerialize for WalletV5R1Extensions {
 }
 
 impl TlbDeserialize for WalletV5R1Extensions {
-    fn load_tlb(slice: &mut Slice) -> tonutils::tlb::Result<Self> {
-        let inner =
-            slice.load_hashmap_e_with(WALLET_V5R1_EXTENSIONS_KEY_BITS, |slice| slice.load_bit())?;
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
+        let inner = slice.load_hashmap_e_with(WALLET_V5R1_EXTENSIONS_KEY_BITS, Slice::load_bit)?;
         Self::from_hashmap(inner).map_err(|error| TlbError::CustomSchema {
             schema: "WalletV5R1Extensions",
             message: error.to_string(),
@@ -501,7 +503,7 @@ impl WalletV5R1Data {
 }
 
 impl TlbSerialize for WalletV5R1Data {
-    fn store_tlb(&self, builder: &mut Builder) -> tonutils::tlb::Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         if self.extensions.key_bits() != WALLET_V5R1_EXTENSIONS_KEY_BITS {
             return Err(TlbError::CustomSchema {
                 schema: "WalletV5R1Data.extensions",
@@ -525,7 +527,7 @@ impl TlbSerialize for WalletV5R1Data {
 }
 
 impl TlbDeserialize for WalletV5R1Data {
-    fn load_tlb(slice: &mut Slice) -> tonutils::tlb::Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             is_signature_allowed: slice.load_bit()?,
             seqno: slice.load_u32()?,
@@ -536,7 +538,7 @@ impl TlbDeserialize for WalletV5R1Data {
                 bytes
             },
             extensions: slice
-                .load_hashmap_e_with(WALLET_V5R1_EXTENSIONS_KEY_BITS, |slice| slice.load_bit())?,
+                .load_hashmap_e_with(WALLET_V5R1_EXTENSIONS_KEY_BITS, Slice::load_bit)?,
         })
     }
 }
@@ -567,7 +569,7 @@ impl WalletV4R2Data {
 }
 
 impl TlbSerialize for WalletV4R2Data {
-    fn store_tlb(&self, builder: &mut Builder) -> tonutils::tlb::Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         if self.plugins.key_bits() != WALLET_V4R2_PLUGINS_KEY_BITS {
             return Err(TlbError::CustomSchema {
                 schema: "WalletV4R2Data.plugins",
@@ -590,7 +592,7 @@ impl TlbSerialize for WalletV4R2Data {
 }
 
 impl TlbDeserialize for WalletV4R2Data {
-    fn load_tlb(slice: &mut Slice) -> tonutils::tlb::Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             seqno: slice.load_u32()?,
             wallet_id: slice.load_u32()?,
@@ -599,8 +601,7 @@ impl TlbDeserialize for WalletV4R2Data {
                 bytes.copy_from_slice(&slice.load_bytes(32)?);
                 bytes
             },
-            plugins: slice
-                .load_hashmap_e_with(WALLET_V4R2_PLUGINS_KEY_BITS, |slice| slice.load_bit())?,
+            plugins: slice.load_hashmap_e_with(WALLET_V4R2_PLUGINS_KEY_BITS, Slice::load_bit)?,
         })
     }
 }
@@ -629,14 +630,14 @@ pub(super) fn decode_wallet_v4r2_code() -> Result<Arc<Cell>, WalletError> {
     let mut bytes = hex::decode(WALLET_V4R2_CODE_BOC_HEX)
         .map_err(|error| WalletError::CodeDecode(error.to_string()))?;
     strip_boc_crc32c_for_local_decoder(&mut bytes);
-    tonutils::tvm::deserialize_boc(&bytes).map_err(WalletError::Tvm)
+    deserialize_boc(&bytes).map_err(WalletError::Tvm)
 }
 
 pub(super) fn decode_wallet_v5r1_code() -> Result<Arc<Cell>, WalletError> {
     let mut bytes = hex::decode(WALLET_V5R1_CODE_BOC_HEX)
         .map_err(|error| WalletError::CodeDecode(error.to_string()))?;
     strip_boc_crc32c_for_local_decoder(&mut bytes);
-    tonutils::tvm::deserialize_boc(&bytes).map_err(WalletError::Tvm)
+    deserialize_boc(&bytes).map_err(WalletError::Tvm)
 }
 
 pub(super) fn strip_boc_crc32c_for_local_decoder(bytes: &mut Vec<u8>) {
@@ -710,7 +711,7 @@ impl WalletV5R1WalletId {
             WalletV5R1Context::Client {
                 workchain: ((context_id >> 23) as u8) as i8,
                 wallet_version: (context_id >> 15) as u8,
-                subwallet_number: (context_id & WALLET_V5R1_CLIENT_SUBWALLET_MAX as u32) as u16,
+                subwallet_number: (context_id & u32::from(WALLET_V5R1_CLIENT_SUBWALLET_MAX)) as u16,
             }
         } else {
             WalletV5R1Context::Custom(context_id)
@@ -729,15 +730,15 @@ impl WalletV5R1WalletId {
                 wallet_version,
                 subwallet_number,
             } => {
-                if subwallet_number as u32 > WALLET_V5R1_CLIENT_SUBWALLET_MAX as u32 {
-                    return Err(WalletError::SubwalletNumberTooLarge(
-                        subwallet_number as u32,
-                    ));
+                if u32::from(subwallet_number) > u32::from(WALLET_V5R1_CLIENT_SUBWALLET_MAX) {
+                    return Err(WalletError::SubwalletNumberTooLarge(u32::from(
+                        subwallet_number,
+                    )));
                 }
                 WALLET_V5R1_CLIENT_CONTEXT_FLAG
-                    | ((workchain as u8 as u32) << 23)
-                    | ((wallet_version as u32) << 15)
-                    | subwallet_number as u32
+                    | (u32::from(workchain as u8) << 23)
+                    | (u32::from(wallet_version) << 15)
+                    | u32::from(subwallet_number)
             }
             WalletV5R1Context::Custom(value) => {
                 if value & WALLET_V5R1_CLIENT_CONTEXT_FLAG != 0 {
@@ -752,6 +753,7 @@ impl WalletV5R1WalletId {
 
 /// A Wallet V5R1 outbound internal message action.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
 pub struct WalletMessage {
     /// Send mode used by `action_send_msg`.
     pub mode: u8,

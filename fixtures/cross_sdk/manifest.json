@@ -1,6 +1,6 @@
 {
  "schema_revision": "upstream:3d478cbde854be03a18ab2a59f8fc3c565cf7d14;sha256:d6137cbeaa3324b632ccff597bc12c6bd7c194a7b6574fc57776266906cb90d6;constructors:672",
- "comparison_rule": "Each case defines canonical logical fields. Every listed reference serializes those fields through its own TL engine; raw_hex is the byte string all implementations must produce for the identical input. The Rust test in crates/tonutils-tl/src/tl/cross_sdk.rs asserts that tonutils-rs serialization equals raw_hex and that reference bytes roundtrip through our decoders byte-for-byte. Field-to-field semantic relations (signatures, derived ids) are intentionally not checked; these fixtures compare wire layout only.",
+ "comparison_rule": "Each case defines canonical logical fields. Every listed reference serializes those fields through its own TL engine; raw_hex is the byte string all implementations must produce for the identical input. The Rust test in crates/tonutils/src/tl/tests/cross_sdk.rs asserts that tonutils-rs serialization equals raw_hex and that reference bytes roundtrip through our decoders byte-for-byte. Field-to-field semantic relations (signatures, derived ids) are intentionally not checked; these fixtures compare wire layout only.",
  "references": [
   {
    "name": "tonutils-go",

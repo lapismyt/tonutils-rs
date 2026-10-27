@@ -6,15 +6,16 @@
 
 use std::collections::VecDeque;
 
-use crate::{
-    adnl::{AdnlError, AdnlKeyPair, AdnlPublicKey, udp::MAX_UDP_PACKET_SIZE},
-    tl::network::PacketContents,
+use crate::adnl::{
+    AdnlError, AdnlKeyPair, AdnlPublicKey, tl::PacketContents, udp::MAX_UDP_PACKET_SIZE,
 };
 
 use aes::cipher::{KeyIvInit, StreamCipher};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tokio_util::bytes::Bytes;
+
+use super::raw_packet_flags;
 
 /// AES-CTR channel cipher used after an ADNL channel is established.
 ///
@@ -232,7 +233,7 @@ impl AdnlChannelPacket {
     /// Encrypts `contents` for an established channel.
     ///
     /// `seqno` and `confirm_seqno` are assigned from the channel's own
-    /// counters when the caller left them unset.  [`AdnlUdpSession`] always
+    /// counters when the caller left them unset. `AdnlUdpSession` always
     /// sets them first, because the peer pair - not the channel - owns that
     /// counter; standalone users keep the channel-local behaviour.
     pub fn encode(&mut self, mut contents: PacketContents) -> Result<Bytes, AdnlError> {
@@ -269,7 +270,7 @@ impl AdnlChannelPacket {
             let prefix = hex::encode(payload.iter().take(96).copied().collect::<Vec<_>>());
             AdnlError::MalformedPacket(format!("{error} (channel payload={prefix})"))
         })?;
-        if let Some(flags) = super::raw_packet_flags(&payload) {
+        if let Some(flags) = raw_packet_flags(&payload) {
             log::debug!(
                 "flags probe: kind=channel chan={} raw=0x{flags:08x} recv_v={:?} recv_prio={:?}",
                 hex::encode(&self.inbound_id[..8]),

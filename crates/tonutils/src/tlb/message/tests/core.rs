@@ -1,5 +1,14 @@
-use super::*;
-use crate::{TlbSerialize, expect_tag};
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "Test fixtures intentionally narrow generated values to protocol widths"
+)]
+use super::{
+    Address, Anycast, Arc, BigUint, Builder, Cell, CommonMsgInfo, CommonMsgInfoRelaxed,
+    CurrencyCollection, Either, Grams, HashmapE, Message, MessageRelaxed, MsgAddress,
+    MsgAddressExt, MsgAddressInt, OutAction, SimpleLib, Slice, StateInit, StateInitWithLibs,
+    TickTock, TlbDeserialize, TlbError, store_tag,
+};
+use crate::tlb::{TlbSerialize, expect_tag};
 use tonutils::tvm::BitKey;
 
 pub(super) fn roundtrip<T>(value: &T) -> T

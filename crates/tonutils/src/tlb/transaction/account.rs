@@ -1,11 +1,15 @@
-use super::*;
+use super::{
+    TransactionDescr, expect_tag_bits, expect_u8_tag, load_maybe_ref_message, load_tag_bit,
+    load_three_bit_tag, load_two_bit_tag, store_maybe_i32, store_maybe_ref_message,
+    store_maybe_var_uint_3, store_var_uint_7,
+};
 
-use crate::{
+use crate::tlb::{
     AccStatusChange, CurrencyCollection, Grams, Message, MsgAddressInt, StateInit, StorageUsed,
 };
-use crate::{
-    Result, TlbDeserialize, TlbError, TlbSerialize, ensure_empty, load_maybe, load_ref_tlb,
-    store_maybe, store_ref_tlb, store_tag,
+use crate::tlb::{
+    TlbDeserialize, TlbError, TlbResult, TlbSerialize, ensure_empty, load_maybe, load_ref_tlb,
+    store_maybe, store_ref_tlb, store_tag, tlb_to_tvm_error,
 };
 use num_bigint::BigUint;
 use tonutils::tvm::{Builder, HashmapAug, HashmapAugE, HashmapE, Slice};
@@ -29,7 +33,7 @@ pub enum StorageExtraInfo {
 }
 
 impl TlbSerialize for StorageExtraInfo {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::None => {
                 store_tag(builder, "000")?;
@@ -44,7 +48,7 @@ impl TlbSerialize for StorageExtraInfo {
 }
 
 impl TlbDeserialize for StorageExtraInfo {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let actual_bits = load_three_bit_tag(slice, "StorageExtraInfo", "000|001")?;
         match actual_bits.as_str() {
             "000" => Ok(Self::None),
@@ -76,7 +80,7 @@ pub struct StorageInfo {
 }
 
 impl TlbSerialize for StorageInfo {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         self.used.store_tlb(builder)?;
         self.extra.store_tlb(builder)?;
         builder.store_u32(self.last_paid)?;
@@ -86,7 +90,7 @@ impl TlbSerialize for StorageInfo {
 }
 
 impl TlbDeserialize for StorageInfo {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             used: StorageUsed::load_tlb(slice)?,
             extra: StorageExtraInfo::load_tlb(slice)?,
@@ -114,7 +118,7 @@ pub enum AccountState {
 }
 
 impl TlbSerialize for AccountState {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Uninit => store_tag(builder, "00")?,
             Self::Frozen { state_hash } => {
@@ -131,7 +135,7 @@ impl TlbSerialize for AccountState {
 }
 
 impl TlbDeserialize for AccountState {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let first = load_tag_bit(slice, "AccountState", "00|01|1", "")?;
         if first {
             return Ok(Self::Active {
@@ -161,7 +165,7 @@ pub struct AccountStorage {
 }
 
 impl TlbSerialize for AccountStorage {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_u64(self.last_trans_lt)?;
         self.balance.store_tlb(builder)?;
         self.state.store_tlb(builder)?;
@@ -170,7 +174,7 @@ impl TlbSerialize for AccountStorage {
 }
 
 impl TlbDeserialize for AccountStorage {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             last_trans_lt: slice.load_u64()?,
             balance: CurrencyCollection::load_tlb(slice)?,
@@ -193,7 +197,7 @@ pub enum AccountStatus {
 }
 
 impl TlbSerialize for AccountStatus {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Uninit => store_tag(builder, "00"),
             Self::Frozen => store_tag(builder, "01"),
@@ -204,7 +208,7 @@ impl TlbSerialize for AccountStatus {
 }
 
 impl TlbDeserialize for AccountStatus {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         match load_two_bit_tag(slice, "AccountStatus", "00|01|10|11")?.as_str() {
             "00" => Ok(Self::Uninit),
             "01" => Ok(Self::Frozen),
@@ -217,6 +221,10 @@ impl TlbDeserialize for AccountStatus {
 
 /// TL-B `Account`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "Account mirrors the closed TL-B union and is not retained in large collections"
+)]
 pub enum Account {
     /// `account_none$0`.
     None,
@@ -232,7 +240,7 @@ pub enum Account {
 }
 
 impl TlbSerialize for Account {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::None => {
                 builder.store_bit(false)?;
@@ -253,7 +261,7 @@ impl TlbSerialize for Account {
 }
 
 impl TlbDeserialize for Account {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         if slice.load_bit()? {
             Ok(Self::Full {
                 addr: MsgAddressInt::load_tlb(slice)?,
@@ -278,7 +286,7 @@ pub struct ShardAccount {
 }
 
 impl TlbSerialize for ShardAccount {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         store_ref_tlb(builder, &self.account)?;
         builder.store_bytes(&self.last_trans_hash)?;
         builder.store_u64(self.last_trans_lt)?;
@@ -287,7 +295,7 @@ impl TlbSerialize for ShardAccount {
 }
 
 impl TlbDeserialize for ShardAccount {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let account = load_ref_tlb(slice, "Account")?;
         let mut last_trans_hash = [0; 32];
         last_trans_hash.copy_from_slice(&slice.load_bytes(32)?);
@@ -309,7 +317,7 @@ pub struct DepthBalanceInfo {
 }
 
 impl TlbSerialize for DepthBalanceInfo {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         if self.split_depth > 30 {
             return Err(TlbError::CustomSchema {
                 schema: "DepthBalanceInfo.split_depth",
@@ -323,7 +331,7 @@ impl TlbSerialize for DepthBalanceInfo {
 }
 
 impl TlbDeserialize for DepthBalanceInfo {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let split_depth = slice.load_uint_custom::<u8>(5)?;
         if split_depth > 30 {
             return Err(TlbError::NonCanonicalValue {
@@ -346,7 +354,7 @@ pub struct ShardAccounts {
 }
 
 impl TlbSerialize for ShardAccounts {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         if self.accounts.key_bits() != 256 {
             return Err(TlbError::CustomSchema {
                 schema: "ShardAccounts",
@@ -359,24 +367,24 @@ impl TlbSerialize for ShardAccounts {
         builder
             .store_hashmap_aug_e_with(
                 &self.accounts,
-                |builder, account| account.store_tlb(builder).map_err(anyhow::Error::from),
-                |builder, extra| extra.store_tlb(builder).map_err(anyhow::Error::from),
+                |builder, account| account.store_tlb(builder).map_err(tlb_to_tvm_error),
+                |builder, extra| extra.store_tlb(builder).map_err(tlb_to_tvm_error),
             )
-            .map_err(anyhow_to_tlb_error)?;
+            .map_err(TlbError::from)?;
         Ok(())
     }
 }
 
 impl TlbDeserialize for ShardAccounts {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             accounts: slice
                 .load_hashmap_aug_e_with(
                     256,
-                    |slice| ShardAccount::load_tlb(slice).map_err(anyhow::Error::from),
-                    |slice| DepthBalanceInfo::load_tlb(slice).map_err(anyhow::Error::from),
+                    |slice| ShardAccount::load_tlb(slice).map_err(tlb_to_tvm_error),
+                    |slice| DepthBalanceInfo::load_tlb(slice).map_err(tlb_to_tvm_error),
                 )
-                .map_err(anyhow_to_tlb_error)?,
+                .map_err(TlbError::from)?,
         })
     }
 }
@@ -393,7 +401,7 @@ pub struct AccountBlock {
 }
 
 impl TlbSerialize for AccountBlock {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         if self.transactions.key_bits() != 64 {
             return Err(TlbError::CustomSchema {
                 schema: "AccountBlock.transactions",
@@ -409,18 +417,18 @@ impl TlbSerialize for AccountBlock {
             .store_hashmap_aug_with(
                 &self.transactions,
                 |builder, transaction| {
-                    store_ref_tlb(builder, transaction).map_err(anyhow::Error::from)
+                    store_ref_tlb(builder, transaction).map_err(tlb_to_tvm_error)
                 },
-                |builder, extra| extra.store_tlb(builder).map_err(anyhow::Error::from),
+                |builder, extra| extra.store_tlb(builder).map_err(tlb_to_tvm_error),
             )
-            .map_err(anyhow_to_tlb_error)?;
+            .map_err(TlbError::from)?;
         store_ref_tlb(builder, &self.state_update)?;
         Ok(())
     }
 }
 
 impl TlbDeserialize for AccountBlock {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         expect_tag_bits(slice, "AccountBlock", "0101")?;
         let mut account_addr = [0; 32];
         account_addr.copy_from_slice(&slice.load_bytes(32)?);
@@ -430,12 +438,11 @@ impl TlbDeserialize for AccountBlock {
                 .load_hashmap_aug_with(
                     64,
                     |slice| {
-                        load_ref_tlb::<Transaction>(slice, "Transaction")
-                            .map_err(anyhow::Error::from)
+                        load_ref_tlb::<Transaction>(slice, "Transaction").map_err(tlb_to_tvm_error)
                     },
-                    |slice| CurrencyCollection::load_tlb(slice).map_err(anyhow::Error::from),
+                    |slice| CurrencyCollection::load_tlb(slice).map_err(tlb_to_tvm_error),
                 )
-                .map_err(anyhow_to_tlb_error)?,
+                .map_err(TlbError::from)?,
             state_update: load_ref_tlb(slice, "HASH_UPDATE Account")?,
         })
     }
@@ -449,7 +456,7 @@ pub struct ShardAccountBlocks {
 }
 
 impl TlbSerialize for ShardAccountBlocks {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         if self.blocks.key_bits() != 256 {
             return Err(TlbError::CustomSchema {
                 schema: "ShardAccountBlocks",
@@ -462,24 +469,24 @@ impl TlbSerialize for ShardAccountBlocks {
         builder
             .store_hashmap_aug_e_with(
                 &self.blocks,
-                |builder, block| block.store_tlb(builder).map_err(anyhow::Error::from),
-                |builder, extra| extra.store_tlb(builder).map_err(anyhow::Error::from),
+                |builder, block| block.store_tlb(builder).map_err(tlb_to_tvm_error),
+                |builder, extra| extra.store_tlb(builder).map_err(tlb_to_tvm_error),
             )
-            .map_err(anyhow_to_tlb_error)?;
+            .map_err(TlbError::from)?;
         Ok(())
     }
 }
 
 impl TlbDeserialize for ShardAccountBlocks {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             blocks: slice
                 .load_hashmap_aug_e_with(
                     256,
-                    |slice| AccountBlock::load_tlb(slice).map_err(anyhow::Error::from),
-                    |slice| CurrencyCollection::load_tlb(slice).map_err(anyhow::Error::from),
+                    |slice| AccountBlock::load_tlb(slice).map_err(tlb_to_tvm_error),
+                    |slice| CurrencyCollection::load_tlb(slice).map_err(tlb_to_tvm_error),
                 )
-                .map_err(anyhow_to_tlb_error)?,
+                .map_err(TlbError::from)?,
         })
     }
 }
@@ -494,7 +501,7 @@ pub struct HashUpdateAccount {
 }
 
 impl TlbSerialize for HashUpdateAccount {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         builder.store_uint::<u8>(0x72)?;
         builder.store_bytes(&self.old_hash)?;
         builder.store_bytes(&self.new_hash)?;
@@ -503,7 +510,7 @@ impl TlbSerialize for HashUpdateAccount {
 }
 
 impl TlbDeserialize for HashUpdateAccount {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         expect_u8_tag(slice, "HASH_UPDATE Account", "#72", 0x72)?;
         let mut old_hash = [0; 32];
         let mut new_hash = [0; 32];
@@ -545,7 +552,7 @@ pub struct Transaction {
 }
 
 impl TlbSerialize for Transaction {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         if self.outmsg_cnt > 0x7fff {
             return Err(TlbError::CustomSchema {
                 schema: "Transaction.outmsg_cnt",
@@ -573,9 +580,9 @@ impl TlbSerialize for Transaction {
         self.end_status.store_tlb(builder)?;
 
         let mut messages = Builder::new();
-        store_maybe_ref_message(&mut messages, &self.in_msg)?;
+        store_maybe_ref_message(&mut messages, self.in_msg.as_ref())?;
         messages.store_hashmap_e_with(&self.out_msgs, |builder, message| {
-            store_ref_tlb(builder, message).map_err(anyhow::Error::from)
+            store_ref_tlb(builder, message).map_err(tlb_to_tvm_error)
         })?;
         builder.store_ref(messages.build()?)?;
 
@@ -587,7 +594,7 @@ impl TlbSerialize for Transaction {
 }
 
 impl TlbDeserialize for Transaction {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         expect_tag_bits(slice, "Transaction", "0111")?;
         let mut account_addr = [0; 32];
         let mut prev_trans_hash = [0; 32];
@@ -605,9 +612,9 @@ impl TlbDeserialize for Transaction {
         let in_msg = load_maybe_ref_message(&mut messages_slice)?;
         let out_msgs = messages_slice
             .load_hashmap_e_with(OUT_MSG_KEY_BITS, |slice| {
-                load_ref_tlb::<Message>(slice, "Message Any").map_err(anyhow::Error::from)
+                load_ref_tlb::<Message>(slice, "Message Any").map_err(tlb_to_tvm_error)
             })
-            .map_err(anyhow_to_tlb_error)?;
+            .map_err(TlbError::from)?;
         ensure_empty(&messages_slice)?;
 
         Ok(Self {
@@ -640,7 +647,7 @@ pub struct TrStoragePhase {
 }
 
 impl TlbSerialize for TrStoragePhase {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         self.storage_fees_collected.store_tlb(builder)?;
         store_maybe(builder, &self.storage_fees_due)?;
         self.status_change.store_tlb(builder)?;
@@ -649,7 +656,7 @@ impl TlbSerialize for TrStoragePhase {
 }
 
 impl TlbDeserialize for TrStoragePhase {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             storage_fees_collected: Grams::load_tlb(slice)?,
             storage_fees_due: load_maybe(slice)?,
@@ -668,7 +675,7 @@ pub struct TrCreditPhase {
 }
 
 impl TlbSerialize for TrCreditPhase {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         store_maybe(builder, &self.due_fees_collected)?;
         self.credit.store_tlb(builder)?;
         Ok(())
@@ -676,7 +683,7 @@ impl TlbSerialize for TrCreditPhase {
 }
 
 impl TlbDeserialize for TrCreditPhase {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Ok(Self {
             due_fees_collected: load_maybe(slice)?,
             credit: CurrencyCollection::load_tlb(slice)?,
@@ -698,7 +705,7 @@ pub enum ComputeSkipReason {
 }
 
 impl TlbSerialize for ComputeSkipReason {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::NoState => store_tag(builder, "00"),
             Self::BadState => store_tag(builder, "01"),
@@ -709,7 +716,7 @@ impl TlbSerialize for ComputeSkipReason {
 }
 
 impl TlbDeserialize for ComputeSkipReason {
-    fn load_tlb(slice: &mut Slice) -> Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         let first = load_tag_bit(slice, "ComputeSkipReason", "00|01|10|110", "")?;
         let second = load_tag_bit(
             slice,
@@ -777,7 +784,7 @@ pub enum TrComputePhase {
 }
 
 impl TlbSerialize for TrComputePhase {
-    fn store_tlb(&self, builder: &mut Builder) -> Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::Skipped { reason } => {
                 store_tag(builder, "0")?;
@@ -807,9 +814,9 @@ impl TlbSerialize for TrComputePhase {
                 let mut child = Builder::new();
                 store_var_uint_7(&mut child, gas_used, "TrComputePhase.gas_used")?;
                 store_var_uint_7(&mut child, gas_limit, "TrComputePhase.gas_limit")?;
-                store_maybe_var_uint_3(&mut child, gas_credit)?;
-                child.store_int(*mode as i64, 8)?;
-                child.store_int(*exit_code as i64, 32)?;
+                store_maybe_var_uint_3(&mut child, gas_credit.as_ref())?;
+                child.store_int(i64::from(*mode), 8)?;
+                child.store_int(i64::from(*exit_code), 32)?;
                 store_maybe_i32(&mut child, *exit_arg)?;
                 child.store_u32(*vm_steps)?;
                 child.store_bytes(vm_init_state_hash)?;

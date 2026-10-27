@@ -1,8 +1,28 @@
-use super::*;
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
+use super::{
+    AccStatusChange, Account, AccountBlock, AccountState, AccountStatus, AccountStorage,
+    BlkMasterInfo, BlockPrevInfo, CommonMsgInfo, CommonMsgInfoRelaxed, ComputeSkipReason,
+    CurrencyCollection, DepthBalanceInfo, Either, ExtBlkRef, Grams, HashUpdateAccount, MerkleProof,
+    MerkleUpdate, Message, MessageRelaxed, MsgAddress, MsgAddressExt, MsgAddressInt, ShardAccount,
+    ShardAccountBlocks, ShardAccounts, ShardIdent, SplitMergeInfo, StateInit, StorageExtraInfo,
+    StorageInfo, StorageUsed, TickTock, TlbDeserialize, TlbError, TlbSerialize, TrActionPhase,
+    TrBouncePhase, TrComputePhase, TrCreditPhase, TrStoragePhase, Transaction, TransactionDescr,
+    ValueFlow, ValueFlowFees, ValueFlowMain, ensure_empty,
+};
 
 #[cfg(test)]
 mod offline_fixture_tests {
-    use super::*;
+    use super::{
+        AccStatusChange, Account, AccountBlock, AccountState, AccountStatus, AccountStorage,
+        CommonMsgInfo, CommonMsgInfoRelaxed, CurrencyCollection, DepthBalanceInfo, Either, Grams,
+        HashUpdateAccount, Message, MessageRelaxed, MsgAddress, MsgAddressExt, MsgAddressInt,
+        ShardAccount, ShardAccountBlocks, ShardAccounts, StateInit, StorageExtraInfo, StorageInfo,
+        StorageUsed, TickTock, TlbDeserialize, TlbError, TlbSerialize, TrStoragePhase, Transaction,
+        TransactionDescr, ensure_empty,
+    };
     use num_bigint::BigUint;
     use std::fmt::Debug;
     use std::sync::Arc;
@@ -413,7 +433,7 @@ mod offline_fixture_tests {
         let mut slice = Slice::new(cell.clone());
         assert!(slice.load_bit().unwrap());
         let decoded = Slice::new(cell)
-            .load_hashmap_e_with(4, |slice| slice.load_uint::<u8>())
+            .load_hashmap_e_with(4, Slice::load_uint::<u8>)
             .unwrap();
         let entries: Vec<_> = decoded
             .iter()
@@ -443,11 +463,7 @@ mod offline_fixture_tests {
         assert_eq!(cell.reference_count(), 0);
         let mut slice = Slice::new(cell);
         let decoded_empty = slice
-            .load_hashmap_aug_e_with(
-                4,
-                |slice| slice.load_uint::<u8>(),
-                |slice| slice.load_uint::<u8>(),
-            )
+            .load_hashmap_aug_e_with(4, Slice::load_uint::<u8>, Slice::load_uint::<u8>)
             .unwrap();
         assert!(decoded_empty.is_empty());
         assert_eq!(*decoded_empty.extra(), 88);
@@ -468,11 +484,7 @@ mod offline_fixture_tests {
 
         let mut slice = Slice::new(cell);
         let decoded = slice
-            .load_hashmap_aug_e_with(
-                4,
-                |slice| slice.load_uint::<u8>(),
-                |slice| slice.load_uint::<u8>(),
-            )
+            .load_hashmap_aug_e_with(4, Slice::load_uint::<u8>, Slice::load_uint::<u8>)
             .unwrap();
         let root = decoded.root().unwrap();
         let leaves: Vec<_> = root
@@ -488,8 +500,16 @@ mod offline_fixture_tests {
 
 #[cfg(test)]
 mod compatibility_checked_fixture_tests {
-    use super::*;
-    use crate::block::{
+    use super::{
+        AccStatusChange, Account, AccountState, AccountStatus, AccountStorage, BlkMasterInfo,
+        BlockPrevInfo, CommonMsgInfo, CommonMsgInfoRelaxed, ComputeSkipReason, CurrencyCollection,
+        DepthBalanceInfo, Either, ExtBlkRef, Grams, HashUpdateAccount, MerkleProof, MerkleUpdate,
+        Message, MessageRelaxed, MsgAddress, MsgAddressExt, MsgAddressInt, ShardAccounts,
+        ShardIdent, SplitMergeInfo, StateInit, StorageExtraInfo, StorageInfo, StorageUsed,
+        TlbDeserialize, TlbSerialize, TrActionPhase, TrBouncePhase, TrComputePhase, TrCreditPhase,
+        TrStoragePhase, Transaction, TransactionDescr, ValueFlow, ValueFlowFees, ValueFlowMain,
+    };
+    use crate::tlb::block::{
         Block, BlockExtra, BlockInfo, GasLimitsPrices, GlobalVersion, MsgForwardPrices,
         ShardStateUnsplitData,
     };
@@ -526,6 +546,10 @@ mod compatibility_checked_fixture_tests {
         set
     }
 
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     fn assert_fixture<T>(fixture: &Fixture, expected_type: &str, expected_value: T)
     where
         T: TlbSerialize + TlbDeserialize + PartialEq + Debug,

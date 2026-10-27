@@ -1,3 +1,7 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 use std::{sync::Arc, time::Duration};
 
 use thiserror::Error;
@@ -94,29 +98,30 @@ impl TokenBucket {
 
     fn refill(&mut self, now_ns: u128) {
         let elapsed_ns = now_ns.saturating_sub(self.last_refill_ns);
-        let new_tokens = elapsed_ns.saturating_mul(self.limit.rps as u128) / NANOS_PER_SECOND;
+        let new_tokens = elapsed_ns.saturating_mul(u128::from(self.limit.rps)) / NANOS_PER_SECOND;
         if new_tokens == 0 {
             return;
         }
 
         self.tokens = self
             .tokens
-            .saturating_add(new_tokens.min(u32::MAX as u128) as u32)
+            .saturating_add(new_tokens.min(u128::from(u32::MAX)) as u32)
             .min(self.limit.burst);
-        self.last_refill_ns += new_tokens.saturating_mul(NANOS_PER_SECOND) / self.limit.rps as u128;
+        self.last_refill_ns +=
+            new_tokens.saturating_mul(NANOS_PER_SECOND) / u128::from(self.limit.rps);
     }
 
     fn wait_duration(&self, now_ns: u128) -> Duration {
-        let nanos_per_token = NANOS_PER_SECOND.div_ceil(self.limit.rps as u128);
+        let nanos_per_token = NANOS_PER_SECOND.div_ceil(u128::from(self.limit.rps));
         let elapsed_ns = now_ns.saturating_sub(self.last_refill_ns);
         let wait_ns = nanos_per_token.saturating_sub(elapsed_ns).max(1);
-        Duration::from_nanos(wait_ns.min(u64::MAX as u128) as u64)
+        Duration::from_nanos(wait_ns.min(u128::from(u64::MAX)) as u64)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Duration, RateLimitError, RequestRateLimit, TokenBucket};
 
     #[test]
     fn rejects_zero_rps() {

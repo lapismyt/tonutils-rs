@@ -1,9 +1,34 @@
-use std::{sync::Arc, time::Duration};
+#![expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "Test fixtures intentionally narrow generated values to protocol widths"
+)]
+use std::{
+    collections::HashSet,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
+use crate::adnl::AdnlError;
+use crate::liteclient::LiteBalancer;
 use crate::liteclient::LiteClient;
+use crate::liteclient::balancer::{BalancerError, types::PeerState};
+use crate::liteclient::rate_limit::RequestRateLimit;
+use crate::liteclient::types::LiteError;
+use crate::{
+    liteclient::tl::{
+        BlockHeader, CurrentTime, LibraryResult, LiteBlockIdExt as BlockIdExt,
+        LiteLibraryEntry as LibraryEntry, LiteServerError as Error,
+        LiteZeroStateIdExt as ZeroStateIdExt, MasterchainInfo, RawWrappedRequest, Request,
+        Response, SendMsgStatus, Version,
+    },
+    tl::{TlError, TlInt256 as Int256},
+};
 
 use tokio::sync::Mutex;
 use tower::service_fn;
+
+use super::types::PeerStats;
 
 fn mock_client() -> LiteClient {
     LiteClient::from_service(service_fn(|request: RawWrappedRequest| async move {
@@ -812,7 +837,7 @@ async fn local_typed_decode_error_is_not_retried() {
 
     assert!(matches!(
         error,
-        BalancerError::LiteError(LiteError::TlError(_))
+        BalancerError::LiteError(LiteError::Decode(_))
     ));
     assert_eq!(*peer0_calls.lock().await, 1);
     assert_eq!(*peer1_calls.lock().await, 0);

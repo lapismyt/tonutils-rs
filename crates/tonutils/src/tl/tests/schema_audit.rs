@@ -4,7 +4,7 @@
 //! This is an offline protocol-divergence detector for the DHT, ADNL,
 //! overlay, and QUIC surfaces. It checks, without any network access:
 //!
-//! 1. every constructor id hard-coded in `network.rs` / `adnl.rs` must be a
+//! 1. every constructor id hard-coded in the ADNL and overlay wire modules must be a
 //!    constructor id computed from the upstream schema, so invented or stale
 //!    ids fail the test;
 //! 2. every schema-shaped doc comment must match the upstream definition
@@ -20,17 +20,27 @@
 //! upstream TON TL parser output for the audited constructors; the
 //! calibration table pins it to ids verified on real wire traffic.
 //!
-//! Scope is `network.rs` and `adnl.rs` (network protocol types). LiteAPI
-//! types in `request.rs` / `response.rs` are audited by `schema_check.rs`.
+//! Scope is `adnl::tl` and `overlay::tl` (network protocol types). LiteAPI
+//! types in `liteclient::tl` are audited by `schema_check.rs`.
 
 use std::collections::{HashMap, HashSet};
 
 const SCHEMA: &str = include_str!("../schemas/ton_api.tl");
-const SOURCES: [(&str, &str); 4] = [
-    ("network.rs", include_str!("../network.rs")),
-    ("adnl.rs", include_str!("../adnl.rs")),
-    ("overlay.rs", include_str!("../overlay.rs")),
-    ("fullnode.rs", include_str!("../fullnode.rs")),
+const SOURCES: [(&str, &str); 5] = [
+    ("adnl/tl/mod.rs", include_str!("../../adnl/tl/mod.rs")),
+    (
+        "adnl/tl/message.rs",
+        include_str!("../../adnl/tl/message.rs"),
+    ),
+    (
+        "adnl/tl/public_key.rs",
+        include_str!("../../adnl/tl/public_key.rs"),
+    ),
+    ("overlay/tl/mod.rs", include_str!("../../overlay/tl/mod.rs")),
+    (
+        "overlay/tl/fullnode.rs",
+        include_str!("../../overlay/tl/fullnode.rs"),
+    ),
 ];
 
 /// Constructor ids observed on the live TON network (mainnet DHT/ADNL UDP

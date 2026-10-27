@@ -1,3 +1,7 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 //! One ADNL UDP socket shared by every session of one node id.
 //!
 //! Upstream keeps a single socket per ADNL node and demultiplexes
@@ -40,8 +44,13 @@ use std::{
 };
 
 use crate::adnl::{
-    AdnlAddress, AdnlError, AdnlKeyPair, AdnlPublicKey,
-    udp::{MAX_UDP_PACKET_SIZE, session::SessionInner},
+    AdnlAddress, AdnlError, AdnlKeyPair, AdnlPublicKey, AdnlUdpSession,
+    udp::{
+        MAX_UDP_PACKET_SIZE,
+        capture::{armed, record},
+        inbound::handle,
+        session::SessionInner,
+    },
 };
 
 use tokio::{
@@ -343,7 +352,7 @@ impl AdnlUdpTransport {
         remote_id: [u8; 32],
         remote_addr: SocketAddr,
         remote: AdnlPublicKey,
-    ) -> super::AdnlUdpSession {
+    ) -> AdnlUdpSession {
         self.session_for_inner(remote_id, remote_addr, remote, true)
     }
 
@@ -352,7 +361,7 @@ impl AdnlUdpTransport {
         &self,
         remote: AdnlPublicKey,
         remote_addr: SocketAddr,
-    ) -> super::AdnlUdpSession {
+    ) -> AdnlUdpSession {
         let remote_id = AdnlAddress::from(&remote).to_bytes();
         self.session_for(remote_id, remote_addr, remote)
     }
@@ -375,7 +384,7 @@ impl AdnlUdpTransport {
         &self,
         remote: AdnlPublicKey,
         remote_addr: SocketAddr,
-    ) -> super::AdnlUdpSession {
+    ) -> AdnlUdpSession {
         let remote_id = AdnlAddress::from(&remote).to_bytes();
         self.session_for_inner(remote_id, remote_addr, remote, false)
     }
@@ -390,7 +399,7 @@ impl AdnlUdpTransport {
         remote_addr: SocketAddr,
         remote: AdnlPublicKey,
         adopt: bool,
-    ) -> super::AdnlUdpSession {
+    ) -> AdnlUdpSession {
         self.inner.start_demux();
         let mut sessions = self.inner.sessions.lock().unwrap();
         if let Some(session) = sessions.get(&remote_id).and_then(Weak::upgrade) {
@@ -400,7 +409,7 @@ impl AdnlUdpTransport {
             return session.into();
         }
         let session = Arc::new(SessionInner::shared(
-            self.inner.clone(),
+            &self.inner,
             remote_id,
             remote_addr,
             remote,
@@ -466,7 +475,7 @@ impl TransportInner {
         demux.running = true;
         let _ = self.idle.send_replace(false);
         let inner = self.clone();
-        super::inbound::handle().spawn(async move {
+        handle().spawn(async move {
             inner.run().await;
         });
     }
@@ -514,6 +523,10 @@ impl TransportInner {
     /// per-answer age log in the session receive path, that separates
     /// "this process read the answer late" from "the answer arrived
     /// late", which line order in a log alone cannot.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     async fn run(self: Arc<Self>) {
         let mut idle = self.idle.subscribe();
         let mut packet = vec![0u8; MAX_UDP_PACKET_SIZE + 1];
@@ -579,17 +592,14 @@ impl TransportInner {
                 // bypass.  The channel is bounded, so one unconstrained
                 // drain stays small.
                 maybe = tokio::task::unconstrained(rx.recv()), if use_thread => {
-                    match maybe {
-                        Some((at, datagram, peer)) => {
-                            self.dispatch(at, &datagram, peer, &mut stats);
-                        }
-                        None => {
-                            // The receive thread exited on its own; stop so
-                            // the next `session_for` restarts the demux.
-                            log::error!("ADNL transport receive thread stopped unexpectedly");
-                            self.demux.lock().unwrap().running = false;
-                            return;
-                        }
+                    if let Some((at, datagram, peer)) = maybe {
+                        self.dispatch(at, &datagram, peer, &mut stats);
+                    } else {
+                        // The receive thread exited on its own; stop so
+                        // the next `session_for` restarts the demux.
+                        log::error!("ADNL transport receive thread stopped unexpectedly");
+                        self.demux.lock().unwrap().running = false;
+                        return;
                     }
                 }
                 result = self.socket.recv_from(&mut packet), if !use_thread => {
@@ -607,6 +617,10 @@ impl TransportInner {
                     let sent = self.sent_datagrams.load(Ordering::Relaxed);
                     let overruns = self.rx_overruns.load(Ordering::Relaxed);
                     let tx_drops = self.tx_drops.load(Ordering::Relaxed);
+                    let socket_stats = match self.socket.local_addr() {
+                        Ok(local) => kernel_socket_stats(local).await,
+                        Err(_) => None,
+                    };
                     log::debug!(
                         "ADNL transport rx heartbeat: datagrams={} sent={} tx_drop={} dropped={} closed={} unrouted={} overrun={} wait_max_ms={} wait_cum_max_ms={} iters={iters} gap_max_ms={gap_max_ms} dt_ms={} {}",
                         stats.datagrams,
@@ -619,7 +633,7 @@ impl TransportInner {
                         stats.wait_max_ms,
                         self.dispatch_wait_max_ms.load(Ordering::Relaxed),
                         last_beat.elapsed().as_millis(),
-                        match self.socket.local_addr().ok().and_then(kernel_socket_stats) {
+                        match socket_stats {
                             Some((queued, kernel_drops)) => {
                                 format!("queue_bytes={queued} kernel_drops={kernel_drops}")
                             }
@@ -771,6 +785,10 @@ struct DemuxStats {
 /// It exits when the demultiplexer drains (`stop`) or when every handle
 /// of the transport is gone (`shutdown`), so a runtime that shuts down
 /// without running the demultiplexer's cleanup still releases it.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+)]
 fn receive_loop(
     socket: std::net::UdpSocket,
     tx: mpsc::Sender<(std::time::Instant, Vec<u8>, SocketAddr)>,
@@ -783,8 +801,8 @@ fn receive_loop(
         match socket.recv_from(&mut packet) {
             Ok((size, peer)) => {
                 let at = std::time::Instant::now();
-                if super::capture::armed() {
-                    super::capture::record("datagram", Some(peer), &packet[..size]);
+                if armed() {
+                    record("datagram", Some(peer), &packet[..size]);
                 }
                 if tx.try_send((at, packet[..size].to_vec(), peer)).is_err() {
                     overruns.fetch_add(1, Ordering::Relaxed);
@@ -810,7 +828,7 @@ fn receive_loop(
 /// arrived late.  A kernel that does not print the trailing drop
 /// column is reported as zero drops.
 #[cfg(target_os = "linux")]
-fn kernel_socket_stats(local: SocketAddr) -> Option<(u64, u64)> {
+async fn kernel_socket_stats(local: SocketAddr) -> Option<(u64, u64)> {
     let SocketAddr::V4(v4) = local else {
         return None;
     };
@@ -823,7 +841,7 @@ fn kernel_socket_stats(local: SocketAddr) -> Option<(u64, u64)> {
         ip[0],
         v4.port()
     );
-    let table = std::fs::read_to_string("/proc/net/udp").ok()?;
+    let table = tokio::fs::read_to_string("/proc/net/udp").await.ok()?;
     for line in table.lines().skip(1) {
         let fields: Vec<&str> = line.split_whitespace().collect();
         if fields.len() < 6 || !fields[1].eq_ignore_ascii_case(&needle) {
@@ -847,6 +865,6 @@ fn kernel_socket_stats(local: SocketAddr) -> Option<(u64, u64)> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn kernel_socket_stats(_local: SocketAddr) -> Option<(u64, u64)> {
+async fn kernel_socket_stats(_local: SocketAddr) -> Option<(u64, u64)> {
     None
 }

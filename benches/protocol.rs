@@ -5,7 +5,7 @@ use tl_proto::TlRead;
 use tokio_util::bytes::{Bytes, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 use tonutils::adnl::{AdnlAesParams, AdnlCodec};
-use tonutils::tl::request::{GetMasterchainInfoExt, Request};
+use tonutils::liteclient::tl::{GetMasterchainInfoExt, Request};
 use tonutils::tvm::{
     deserialize_boc, serialize_boc, Builder, Cell, Slice, TvmStack, TvmStackEntry,
 };

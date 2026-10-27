@@ -1,6 +1,14 @@
+#![expect(
+    clippy::cast_possible_wrap,
+    reason = "Test fixtures intentionally narrow generated values to protocol widths"
+)]
 //! Tests for the `network_config` module.
 
-use super::*;
+use super::{
+    ConfigError, ConfigGlobal, ConfigLiteServer, ConfigPublicKey, FromStr, LiteServerAddress,
+    LiteServerBlacklist, LiteServerBlacklistParseError, extract_bootstrap_addresses,
+    extract_dht_addresses,
+};
 
 use std::net::Ipv4Addr;
 
@@ -10,7 +18,7 @@ use base64::Engine;
 fn test_lite_server_address_from_i32() {
     let ip_int = 0x7F000001i32; // 127.0.0.1
     let addr = LiteServerAddress::from(ip_int);
-    assert_eq!(*addr, Ipv4Addr::new(127, 0, 0, 1));
+    assert_eq!(*addr, Ipv4Addr::LOCALHOST);
 }
 
 #[test]
@@ -42,8 +50,8 @@ fn test_lite_server_address_deref_mut() {
     let mut addr = LiteServerAddress(Ipv4Addr::new(10, 0, 0, 1));
 
     // Should be able to mutate through DerefMut
-    *addr = Ipv4Addr::new(127, 0, 0, 1);
-    assert_eq!(*addr, Ipv4Addr::new(127, 0, 0, 1));
+    *addr = Ipv4Addr::LOCALHOST;
+    assert_eq!(*addr, Ipv4Addr::LOCALHOST);
 }
 
 #[test]
@@ -86,7 +94,7 @@ fn test_config_lite_server_socket_addr() {
     };
 
     let socket_addr = server.socket_addr();
-    assert_eq!(socket_addr.ip(), &Ipv4Addr::new(127, 0, 0, 1));
+    assert_eq!(socket_addr.ip(), &Ipv4Addr::LOCALHOST);
     assert_eq!(socket_addr.port(), 8080);
 }
 
@@ -478,7 +486,7 @@ fn test_ip_address_negative_i32() {
     // Test with negative i32 values (high bit set)
     let ip_int = -1i32; // 255.255.255.255
     let addr = LiteServerAddress::from(ip_int);
-    assert_eq!(*addr, Ipv4Addr::new(255, 255, 255, 255));
+    assert_eq!(*addr, Ipv4Addr::BROADCAST);
 }
 
 #[test]
@@ -489,14 +497,14 @@ fn test_config_lite_server_debug_format() {
         id: ConfigPublicKey::Ed25519 { key: [42u8; 32] },
     };
 
-    let debug_str = format!("{:?}", server);
+    let debug_str = format!("{server:?}");
     assert!(debug_str.contains("ConfigLiteServer"));
 }
 
 #[test]
 fn test_config_public_key_debug_format() {
     let pubkey = ConfigPublicKey::Ed25519 { key: [99u8; 32] };
-    let debug_str = format!("{:?}", pubkey);
+    let debug_str = format!("{pubkey:?}");
     assert!(debug_str.contains("Ed25519"));
 }
 

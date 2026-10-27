@@ -1,8 +1,23 @@
-use super::*;
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "Test fixtures intentionally narrow generated values to protocol widths"
+)]
+use super::{
+    Address, BitKey, Builder, Dict, DictKey, DictValue, HashmapAug, HashmapAugE, HashmapAugLeaf,
+    HashmapE, Slice, canonical_label, deserialize_hashmap_root, load_label, serialize_hashmap_root,
+};
 
 #[cfg(test)]
+#[expect(
+    clippy::module_inception,
+    reason = "The test file mirrors the owner module name for discoverability"
+)]
 mod tests {
-    use super::*;
+    use super::{
+        Address, BitKey, Builder, Dict, DictKey, DictValue, HashmapAug, HashmapAugE,
+        HashmapAugLeaf, HashmapE, Slice, canonical_label, deserialize_hashmap_root, load_label,
+        serialize_hashmap_root,
+    };
 
     #[test]
     fn bit_key_canonicalizes_and_orders() {
@@ -51,7 +66,7 @@ mod tests {
 
         let mut slice = builder.to_slice().unwrap();
         let decoded = slice
-            .load_hashmap_e_with(8, |slice| slice.load_uint::<u16>())
+            .load_hashmap_e_with(8, Slice::load_uint::<u16>)
             .unwrap();
 
         assert_eq!(decoded.len(), 3);
@@ -112,9 +127,7 @@ mod tests {
             })
             .unwrap();
         let mut slice = builder.to_slice().unwrap();
-        let decoded = slice
-            .load_hashmap_e_with(4, |slice| slice.load_coins())
-            .unwrap();
+        let decoded = slice.load_hashmap_e_with(4, Slice::load_coins).unwrap();
         assert_eq!(
             decoded
                 .get_bit_key(&BitKey::from_u64(1, 4).unwrap())
@@ -164,9 +177,7 @@ mod tests {
             })
             .unwrap();
         let mut slice = builder.to_slice().unwrap();
-        let decoded = slice
-            .load_hashmap_e_with(4, |slice| slice.load_reference())
-            .unwrap();
+        let decoded = slice.load_hashmap_e_with(4, Slice::load_reference).unwrap();
         assert_eq!(
             decoded
                 .get_bit_key(&BitKey::from_u64(3, 4).unwrap())
@@ -235,11 +246,7 @@ mod tests {
 
         let mut slice = builder.to_slice().unwrap();
         let decoded = slice
-            .load_hashmap_aug_e_with(
-                8,
-                |slice| slice.load_uint::<u8>(),
-                |slice| slice.load_uint::<u8>(),
-            )
+            .load_hashmap_aug_e_with(8, Slice::load_uint::<u8>, Slice::load_uint::<u8>)
             .unwrap();
 
         assert!(decoded.is_empty());
@@ -283,11 +290,9 @@ mod tests {
         let mut slice = builder.to_slice().unwrap();
         assert!(
             slice
-                .load_hashmap_aug_e_with(
-                    8,
-                    |slice| slice.load_uint::<u8>(),
-                    |slice| { slice.load_uint::<u8>() }
-                )
+                .load_hashmap_aug_e_with(8, Slice::load_uint::<u8>, |slice| {
+                    slice.load_uint::<u8>()
+                })
                 .is_err()
         );
     }
@@ -322,11 +327,7 @@ mod tests {
 
         let mut slice = builder.to_slice().unwrap();
         let decoded = slice
-            .load_hashmap_aug_with(
-                8,
-                |slice| slice.load_uint::<u8>(),
-                |slice| slice.load_uint::<u8>(),
-            )
+            .load_hashmap_aug_with(8, Slice::load_uint::<u8>, Slice::load_uint::<u8>)
             .unwrap();
         assert_eq!(decoded.len(), 1);
         assert_eq!(
@@ -380,11 +381,7 @@ mod tests {
 
         let mut slice = builder.to_slice().unwrap();
         let decoded = slice
-            .load_hashmap_aug_e_with(
-                4,
-                |slice| slice.load_uint::<u8>(),
-                |slice| slice.load_uint::<u8>(),
-            )
+            .load_hashmap_aug_e_with(4, Slice::load_uint::<u8>, Slice::load_uint::<u8>)
             .unwrap();
         let root = decoded.root().unwrap();
         let leaves: Vec<_> = root

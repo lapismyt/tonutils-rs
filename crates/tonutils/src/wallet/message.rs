@@ -1,4 +1,20 @@
-use super::*;
+use super::mnemonic::{
+    WALLET_V4R2_DEFAULT_ID, WALLET_V4R2_MAX_MESSAGES, WALLET_V4R2_SIMPLE_SEND_OP,
+    WALLET_V5R1_ADD_EXTENSION_TAG, WALLET_V5R1_DELETE_EXTENSION_TAG,
+    WALLET_V5R1_EXTENSIONS_KEY_BITS, WALLET_V5R1_EXTERNAL_SIGNED_OP, WALLET_V5R1_MAX_ACTIONS,
+    WALLET_V5R1_SET_SIGNATURE_AUTH_ALLOWED_TAG, WalletError, WalletMessage, WalletV4R2Data,
+    WalletV5R1Data, WalletV5R1WalletId,
+};
+use super::v5r1::{store_v5_inner_request, validate_action_count};
+use crate::tlb::{
+    CommonMsgInfo, CommonMsgInfoRelaxed, CurrencyCollection, Either, Grams, Message,
+    MessageRelaxed, MsgAddress, MsgAddressExt, MsgAddressInt, OutAction, OutList, StateInit,
+    TlbDeserialize, TlbError, TlbResult, TlbSerialize, ensure_empty,
+};
+use crate::tvm::{Address, Builder, Cell, HashmapE, Slice, serialize_boc};
+use ed25519_dalek::{Signer, SigningKey};
+use num_bigint::BigUint;
+use std::sync::Arc;
 
 impl WalletMessage {
     /// Creates a simple internal transfer action.
@@ -102,7 +118,7 @@ impl WalletV5R1ExtendedAction {
 }
 
 impl TlbSerialize for WalletV5R1ExtendedAction {
-    fn store_tlb(&self, builder: &mut Builder) -> tonutils::tlb::Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         match self {
             Self::AddExtension { address } => {
                 builder.store_u8(WALLET_V5R1_ADD_EXTENSION_TAG)?;
@@ -122,7 +138,7 @@ impl TlbSerialize for WalletV5R1ExtendedAction {
 }
 
 impl TlbDeserialize for WalletV5R1ExtendedAction {
-    fn load_tlb(slice: &mut Slice) -> tonutils::tlb::Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         match slice.load_u8()? {
             WALLET_V5R1_ADD_EXTENSION_TAG => Ok(Self::AddExtension {
                 address: MsgAddressInt::load_tlb(slice)?,
@@ -150,7 +166,7 @@ pub struct WalletV5R1ExtendedActionList {
 
 impl WalletV5R1ExtendedActionList {
     /// Creates a non-empty extended action list.
-    pub fn new(actions: Vec<WalletV5R1ExtendedAction>) -> tonutils::tlb::Result<Self> {
+    pub fn new(actions: Vec<WalletV5R1ExtendedAction>) -> TlbResult<Self> {
         if actions.is_empty() {
             return Err(TlbError::CustomSchema {
                 schema: "W5ExtendedActionList",
@@ -179,10 +195,7 @@ impl WalletV5R1ExtendedActionList {
         self.actions.is_empty()
     }
 
-    fn store_actions(
-        actions: &[WalletV5R1ExtendedAction],
-        builder: &mut Builder,
-    ) -> tonutils::tlb::Result<()> {
+    fn store_actions(actions: &[WalletV5R1ExtendedAction], builder: &mut Builder) -> TlbResult<()> {
         let Some((first, rest)) = actions.split_first() else {
             return Err(TlbError::CustomSchema {
                 schema: "W5ExtendedActionList",
@@ -198,10 +211,7 @@ impl WalletV5R1ExtendedActionList {
         Ok(())
     }
 
-    fn load_actions(
-        slice: &mut Slice,
-        depth: usize,
-    ) -> tonutils::tlb::Result<Vec<WalletV5R1ExtendedAction>> {
+    fn load_actions(slice: &mut Slice, depth: usize) -> TlbResult<Vec<WalletV5R1ExtendedAction>> {
         if depth >= WALLET_V5R1_MAX_ACTIONS {
             return Err(TlbError::CustomSchema {
                 schema: "W5ExtendedActionList",
@@ -241,13 +251,13 @@ impl WalletV5R1ExtendedActionList {
 }
 
 impl TlbSerialize for WalletV5R1ExtendedActionList {
-    fn store_tlb(&self, builder: &mut Builder) -> tonutils::tlb::Result<()> {
+    fn store_tlb(&self, builder: &mut Builder) -> TlbResult<()> {
         Self::store_actions(&self.actions, builder)
     }
 }
 
 impl TlbDeserialize for WalletV5R1ExtendedActionList {
-    fn load_tlb(slice: &mut Slice) -> tonutils::tlb::Result<Self> {
+    fn load_tlb(slice: &mut Slice) -> TlbResult<Self> {
         Self::new(Self::load_actions(slice, 0)?)
     }
 }

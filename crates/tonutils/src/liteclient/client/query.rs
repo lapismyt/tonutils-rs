@@ -1,8 +1,9 @@
-use std::net::ToSocketAddrs;
+use tokio::net::ToSocketAddrs;
 
 #[cfg(feature = "network-config")]
 use crate::network_config::{ConfigGlobal, ConfigLiteServer};
 
+use crate::liteclient::types::LiteResult as Result;
 use crate::{
     adnl::AdnlPeer,
     liteclient::{
@@ -18,30 +19,27 @@ use crate::{
         peer::LitePeer,
         rate_limit::{RateLimiter, RequestRateLimit},
         response::FromResponse,
+        tl::{
+            AllShardsInfo, BlockData, BlockHeader, BlockState, BlockTransactions,
+            BlockTransactionsExt, ConfigInfo, CurrentTime, GetAccountState, GetAllShardsInfo,
+            GetBlock, GetBlockHeader, GetBlockProof, GetConfigAll, GetMasterchainInfoExt,
+            GetOneTransaction, GetShardInfo, GetState, GetTransactions, ListBlockTransactions,
+            LiteAccountId as AccountId, LiteBlockId as BlockId, LiteBlockIdExt as BlockIdExt,
+            LiteServerAccountState as AccountState, LiteTransactionId3 as TransactionId3,
+            LookupBlock, LookupBlockResult, LookupBlockWithProof, MasterchainInfo,
+            MasterchainInfoExt, PartialBlockProof, RawWrappedRequest, Request, Response,
+            RunMethodResult, RunSmcMethod, SendMessage, SendMsgStatus, ShardInfo, TransactionInfo,
+            TransactionList, Version, WaitMasterchainSeqno,
+        },
         types::LiteError,
     },
-    tl::{
-        AccountId, BlockId, BlockIdExt, Int256, RawWrappedRequest, Request, Response, TlError,
-        common::TransactionId3,
-        request::{
-            GetAccountState, GetAllShardsInfo, GetBlock, GetBlockHeader, GetBlockProof,
-            GetConfigAll, GetMasterchainInfoExt, GetOneTransaction, GetShardInfo, GetState,
-            GetTransactions, ListBlockTransactions, LookupBlock, LookupBlockWithProof,
-            RunSmcMethod, SendMessage, WaitMasterchainSeqno,
-        },
-        response::{
-            AccountState, AllShardsInfo, BlockData, BlockHeader, BlockState, BlockTransactions,
-            BlockTransactionsExt, ConfigInfo, CurrentTime, LookupBlockResult, MasterchainInfo,
-            MasterchainInfoExt, PartialBlockProof, RunMethodResult, SendMsgStatus, ShardInfo,
-            TransactionInfo, TransactionList, Version,
-        },
-    },
+    tl::{TlError, TlInt256 as Int256},
     tlb::{Account, Block, ShardAccount, Transaction},
     tvm::{Address, TvmStack, TvmStackEntry, method_name_to_id},
 };
 
 use tokio_tower::multiplex;
-use tower::ServiceBuilder;
+use tower::{Service, ServiceBuilder, ServiceExt};
 
 impl LiteClient {
     pub async fn connect<A: ToSocketAddrs>(
@@ -255,6 +253,10 @@ impl LiteClient {
         Ok(response)
     }
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn get_block_header(
         &mut self,
         id: BlockIdExt,
@@ -281,6 +283,10 @@ impl LiteClient {
         Ok(response.header_proof)
     }
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn raw_get_block_header(
         &mut self,
         id: BlockIdExt,
@@ -564,6 +570,10 @@ impl LiteClient {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn lookup_block(
         &mut self,
         mode: (),
@@ -713,6 +723,10 @@ impl LiteClient {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn get_config_all(
         &mut self,
         id: BlockIdExt,

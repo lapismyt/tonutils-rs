@@ -9,11 +9,11 @@
 use std::time::Duration;
 
 use crate::{
-    adnl::{AdnlError, AdnlKeyPair, AdnlUdpSession, AdnlUdpTransport},
-    tl::{
-        AdnlMessage, Int256,
-        network::{DhtMessage, DhtNodesBoxed, PacketContents},
+    adnl::{
+        AdnlError, AdnlKeyPair, AdnlUdpSession, AdnlUdpTransport,
+        tl::{AdnlMessage, DhtMessage, DhtNodesBoxed, PacketContents},
     },
+    tl::TlInt256 as Int256,
 };
 
 /// Two shared sessions, one on each side, routed to each other.

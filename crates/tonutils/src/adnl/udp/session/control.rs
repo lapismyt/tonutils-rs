@@ -11,12 +11,13 @@ use crate::{
     adnl::{
         AdnlChannelPacket, AdnlError, AdnlPublicKey, channel_id_for_secret, now_i32,
         ordered_channel_ciphers,
+        tl::{AdnlMessage, PacketContents},
         udp::{
             MAX_SESSION_CHANNELS, REQUEST_CHANNEL_INTERVAL,
             session::{SessionInner, SessionState},
         },
     },
-    tl::{AdnlMessage, Int256, network::PacketContents},
+    tl::TlInt256 as Int256,
 };
 
 impl SessionInner {
@@ -65,7 +66,7 @@ impl SessionInner {
                             from_short: None,
                             message: Some(AdnlMessage::ConfirmChannel {
                                 key: Int256(state.local_channel.public_key.to_bytes()),
-                                peer_key: *key,
+                                peer_key: key.clone(),
                                 date: *date,
                             }),
                             messages: None,

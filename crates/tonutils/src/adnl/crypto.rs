@@ -1,72 +1,16 @@
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
+#[cfg(feature = "serde")]
+use serde::de::{Error, Visitor};
 use sha2::{Digest, Sha512};
+
+use crate::adnl::tl::AdnlTlPublicKeyRef;
 
 /// Ed25519 key pair
 #[derive(Copy, Clone)]
 pub struct AdnlKeyPair {
     pub secret_key: ExpandedSecretKey,
     pub public_key: AdnlPublicKey,
-}
-
-pub mod tl {
-    /// Public key which is used in protocol
-    #[derive(Debug, Copy, Clone, Eq, PartialEq, tl_proto::TlRead, tl_proto::TlWrite)]
-    #[tl(boxed)]
-    pub enum PublicKey<'tl> {
-        #[tl(id = 0x4813b4c6, size_hint = 32)]
-        Ed25519 { key: &'tl [u8; 32] },
-        #[tl(id = 0x34ba45cb)]
-        Overlay { name: &'tl [u8] },
-        #[tl(id = 0x2dbcadd4, size_hint = 32)]
-        Aes { key: &'tl [u8; 32] },
-        #[tl(id = 0xb61f450a)]
-        Unencoded { data: &'tl [u8] },
-    }
-
-    impl PublicKey<'_> {
-        pub fn as_equivalent_owned(&self) -> PublicKeyOwned {
-            match self {
-                &Self::Ed25519 { key } => PublicKeyOwned::Ed25519 { key: *key },
-                Self::Overlay { name } => PublicKeyOwned::Overlay {
-                    name: name.to_vec(),
-                },
-                &Self::Aes { key } => PublicKeyOwned::Aes { key: *key },
-                Self::Unencoded { data } => PublicKeyOwned::Unencoded {
-                    data: data.to_vec(),
-                },
-            }
-        }
-    }
-
-    /// Public key which is used in protocol. Owned version
-    #[derive(Debug, Clone, Eq, PartialEq, tl_proto::TlRead, tl_proto::TlWrite)]
-    #[tl(boxed)]
-    pub enum PublicKeyOwned {
-        #[tl(id = 0x4813b4c6, size_hint = 32)]
-        Ed25519 { key: [u8; 32] },
-        #[tl(id = 0x34ba45cb)]
-        Overlay { name: Vec<u8> },
-        #[tl(id = 0x2dbcadd4, size_hint = 32)]
-        Aes { key: [u8; 32] },
-        #[tl(id = 0xb61f450a)]
-        Unencoded { data: Vec<u8> },
-    }
-
-    impl PublicKeyOwned {
-        pub fn as_equivalent_ref(&self) -> PublicKey<'_> {
-            match self {
-                Self::Ed25519 { key } => PublicKey::Ed25519 { key },
-                Self::Overlay { name } => PublicKey::Overlay {
-                    name: name.as_slice(),
-                },
-                Self::Aes { key } => PublicKey::Aes { key },
-                Self::Unencoded { data } => PublicKey::Unencoded {
-                    data: data.as_slice(),
-                },
-            }
-        }
-    }
 }
 
 impl AdnlKeyPair {
@@ -78,19 +22,16 @@ impl AdnlKeyPair {
     }
 
     /// Signs a serialized TL representation of data
-    #[inline(always)]
     pub fn sign_tl<T: tl_proto::TlWrite>(&self, data: T) -> [u8; 64] {
         self.secret_key.sign_tl(data, &self.public_key)
     }
 
     /// Signs raw bytes
-    #[inline(always)]
     pub fn sign_raw(&self, data: &[u8]) -> [u8; 64] {
         self.secret_key.sign_raw(data, &self.public_key)
     }
 
     /// Computes shared secret using x25519
-    #[inline(always)]
     pub fn compute_shared_secret(&self, other_public_key: &AdnlPublicKey) -> [u8; 32] {
         self.secret_key.compute_shared_secret(other_public_key)
     }
@@ -162,7 +103,6 @@ pub struct AdnlPublicKey {
 
 impl AdnlPublicKey {
     /// Tries to create public key from
-    #[inline(always)]
     pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
         let compressed = CompressedEdwardsY(bytes);
         let point = compressed.decompress()?;
@@ -172,40 +112,35 @@ impl AdnlPublicKey {
         })
     }
 
-    #[inline(always)]
-    pub fn from_tl(tl: tl::PublicKey<'_>) -> Option<Self> {
+    pub fn from_tl(tl: AdnlTlPublicKeyRef<'_>) -> Option<Self> {
         match tl {
-            tl::PublicKey::Ed25519 { key } => Self::from_bytes(*key),
+            AdnlTlPublicKeyRef::Ed25519 { key } => Self::from_bytes(*key),
             _ => None,
         }
     }
 
-    #[inline(always)]
-    pub fn as_tl(&'_ self) -> tl::PublicKey<'_> {
-        tl::PublicKey::Ed25519 {
+    pub fn as_tl(&'_ self) -> AdnlTlPublicKeyRef<'_> {
+        AdnlTlPublicKeyRef::Ed25519 {
             key: self.compressed.as_bytes(),
         }
     }
 
-    #[inline(always)]
     pub fn to_bytes(&self) -> [u8; 32] {
         self.compressed.to_bytes()
     }
 
-    #[inline(always)]
     pub fn as_bytes(&'_ self) -> &'_ [u8; 32] {
         self.compressed.as_bytes()
     }
 
     /// Verifies message signature using its TL representation
     ///
-    /// NOTE: `[u8]` is representation differently in TL. Use [PublicKey::verify_raw] if
+    /// NOTE: `[u8]` is representation differently in TL. Use [`AdnlPublicKey::verify_raw`] if
     /// you need to verify raw bytes signature
     pub fn verify_tl<T: tl_proto::TlWrite>(&self, message: T, signature: &[u8; 64]) -> bool {
         let target_r = CompressedEdwardsY(signature[..32].try_into().unwrap());
-        let s = match check_scalar(signature[32..].try_into().unwrap()) {
-            Some(s) => s,
-            None => return false,
+        let Some(s) = check_scalar(signature[32..].try_into().unwrap()) else {
+            return false;
         };
 
         let mut h = Sha512::new();
@@ -222,9 +157,8 @@ impl AdnlPublicKey {
     /// Verifies message signature as it is
     pub fn verify_raw(&self, message: &[u8], signature: &[u8; 64]) -> bool {
         let target_r = CompressedEdwardsY(signature[..32].try_into().unwrap());
-        let s = match check_scalar(signature[32..].try_into().unwrap()) {
-            Some(s) => s,
-            None => return false,
+        let Some(s) = check_scalar(signature[32..].try_into().unwrap()) else {
+            return false;
         };
 
         let mut h = Sha512::new();
@@ -238,7 +172,6 @@ impl AdnlPublicKey {
         r.compress() == target_r
     }
 
-    #[inline(always)]
     fn from_scalar(bits: [u8; 32]) -> AdnlPublicKey {
         let point = EdwardsPoint::mul_base_clamped(bits);
         let compressed = point.compress();
@@ -271,7 +204,6 @@ impl AsRef<[u8; 32]> for AdnlPublicKey {
 }
 
 impl PartialEq for AdnlPublicKey {
-    #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
         self.compressed.eq(&other.compressed)
     }
@@ -291,7 +223,6 @@ impl std::fmt::Display for AdnlPublicKey {
 }
 
 impl std::fmt::Debug for AdnlPublicKey {
-    #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         std::fmt::Display::fmt(self, f)
     }
@@ -317,8 +248,6 @@ impl<'de> serde::Deserialize<'de> for AdnlPublicKey {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de::{Error, Visitor};
-
         struct BytesVisitor;
 
         impl Visitor<'_> for BytesVisitor {
@@ -354,7 +283,7 @@ impl<'de> serde::Deserialize<'de> for AdnlPublicKey {
 ///
 /// Keeps the original 32-byte seed alongside the clamped scalar and the
 /// signature nonce so a byte-identical PKCS#8 (RFC 8410) encoding of the
-/// same identity can be rebuilt later - [`KeyPair::private_key_der`] feeds
+/// same identity can be rebuilt later - [`AdnlKeyPair::private_key_der`] feeds
 /// it to `rustls`, which must derive the same public key this pair carries.
 #[derive(Copy, Clone)]
 pub struct ExpandedSecretKey {
@@ -365,12 +294,10 @@ pub struct ExpandedSecretKey {
 }
 
 impl ExpandedSecretKey {
-    #[inline(always)]
     pub fn nonce(&'_ self) -> &'_ [u8; 32] {
         &self.nonce
     }
 
-    #[inline(always)]
     pub fn key_bytes(&'_ self) -> &'_ [u8; 32] {
         &self.key_bytes
     }
@@ -429,7 +356,6 @@ impl ExpandedSecretKey {
         result
     }
 
-    #[inline(always)]
     pub fn compute_shared_secret(&self, other_public_key: &AdnlPublicKey) -> [u8; 32] {
         let point = (-other_public_key.neg_point).to_montgomery();
         (point * self.key).to_bytes()
@@ -460,35 +386,30 @@ impl From<&'_ SecretKey> for ExpandedSecretKey {
 pub struct SecretKey([u8; 32]);
 
 impl SecretKey {
-    #[inline(always)]
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 
-    #[inline(always)]
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0
     }
 
-    #[inline(always)]
     pub fn as_bytes(&'_ self) -> &'_ [u8; 32] {
         &self.0
     }
 
-    #[inline(always)]
     pub fn expand(&self) -> ExpandedSecretKey {
         ExpandedSecretKey::from(self)
     }
 }
 
-#[inline(always)]
 fn check_scalar(bytes: [u8; 32]) -> Option<Scalar> {
     Scalar::from_canonical_bytes(bytes).into()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AdnlPublicKey, ExpandedSecretKey, SecretKey};
 
     #[test]
     fn correct_signature() {
@@ -521,7 +442,7 @@ mod tests {
             ]
         );
 
-        assert!(pubkey.verify_tl(data, &signature))
+        assert!(pubkey.verify_tl(data, &signature));
     }
 
     #[test]

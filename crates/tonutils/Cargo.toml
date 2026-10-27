@@ -18,26 +18,35 @@ workspace = true
 
 [features]
 default = []
-adnl = ["tl", "dep:quinn", "dep:rand", "dep:hex", "dep:log", "dep:aes", "dep:sha2", "dep:subtle", "dep:tokio-util", "dep:ctr", "dep:tokio", "dep:curve25519-dalek", "dep:tl-proto", "dep:futures", "dep:pin-project", "dep:thiserror", "dep:rustls", "dep:rustls-pki-types"]
-tl = ["dep:derivative", "dep:tl-proto", "dep:tl-scheme"]
-tlb = ["dep:tonutils-macros"]
-# TODO: don't use anyhow in libraries
-contracts = ["tlb", "tvm", "dep:async-trait", "dep:anyhow", "dep:num-bigint"]
-liteclient = ["tl", "dep:tower", "dep:tokio-tower"]
-metadata = []
+adnl = ["tl", "dep:aes", "dep:ctr", "dep:curve25519-dalek", "dep:derivative",
+        "dep:ed25519-dalek", "dep:futures", "dep:hex", "dep:log", "dep:pin-project",
+        "dep:quinn", "dep:rand", "dep:rustls", "dep:rustls-pki-types", "dep:sha2",
+        "dep:subtle", "dep:thiserror", "dep:tl-proto", "dep:tokio", "dep:tokio-util"]
+tl = ["dep:derivative", "dep:hex", "dep:rand", "dep:thiserror", "dep:tl-proto"]
+tvm = ["crc", "dep:base64", "dep:hex", "dep:num-bigint", "dep:sha2", "dep:thiserror"]
+tlb = ["tvm", "dep:num-bigint", "dep:thiserror", "dep:tonutils-macros"]
+network-config = ["dep:base64", "dep:hex", "dep:serde", "dep:serde_json",
+                  "dep:serde_with", "dep:thiserror"]
+metadata = ["tvm", "dep:sha2", "dep:thiserror"]
+liteclient = ["adnl", "network-config", "tlb", "tl", "tvm", "dep:derivative",
+              "dep:futures", "dep:hex", "dep:log", "dep:pin-project", "dep:rand",
+              "dep:thiserror", "dep:tl-proto", "dep:tokio", "dep:tokio-tower",
+              "dep:tokio-util", "dep:tower"]
+contracts = ["liteclient", "tlb", "tl", "tvm", "dep:async-trait",
+             "dep:num-bigint", "dep:thiserror"]
+wallet = ["tlb", "tvm", "dep:bip39", "dep:ed25519-dalek", "dep:hex", "dep:hmac",
+          "dep:num-bigint", "dep:pbkdf2", "dep:rand", "dep:sha2", "dep:thiserror"]
+overlay = ["adnl", "tl", "dep:derivative", "dep:ed25519-dalek", "dep:futures",
+           "dep:hex", "dep:log", "dep:rand", "dep:raptorq", "dep:serde",
+           "dep:serde_json", "dep:sha2", "dep:thiserror", "dep:tl-proto", "dep:tokio"]
+overlay-config = ["overlay", "network-config", "dep:reqwest"]
+mempool = ["overlay", "tlb", "tvm", "dep:futures", "dep:hex", "dep:log",
+           "dep:sha2", "dep:thiserror", "dep:tl-proto", "dep:tokio"]
 crc = ["dep:crc"]
-network-config = ["dep:reqwest", "dep:base64", "dep:serde", "dep:serde_with"]
-mempool = ["overlay"]
-overlay = ["dep:raptorq", "dep:ed25519-dalek"]
-jetton = ["tlb", "tvm", "metadata", "contracts", "dep:num-bigint", "dep:thiserror"]
-nft = []
-wallet = []
-tvm = ["crc"]
 serde = ["dep:serde"]
 
 [dependencies]
 aes = { workspace = true, optional = true }
-anyhow = { workspace = true, optional = true }
 derivative = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 subtle = { workspace = true, optional = true }
@@ -51,7 +60,6 @@ ctr = { workspace = true, optional = true }
 curve25519-dalek = { workspace = true, optional = true }
 log = { workspace = true, optional = true }
 tl-proto = { workspace = true, optional = true }
-tl-scheme = { workspace = true, optional = true }
 pin-project = { workspace = true, optional = true }
 futures = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
@@ -61,7 +69,7 @@ async-trait = { workspace = true, optional = true }
 num-bigint = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tokio-tower = { workspace = true, optional = true }
-tonutils-macros = { path = "../tonutils-macros", optional = true }
+tonutils-macros = { workspace = true, optional = true }
 raptorq = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
@@ -69,14 +77,18 @@ crc = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 serde_with = { workspace = true, optional = true }
 ed25519-dalek = { workspace = true, optional = true }
+bip39 = { workspace = true, optional = true }
+hmac = { workspace = true, optional = true }
+pbkdf2 = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow.workspace = true
 hex.workspace = true
 rand.workspace = true
-ureq.workspace = true
 pretty_env_logger.workspace = true
+tl-scheme.workspace = true
 tl-proto.workspace = true
 num-bigint.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tower.workspace = true

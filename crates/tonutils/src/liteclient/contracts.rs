@@ -1,10 +1,16 @@
 use crate::{
-    liteclient::{LiteBalancer, LiteClient, balancer::BalancerError, types::LiteError},
-    tl::{
-        BlockIdExt,
-        common::{AccountId, Int256},
-        response::{AccountState, MasterchainInfo, RunMethodResult, TransactionList},
+    contracts::ContractProvider,
+    liteclient::{
+        LiteClient,
+        balancer::{BalancerError, LiteBalancer},
+        tl::{
+            LiteAccountId as AccountId, LiteBlockIdExt as BlockIdExt,
+            LiteServerAccountState as AccountState, MasterchainInfo, RunMethodResult,
+            TransactionList,
+        },
+        types::LiteError,
     },
+    tl::TlInt256 as Int256,
     tvm::{Address, TvmStack},
 };
 

@@ -15,7 +15,7 @@
 //! (`quic/quic-common.h`) formats the ADNL short id as
 //! `<hex[0:32]>.<hex[32:64]>.adnl`, and a name that matches no known
 //! identity fails the handshake with a fatal `unrecognized_name` alert.
-//! [`SniRpkResolver`] reproduces that rule for rustls: the certificate
+//! `SniRpkResolver` reproduces that rule for rustls: the certificate
 //! resolver is the only `ClientHello`-time hook rustls offers, so a
 //! mismatched SNI yields no server certificate and the handshake dies with a
 //! fatal alert, while a missing SNI keeps the default identity - the same
@@ -406,7 +406,12 @@ pub(crate) fn make_quinn_client_config_without_identity(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        AdnlAddress, AdnlKeyPair, CertificateDer, ClientCertVerifier, ED25519_SPKI_PREFIX,
+        ResolvesServerCert, ServerCertVerifier, ServerName, SignatureScheme, SniRpkResolver,
+        TonRpkClientVerifier, TonServerCertVerifier, UnixTime, extract_ed25519_key,
+        make_certified_key, sni_for_public_key, verify_ed25519_signature,
+    };
     use crate::adnl::crypto::SecretKey;
 
     /// Seed for the fixed SNI vector. The expected public key below comes

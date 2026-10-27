@@ -165,7 +165,7 @@ pub fn parse_tep64_content(cell: Arc<Cell>) -> Result<Tep64Content, MetadataErro
         }),
         TEP64_ON_CHAIN_TAG => {
             let dict = slice
-                .load_hashmap_e_with(TEP64_DICT_KEY_BITS, |slice| slice.load_reference())
+                .load_hashmap_e_with(TEP64_DICT_KEY_BITS, Slice::load_reference)
                 .map_err(|error| MetadataError::MalformedOnChainDictionary(error.to_string()))?;
             if !slice.is_empty() {
                 return Err(MetadataError::MalformedOnChainDictionary(
@@ -173,7 +173,7 @@ pub fn parse_tep64_content(cell: Arc<Cell>) -> Result<Tep64Content, MetadataErro
                 ));
             }
             Ok(Tep64Content::OnChain {
-                fields: decode_onchain_fields(dict),
+                fields: decode_onchain_fields(&dict),
                 raw: cell,
             })
         }
@@ -189,7 +189,7 @@ pub fn tep64_key_hash(name: &str) -> [u8; 32] {
     Sha256::digest(name.as_bytes()).into()
 }
 
-fn decode_onchain_fields(dict: HashmapE<Arc<Cell>>) -> Vec<Tep64Field> {
+fn decode_onchain_fields(dict: &HashmapE<Arc<Cell>>) -> Vec<Tep64Field> {
     dict.iter()
         .map(|(key, raw)| {
             let key_hash = bit_key_hash(key);
@@ -249,7 +249,7 @@ fn decode_field_value(raw: Arc<Cell>) -> Tep64Value {
 
 fn decode_chunked_slice(slice: &mut Slice) -> Result<(Vec<Tep64Chunk>, Vec<u8>), MetadataError> {
     let dict = slice
-        .load_hashmap_e_with(TEP64_CHUNK_KEY_BITS, |slice| slice.load_reference())
+        .load_hashmap_e_with(TEP64_CHUNK_KEY_BITS, Slice::load_reference)
         .map_err(|error| MetadataError::MalformedChunkedDictionary(error.to_string()))?;
     if !slice.is_empty() {
         return Err(MetadataError::MalformedChunkedDictionary(
@@ -338,7 +338,11 @@ fn known_key_by_hash(hash: [u8; 32]) -> Option<Tep64KnownKey> {
 mod tests {
     use crate::tvm::{Builder, deserialize_boc, serialize_boc};
 
-    use super::*;
+    use super::{
+        Arc, BitKey, Cell, HashmapE, MetadataError, TEP64_CHUNK_KEY_BITS, TEP64_DICT_KEY_BITS,
+        TEP64_OFF_CHAIN_TAG, TEP64_ON_CHAIN_TAG, Tep64Chunk, Tep64Content, Tep64KnownKey,
+        Tep64Value, parse_tep64_content, tep64_key_hash,
+    };
 
     fn snake_cell(bytes: &[u8]) -> Arc<Cell> {
         let mut builder = Builder::new();

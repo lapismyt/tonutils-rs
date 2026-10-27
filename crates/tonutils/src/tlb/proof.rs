@@ -1,6 +1,6 @@
-use crate::{Result, TlbError};
+use crate::tlb::{TlbError, TlbResult};
 use std::sync::Arc;
-use tonutils::tvm::Cell;
+use tonutils::tvm::{Cell, ExoticCellKind};
 
 /// Wrapper for an exotic Merkle proof cell.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,14 +17,14 @@ pub struct MerkleProof {
 
 impl MerkleProof {
     /// Decodes an exotic Merkle proof from a standalone cell.
-    pub fn from_cell(cell: Arc<Cell>) -> Result<Self> {
+    pub fn from_cell(cell: Arc<Cell>) -> TlbResult<Self> {
         Self::from_exotic_cell(cell)
     }
 
     /// Decodes and validates the proof cell shape without checking trust roots.
-    pub fn from_exotic_cell(cell: Arc<Cell>) -> Result<Self> {
+    pub fn from_exotic_cell(cell: Arc<Cell>) -> TlbResult<Self> {
         match cell.exotic_kind() {
-            Some(tonutils::tvm::ExoticCellKind::MerkleProof {
+            Some(ExoticCellKind::MerkleProof {
                 proof_hash,
                 proof_depth,
             }) if cell.reference_count() == 1 => Ok(Self {
@@ -72,14 +72,14 @@ pub struct MerkleUpdate {
 
 impl MerkleUpdate {
     /// Decodes an exotic Merkle update from a standalone cell.
-    pub fn from_cell(cell: Arc<Cell>) -> Result<Self> {
+    pub fn from_cell(cell: Arc<Cell>) -> TlbResult<Self> {
         Self::from_exotic_cell(cell)
     }
 
     /// Decodes and validates the update cell shape without checking trust roots.
-    pub fn from_exotic_cell(cell: Arc<Cell>) -> Result<Self> {
+    pub fn from_exotic_cell(cell: Arc<Cell>) -> TlbResult<Self> {
         match cell.exotic_kind() {
-            Some(tonutils::tvm::ExoticCellKind::MerkleUpdate {
+            Some(ExoticCellKind::MerkleUpdate {
                 old_hash,
                 new_hash,
                 old_depth,

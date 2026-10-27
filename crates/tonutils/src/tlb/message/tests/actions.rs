@@ -1,5 +1,14 @@
-use super::core::*;
-use super::*;
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "Test fixtures intentionally narrow generated values to protocol widths"
+)]
+use super::core::{cell_with_bits, relaxed_internal_info, roundtrip};
+use super::{
+    ACTION_SEND_MSG_TAG, AccStatusChange, BigUint, Builder, CurrencyCollection, Either, Grams,
+    HashmapE, LibRef, MAX_OUT_LIST_ACTIONS, MessageRelaxed, MsgAddress, MsgAddressExt, OutAction,
+    OutList, StorageUsed, TlbDeserialize, TlbError, TlbSerialize, TrActionPhase,
+    VAR_UINT_7_LEN_BITS, VAR_UINT_16_LEN_BITS, store_tag,
+};
 use tonutils::tvm::BitKey;
 
 #[test]

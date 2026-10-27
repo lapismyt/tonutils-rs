@@ -1,10 +1,17 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+)]
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
     time::{Duration, Instant},
 };
 
+use super::BalancerResult as Result;
 use crate::{
+    liteclient::tl::BlockState,
     liteclient::{
         LiteClient,
         balancer::{
@@ -18,16 +25,14 @@ use crate::{
             DecodedShardInfo, SimpleAccount,
         },
         rate_limit::{RateLimiter, RequestRateLimit},
+        tl::{
+            LiteAccountId as AccountId, LiteBlockIdExt as BlockIdExt,
+            LiteServerAccountState as AccountState, LiteTransactionId3 as TransactionId3,
+            MasterchainInfo, MasterchainInfoExt, RunMethodResult, TransactionList, Version,
+        },
         types::LiteError,
     },
-    tl::{
-        AccountId, BlockIdExt, Int256, TlError,
-        common::TransactionId3,
-        response::{
-            AccountState, BlockState, MasterchainInfo, MasterchainInfoExt, RunMethodResult,
-            TransactionList, Version,
-        },
-    },
+    tl::{TlError, TlInt256 as Int256},
     tlb::{Account, Block, ShardAccount, Transaction},
     tvm::{Address, Cell, TvmStack, TvmStackEntry, method_name_to_id},
 };
@@ -81,7 +86,7 @@ impl LiteBalancer {
         self.find_archives().await;
 
         // Start health checker
-        let checker = self.spawn_health_checker();
+        let checker = Self::spawn_health_checker();
         *self.checker_handle.write().await = Some(checker);
 
         // Don't delete peers on startup - they haven't made any requests yet
@@ -97,7 +102,7 @@ impl LiteBalancer {
         std::future::ready(true)
     }
 
-    pub(super) fn spawn_health_checker(&self) -> JoinHandle<()> {
+    pub(super) fn spawn_health_checker() -> JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(3)).await;
@@ -529,6 +534,10 @@ impl LiteBalancer {
         Err(BalancerError::Timeout)
     }
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn get_block_header(
         &mut self,
         id: BlockIdExt,
@@ -568,6 +577,10 @@ impl LiteBalancer {
         Err(BalancerError::Timeout)
     }
 
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn raw_get_block_header(
         &mut self,
         id: BlockIdExt,
@@ -880,6 +893,10 @@ impl LiteBalancer {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn get_config_all_typed(
         &mut self,
         id: BlockIdExt,
@@ -914,6 +931,10 @@ impl LiteBalancer {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::fn_params_excessive_bools,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     pub async fn get_config_params_typed(
         &mut self,
         id: BlockIdExt,
@@ -957,7 +978,12 @@ impl LiteBalancer {
             self,
             HashMap<Int256, Option<Arc<Cell>>>,
             false,
-            |client| client.get_libraries_typed(library_list.clone())
+            |client| {
+                let library_list = library_list.clone();
+                async move {
+                    client.get_libraries_typed(library_list).await
+                }
+            }
         )
     }
 

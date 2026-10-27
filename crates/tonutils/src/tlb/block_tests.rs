@@ -1,7 +1,12 @@
-use super::*;
-use crate::{DepthBalanceInfo, TlbDeserialize, TlbSerialize};
+use super::{
+    BlkMasterInfo, Block, BlockInfo, BlockPrevInfo, ConfigParam, ConfigParamPayload,
+    ConfigParamValue, CurrencyCollection, ExtBlkRef, GasLimitsPrices, GlobalVersion, HashUpdate,
+    MerkleProof, MerkleUpdate, MsgForwardPrices, ShardAccounts, ShardIdent, ShardStateUnsplit,
+    ShardStateUnsplitData, TlbError, ValueFlow, ValueFlowFees, ValueFlowMain,
+};
+use crate::tlb::{DepthBalanceInfo, TlbDeserialize, TlbSerialize};
 use std::sync::Arc;
-use tonutils::tvm::{Builder, Cell, ExoticCellKind, boc_to_hex};
+use tonutils::tvm::{Builder, Cell, ExoticCellKind, HashmapAugE, boc_to_hex, hex_to_boc};
 
 #[test]
 fn shard_ident_roundtrips_and_checks_bound() {
@@ -173,7 +178,7 @@ fn shard_state_unsplit_decodes_stable_fields_and_preserves_raw_children() {
         out_msg_queue_info: empty.clone(),
         before_split: true,
         accounts: ShardAccounts {
-            accounts: tonutils::tvm::HashmapAugE::empty(
+            accounts: HashmapAugE::empty(
                 256,
                 DepthBalanceInfo {
                     split_depth: 0,
@@ -337,7 +342,7 @@ fn merkle_fixture_boc_is_canonical() {
     data.extend_from_slice(&0u16.to_be_bytes());
     let proof = Arc::new(Cell::with_exotic_data(data, 280, vec![root]).unwrap());
     let boc = boc_to_hex(&proof, false).unwrap();
-    let decoded = tonutils::tvm::hex_to_boc(&boc).unwrap();
+    let decoded = hex_to_boc(&boc).unwrap();
     assert_eq!(decoded.hash(), proof.hash());
     assert_eq!(boc_to_hex(&decoded, false).unwrap(), boc);
 }

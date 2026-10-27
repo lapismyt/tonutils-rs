@@ -1,24 +1,36 @@
+#![expect(
+    clippy::cast_possible_wrap,
+    reason = "Test fixtures intentionally narrow generated values to protocol widths"
+)]
+use std::{collections::HashMap, str::FromStr};
+
 use crate::{
-    liteclient::types::LiteError,
-    tl::{
-        AccountId, BlockId, BlockIdExt, Int256, NonfinalCandidateId, Request, ZeroStateIdExt,
-        common::{BlockLink, LibraryEntry, Signature, SignatureSet, TransactionId, TransactionId3},
-        request::{
+    liteclient::{
+        FromResponse,
+        tl::{
+            BlockOutMsgQueueSize, BlockTransactionsExt, DispatchQueueInfo, DispatchQueueMessages,
             GetAccountState, GetAllShardsInfo, GetBlock, GetBlockHeader, GetBlockOutMsgQueueSize,
             GetBlockProof, GetConfigAll, GetConfigParams, GetDispatchQueueInfo,
             GetDispatchQueueMessages, GetLibraries, GetLibrariesWithProof, GetMasterchainInfoExt,
             GetOneTransaction, GetOutMsgQueueSizes, GetShardBlockProof, GetShardInfo, GetState,
-            GetTransactions, GetValidatorStats, ListBlockTransactions, LookupBlock,
-            LookupBlockWithProof, NonfinalGetCandidate, NonfinalGetPendingShardBlocks,
-            NonfinalGetValidatorGroups, RunSmcMethod, SendMessage,
+            GetTransactions, GetValidatorStats, LibraryResultWithProof, ListBlockTransactions,
+            LiteAccountId as AccountId, LiteBlockId as BlockId, LiteBlockIdExt as BlockIdExt,
+            LiteBlockLink as BlockLink, LiteLibraryEntry as LibraryEntry,
+            LiteNonfinalCandidate as NonfinalCandidate,
+            LiteNonfinalCandidateId as NonfinalCandidateId,
+            LiteNonfinalGetCandidate as NonfinalGetCandidate,
+            LiteNonfinalGetPendingShardBlocks as NonfinalGetPendingShardBlocks,
+            LiteNonfinalGetValidatorGroups as NonfinalGetValidatorGroups,
+            LiteNonfinalPendingShardBlocks as NonfinalPendingShardBlocks,
+            LiteNonfinalValidatorGroups as NonfinalValidatorGroups, LiteSignature as Signature,
+            LiteSignatureSet as SignatureSet, LiteTransactionId as TransactionId,
+            LiteTransactionId3 as TransactionId3, LiteZeroStateIdExt as ZeroStateIdExt,
+            LookupBlock, LookupBlockResult, LookupBlockWithProof, MasterchainInfo,
+            OutMsgQueueSizes, Request, Response, RunSmcMethod, SendMessage, ShardBlockProof,
         },
-        response::{
-            BlockOutMsgQueueSize, BlockTransactionsExt, DispatchQueueInfo, DispatchQueueMessages,
-            LibraryResultWithProof, LookupBlockResult, MasterchainInfo, NonfinalCandidate,
-            NonfinalPendingShardBlocks, NonfinalValidatorGroups, OutMsgQueueSizes, Response,
-            ShardBlockProof,
-        },
+        types::LiteError,
     },
+    tl::TlInt256 as Int256,
 };
 
 use tl_proto::{deserialize, serialize};
@@ -99,7 +111,7 @@ pub(super) fn test_block_id_ext_display() {
         file_hash,
     };
 
-    let display_str = format!("{}", block_id_ext);
+    let display_str = format!("{block_id_ext}");
     assert!(display_str.contains("-1"));
     assert!(display_str.contains("8000000000000000"));
     assert!(display_str.contains("100"));
@@ -166,7 +178,7 @@ pub(super) fn test_signature_set_creation() {
             assert_eq!(catchain_seqno, 42);
             assert_eq!(signatures.len(), 2);
         }
-        _ => panic!("Wrong signature set variant"),
+        SignatureSet::Simplex { .. } => panic!("Wrong signature set variant"),
     }
 }
 
@@ -222,6 +234,7 @@ pub(super) fn test_transaction_id_with_all_fields() {
         account: Some(Int256([0x55u8; 32])),
         lt: Some(999),
         hash: Some(Int256([0x66u8; 32])),
+        metadata: None,
     };
 
     assert!(tx_id.account.is_some());
@@ -237,6 +250,7 @@ pub(super) fn test_transaction_id_partial_fields() {
         account: Some(Int256([0x77u8; 32])),
         lt: None,
         hash: None,
+        metadata: None,
     };
 
     assert!(tx_id.account.is_some());
@@ -253,19 +267,6 @@ pub(super) fn test_library_entry_creation() {
 
     assert_eq!(entry.hash.0[0], 0x88);
     assert_eq!(entry.data.len(), 8);
-}
-
-#[test]
-pub(super) fn test_string_creation_from_str() {
-    let tl_string = String::from("Hello, World!");
-    assert_eq!(format!("{}", tl_string), "Hello, World!");
-}
-
-#[test]
-pub(super) fn test_string_creation_from_string() {
-    let rust_string = std::string::String::from("Test String");
-    let tl_string = String::from(rust_string);
-    assert_eq!(format!("{}", tl_string), "Test String");
 }
 
 #[test]
@@ -306,7 +307,7 @@ pub(super) fn test_block_link_back_creation() {
             assert_eq!(f.seqno, 100);
             assert_eq!(t.seqno, 101);
         }
-        _ => panic!("Wrong variant"),
+        BlockLink::BlockLinkForward { .. } => panic!("Wrong variant"),
     }
 }
 
@@ -455,7 +456,7 @@ pub(super) fn test_from_response_nonfinal_types() {
         NonfinalValidatorGroups { groups: vec![] },
     ))
     .unwrap();
-    assert!(groups.groups.is_empty());
+    assert_eq!(groups.groups.len(), 0);
 
     let pending = NonfinalPendingShardBlocks::from_response(Response::NonfinalPendingShardBlocks(
         NonfinalPendingShardBlocks {
@@ -517,10 +518,10 @@ pub(super) fn test_block_link_forward_creation() {
             assert!(!to_key_block);
             match signatures {
                 SignatureSet::Ordinary { catchain_seqno, .. } => assert_eq!(catchain_seqno, 5),
-                _ => panic!("Wrong signature set variant"),
+                SignatureSet::Simplex { .. } => panic!("Wrong signature set variant"),
             }
         }
-        _ => panic!("Wrong variant"),
+        BlockLink::BlockLinkBack { .. } => panic!("Wrong variant"),
     }
 }
 
@@ -566,8 +567,6 @@ pub(super) fn test_block_id_ext_equality() {
 
 #[test]
 pub(super) fn test_int256_hash_consistency() {
-    use std::collections::HashMap;
-
     let int1 = Int256([0x42u8; 32]);
     let int2 = Int256([0x42u8; 32]);
 
@@ -580,10 +579,14 @@ pub(super) fn test_int256_hash_consistency() {
 }
 
 pub(super) fn to_hex(bytes: &[u8]) -> std::string::String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+    hex::encode(bytes)
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The table intentionally covers every LiteAPI request and response constructor"
+)]
 pub(super) fn request_roundtrip_all_constructors() {
     fn i(fill: u8) -> Int256 {
         Int256([fill; 32])

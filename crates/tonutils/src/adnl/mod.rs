@@ -4,6 +4,7 @@ pub mod crypto;
 pub mod helper_types;
 pub mod primitives;
 pub mod quic;
+pub mod tl;
 pub mod udp;
 pub mod wrappers;
 

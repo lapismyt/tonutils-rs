@@ -94,7 +94,7 @@ impl<T: AsyncReadExt + AsyncWriteExt + Unpin> AdnlPeer<T> {
             .ok_or(AdnlError::InvalidPublicKey)?;
         let handshake = AdnlBuilder::with_random_aes_params(&mut rand::rngs::OsRng)
             .perform_ecdh(&local_keypair, &remote_public);
-        log::debug!("Performing custom handshake {:?}", handshake);
+        log::debug!("Performing custom handshake {handshake:?}");
         Self::perform_custom_handshake(transport, &handshake).await
     }
 

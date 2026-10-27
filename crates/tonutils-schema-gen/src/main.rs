@@ -16,22 +16,26 @@ use clap::{Parser, ValueEnum};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-const SCHEMA_PATHS: &[(&str, SchemaKind)] = &[
+const SCHEMA_PATHS: &[(&str, SchemaKind, &str)] = &[
     (
-        "crates/tonutils-tl/src/tl/schemas/lite_api.tl",
+        "crates/tonutils/src/tl/schemas/lite_api.tl",
         SchemaKind::Tl,
+        "LiteApiConstructorMetadata",
     ),
     (
-        "crates/tonutils-tl/src/tl/schemas/ton_api.tl",
+        "crates/tonutils/src/tl/schemas/ton_api.tl",
         SchemaKind::Tl,
+        "TonApiConstructorMetadata",
     ),
     (
-        "crates/tonutils-tl/src/tl/schemas/tonlib_api.tl",
+        "crates/tonutils/src/tl/schemas/tonlib_api.tl",
         SchemaKind::Tl,
+        "TonlibApiConstructorMetadata",
     ),
     (
-        "crates/tonutils-tlb/src/tlb/schemas/block.tlb",
+        "crates/tonutils/src/tlb/schemas/block.tlb",
         SchemaKind::Tlb,
+        "BlockTlbConstructorMetadata",
     ),
 ];
 
@@ -58,6 +62,13 @@ enum SchemaKind {
     Tlb,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum Command {
+    Check,
+    Write,
+    Inventory,
+}
+
 impl SchemaKind {
     fn as_str(self) -> &'static str {
         match self {
@@ -68,8 +79,8 @@ impl SchemaKind {
 
     fn generated_dir(self) -> &'static str {
         match self {
-            Self::Tl => "crates/tonutils-tl/src/tl/generated",
-            Self::Tlb => "crates/tonutils-tlb/src/tlb/generated",
+            Self::Tl => "crates/tonutils/src/tl/generated",
+            Self::Tlb => "crates/tonutils/src/tlb/generated",
         }
     }
 }
@@ -77,6 +88,9 @@ impl SchemaKind {
 #[derive(Debug, Parser)]
 #[command(about = "Generate and validate checked-in TON schema metadata")]
 struct Args {
+    /// Positional command form: `check`, `write`, or `inventory`.
+    #[arg(value_enum, conflicts_with_all = ["write", "check", "inventory"])]
+    command: Option<Command>,
     /// Rewrite generated metadata and the schema inventory.
     #[arg(long, conflicts_with_all = ["check", "inventory"])]
     write: bool,
@@ -95,6 +109,7 @@ struct Args {
 struct Schema {
     relative_path: &'static str,
     kind: SchemaKind,
+    metadata_type: &'static str,
     hash: String,
     constructors: Vec<Constructor>,
 }
@@ -123,13 +138,15 @@ fn main() -> Result<(), Error> {
     let root = args.root.unwrap_or_else(workspace_root);
     let schemas = load_schemas(&root)?;
     let inventory = render_inventory(&schemas);
+    let write = args.write || args.command == Some(Command::Write);
+    let print_inventory = args.inventory || args.command == Some(Command::Inventory);
 
-    if args.inventory {
+    if print_inventory {
         print!("{inventory}");
         return Ok(());
     }
 
-    if args.write {
+    if write {
         for schema in &schemas {
             let path = generated_path(&root, schema);
             let contents = render_module(schema);
@@ -160,7 +177,7 @@ fn workspace_root() -> PathBuf {
 fn load_schemas(root: &Path) -> Result<Vec<Schema>, Error> {
     SCHEMA_PATHS
         .iter()
-        .map(|(relative_path, kind)| {
+        .map(|(relative_path, kind, metadata_type)| {
             let path = root.join(relative_path);
             let source = fs::read_to_string(&path).map_err(|source| Error::Io {
                 path: path.clone(),
@@ -178,6 +195,7 @@ fn load_schemas(root: &Path) -> Result<Vec<Schema>, Error> {
             Ok(Schema {
                 relative_path,
                 kind: *kind,
+                metadata_type,
                 hash,
                 constructors,
             })
@@ -324,15 +342,24 @@ fn render_module(schema: &Schema) -> String {
     )
     .unwrap();
     out.push_str("#[derive(Debug, Clone, Copy, PartialEq, Eq)]\n");
-    out.push_str("pub struct ConstructorMetadata {\n");
+    writeln!(out, "pub struct {} {{", schema.metadata_type).unwrap();
     out.push_str("    pub name: &'static str,\n    pub tag: &'static str,\n");
     out.push_str("    pub result: &'static str,\n    pub field_count: usize,\n}\n\n");
-    out.push_str("#[rustfmt::skip]\npub const CONSTRUCTORS: &[ConstructorMetadata] = &[\n");
+    writeln!(
+        out,
+        "#[rustfmt::skip]\npub const CONSTRUCTORS: &[{}] = &[",
+        schema.metadata_type
+    )
+    .unwrap();
     for constructor in &schema.constructors {
         writeln!(
             out,
-            "    ConstructorMetadata {{ name: {:?}, tag: {:?}, result: {:?}, field_count: {} }},",
-            constructor.name, constructor.tag, constructor.result, constructor.field_count
+            "    {} {{ name: {:?}, tag: {:?}, result: {:?}, field_count: {} }},",
+            schema.metadata_type,
+            constructor.name,
+            constructor.tag,
+            constructor.result,
+            constructor.field_count
         )
         .unwrap();
     }

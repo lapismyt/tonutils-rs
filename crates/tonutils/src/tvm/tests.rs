@@ -1,6 +1,14 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "Test fixtures intentionally narrow generated values to protocol widths"
+)]
 //! Integration tests and additional test coverage for TVM modules
 
-use crate::*;
+use crate::tvm::{
+    Address, Builder, Cell, CellBuilder, Dict, DictValue, ExternalAddress, MAX_CELL_BITS,
+    MAX_CELL_REFS, Slice, base64_to_boc, boc_to_base64, boc_to_hex, deserialize_boc, hex_to_boc,
+    serialize_boc,
+};
 use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
 
@@ -210,7 +218,7 @@ fn test_var_uint_operations() {
 
     let mut slice = Slice::new(cell);
     let var_uint = slice.load_var_uint(4).unwrap();
-    println!("Loaded var_uint: {}", var_uint);
+    println!("Loaded var_uint: {var_uint}");
 
     assert_eq!(var_uint, 0x42);
 }

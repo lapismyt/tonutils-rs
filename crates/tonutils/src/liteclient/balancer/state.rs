@@ -1,3 +1,4 @@
+use super::types::LiteBalancer;
 use crate::{
     adnl::AdnlError,
     liteclient::{
@@ -9,11 +10,14 @@ use crate::{
 impl LiteBalancer {
     pub(super) fn retryable_failure(error: &LiteError) -> Option<PeerFailureKind> {
         match error {
-            LiteError::Timeout { .. } => Some(PeerFailureKind::Timeout),
-            LiteError::AdnlError(AdnlError::Timeout { .. }) => Some(PeerFailureKind::Timeout),
+            LiteError::Timeout { .. } | LiteError::AdnlError(AdnlError::Timeout { .. }) => {
+                Some(PeerFailureKind::Timeout)
+            }
             LiteError::AdnlError(_) => Some(PeerFailureKind::Connection),
             LiteError::ServerError(_)
             | LiteError::TlError(_)
+            | LiteError::Boc(_)
+            | LiteError::Decode(_)
             | LiteError::UnexpectedMessage
             | LiteError::UnknownError(_) => None,
         }

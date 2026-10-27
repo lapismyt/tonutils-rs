@@ -15,23 +15,25 @@
 //! `scripts/cross_sdk/gen_go` and `scripts/cross_sdk/gen_py.py`, which CI
 //! runs alongside this test. Cases without `fields` are live captures (raw
 //! mainnet bytes recorded by the ignored
-//! `tonutils-mempool::live::capture_cross_sdk_dht_answer_from_mainnet`
+//! `tonutils::mempool::tests::live::capture_cross_sdk_dht_answer_from_mainnet`
 //! test): they have no canonical input, so only the roundtrip property is
 //! asserted for them. The `note`/`references` fields mark cases a reference
 //! cannot cover because its pinned schema lacks the constructor.
 
-use crate::tl::{
-    adnl,
-    common::Int256,
-    network::{
-        Address, AddressList, DhtKey, DhtKeyDescription, DhtMessage, DhtNode, DhtNodeBoxed,
-        DhtNodes, DhtNodesBoxed, DhtUpdateRule, DhtValue, DhtValueResult, OverlayNode,
-        OverlayNodes, OverlayQuery, QuicAnswer, QuicMessage, QuicQuery, TlPublicKey,
+use crate::{
+    adnl::tl::{
+        AddressList, AdnlMessage, AdnlNetAddress as Address, AdnlTlPublicKey as TlPublicKey,
+        DhtKey, DhtKeyDescription, DhtMessage, DhtNode, DhtNodeBoxed, DhtNodes, DhtNodesBoxed,
+        DhtUpdateRule, DhtValue, DhtValueResult, QuicAnswer, QuicMessage, QuicQuery,
     },
+    overlay::tl::{OverlayNode, OverlayNodes, OverlayQuery},
+    tl::TlInt256 as Int256,
 };
 
 use serde_json::Value;
 use tl_proto::{TlRead, TlWrite};
+
+use super::live_wire::LIVE_WIRE_FIXTURE_FILES;
 
 const FIXTURE_FILES: [(&str, &str); 6] = [
     (
@@ -64,9 +66,7 @@ const MANIFEST: &str = include_str!("../../../../../fixtures/cross_sdk/manifest.
 /// Every fixture the manifest must list: the offline cross-SDK fixtures
 /// plus the live wire fixtures captured from official nodes.
 fn all_fixture_files() -> impl Iterator<Item = (&'static str, &'static str)> {
-    FIXTURE_FILES
-        .into_iter()
-        .chain(super::live_wire::LIVE_WIRE_FIXTURE_FILES)
+    FIXTURE_FILES.into_iter().chain(LIVE_WIRE_FIXTURE_FILES)
 }
 
 #[test]
@@ -127,6 +127,10 @@ fn cross_sdk_fixtures_match_reference_serialization() {
     );
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+)]
 fn run_case(case: &Value) {
     let name = case["name"].as_str().expect("case name");
     let constructor = case["constructor"].as_str().expect("case constructor");
@@ -269,7 +273,7 @@ fn run_case(case: &Value) {
         "adnl.message.query" => check(
             name,
             constructor,
-            adnl::AdnlMessage::Query {
+            AdnlMessage::Query {
                 query_id: int256_field(fields, "query_id"),
                 query: bytes_field(fields, "query"),
             },
@@ -278,13 +282,13 @@ fn run_case(case: &Value) {
         "adnl.message.answer" => check(
             name,
             constructor,
-            adnl::AdnlMessage::Answer {
+            AdnlMessage::Answer {
                 query_id: int256_field(fields, "query_id"),
                 answer: bytes_field(fields, "answer"),
             },
             &expected,
         ),
-        "adnl.message.nop" => check(name, constructor, adnl::AdnlMessage::Nop, &expected),
+        "adnl.message.nop" => check(name, constructor, AdnlMessage::Nop, &expected),
         other => panic!("case {name}: unsupported constructor {other}"),
     }
 }

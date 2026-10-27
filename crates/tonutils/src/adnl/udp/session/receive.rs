@@ -15,16 +15,18 @@ use std::{
 use crate::{
     adnl::{
         AdnlError, AdnlPublicKey, decrypt_direct,
+        tl::{AdnlMessage, AdnlTlPublicKey, PacketContents},
         udp::{
-            MAX_UDP_PACKET_SIZE, highest_received_seqno, message_kind, message_vector,
-            note_peer_reinit_date, outgoing_seqno, peer_reinit_date, raw_packet_flags,
-            record_received_seqno,
+            MAX_UDP_PACKET_SIZE,
+            capture::{armed, record},
+            highest_received_seqno, message_kind, message_vector, note_peer_reinit_date,
+            outgoing_seqno, peer_reinit_date, raw_packet_flags, record_received_seqno,
             session::{
                 MAX_INBOUND_QUERIES, MAX_RECENT_QUERIES, SessionInner, SessionState, Source,
             },
         },
     },
-    tl::{AdnlMessage, Int256, network::PacketContents},
+    tl::TlInt256 as Int256,
 };
 
 /// How long a datagram may wait in a session queue before the wait is
@@ -46,6 +48,10 @@ fn tl_id(data: &[u8]) -> u32 {
 /// `PacketContents` is a few hundred bytes; the enum lives on the receive
 /// loop's stack only for the duration of one dispatch, so boxing the large
 /// variant would add a heap allocation per delivered packet for no benefit.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "PacketContents stays inline on the receive stack; boxing would allocate per datagram"
+)]
 enum Dispatch {
     /// Nothing is left for the consumer: the datagram was rejected or
     /// its registered fast answers consumed it.
@@ -162,8 +168,8 @@ impl SessionInner {
         }
         match self.process_datagram(datagram, consecutive_failures).await {
             Ok(Some(contents)) => {
-                if super::super::capture::armed() {
-                    super::super::capture::record(
+                if armed() {
+                    record(
                         "packetContents",
                         Some(*self.remote_addr.lock().unwrap()),
                         &tl_proto::serialize(&contents),
@@ -174,7 +180,7 @@ impl SessionInner {
                         .chain(contents.messages.iter().flatten());
                     for message in customs {
                         if let AdnlMessage::Custom { data } = message {
-                            super::super::capture::record("custom", None, data);
+                            record("custom", None, data);
                         }
                     }
                 }
@@ -258,7 +264,7 @@ impl SessionInner {
             Self::count_failure(consecutive_failures, 256)?;
             return Ok(None);
         }
-        self.log_stray_answers(&state, &contents);
+        Self::log_stray_answers(&state, &contents);
         self.log_recv_diagnostics(&contents);
         log::trace!(
             "recv: from={} seqno={:?} confirm={:?} reinit={:?} kind={} messages={}",
@@ -421,7 +427,7 @@ impl SessionInner {
     /// delivered answer can log its real age.
     pub(super) fn register_pending(
         &self,
-        query_id: Int256,
+        query_id: &Int256,
     ) -> tokio::sync::oneshot::Receiver<Vec<u8>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.pending
@@ -605,6 +611,10 @@ impl SessionInner {
     /// share the same sequence number space.  The channel still performs
     /// its own replay guard for standalone use, seeded from the shared
     /// peer pair counters below.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+    )]
     async fn decode_packet(
         &self,
         state: &mut SessionState,
@@ -692,7 +702,7 @@ impl SessionInner {
             );
         }
         let sender_from_from = contents.from.as_ref().and_then(|pk| match pk {
-            AdnlPublicKey::Ed25519 { key } => AdnlPublicKey::from_bytes(key.0),
+            AdnlTlPublicKey::Ed25519 { key } => AdnlPublicKey::from_bytes(key.0),
             _ => None,
         });
         if let Some(ref sender) = sender_from_from
