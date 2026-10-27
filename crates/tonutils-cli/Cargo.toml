@@ -4,9 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Command-line tooling for TONUtils Rust crates."
+description = "Command-line tooling for `tonutils` Rust crate."
 readme = "../../README.md"
-documentation = "https://docs.rs/tonutils-cli"
+documentation = "https://lapismyt.github.io/tonutils-rs"
 keywords = ["ton", "cli", "blockchain", "liteclient", "tvm"]
 categories = ["command-line-utilities", "network-programming"]
 
@@ -30,11 +30,5 @@ pretty_env_logger.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-tonutils-contracts = { path = "../tonutils-contracts", version = "2.0.0" }
-tonutils-liteclient = { path = "../tonutils-liteclient", version = "2.0.0" }
-tonutils-network-config = { path = "../tonutils-network-config", version = "2.0.0" }
-tonutils-tl = { path = "../tonutils-tl", version = "2.0.0" }
-tonutils-tlb = { path = "../tonutils-tlb", version = "2.0.0" }
-tonutils-tvm = { path = "../tonutils-tvm", version = "2.0.0" }
-tonutils-wallet = { path = "../tonutils-wallet", version = "2.0.0", features = ["provider"] }
+tonutils = { workspace = true, features = ["tvm", "tlb", "liteclient"] }
 ureq.workspace = true

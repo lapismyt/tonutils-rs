@@ -308,8 +308,7 @@ fn render_module(schema: &Schema) -> String {
     writeln!(out, "pub const SOURCE_SHA256: &str = {:?};", schema.hash).unwrap();
     writeln!(
         out,
-        "pub const UPSTREAM_COMMIT: &str = {:?};",
-        UPSTREAM_COMMIT
+        "pub const UPSTREAM_COMMIT: &str = {UPSTREAM_COMMIT:?};"
     )
     .unwrap();
     writeln!(

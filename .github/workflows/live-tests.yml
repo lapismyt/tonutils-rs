@@ -83,7 +83,7 @@ jobs:
         run: python3 scripts/cross_sdk/gen_py.py
 
       - name: Verify fixtures against tonutils-rs
-        run: cargo test -p tonutils-tl --lib
+        run: cargo test -p tonutils --features tl --lib
 
   live-tests:
     name: Live liteserver and mempool smoke tests
@@ -94,7 +94,7 @@ jobs:
       # can be traced without reproducing them locally. The ADNL target must be
       # debug: the inbound query census, per-peer address view, and ping
       # senders all log at debug level and would otherwise be invisible.
-      RUST_LOG: tonutils_mempool=debug,tonutils_adnl=debug,tonutils_overlay=debug
+      RUST_LOG: tonutils=debug
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -135,20 +135,20 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Run mempool bootstrap smoke test
-        run: cargo test -p tonutils-mempool --test live configured_global_config_can_start_scanner -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --test live configured_global_config_can_start_scanner -- --ignored --nocapture
 
       - name: Run seed-only scanner stream test
-        run: cargo test -p tonutils-mempool --test seed_scanner -- --nocapture
+        run: cargo test -p tonutils --features mempool --test seed_scanner -- --nocapture
 
       - name: Run mempool mainnet DHT probe
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils-mempool --test live mainnet_dht_seed_answers_find_node -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --test live mainnet_dht_seed_answers_find_node -- --ignored --nocapture
 
       - name: Run mempool testnet DHT probe
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils-mempool --test live testnet_dht_seed_answers_find_node -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --test live testnet_dht_seed_answers_find_node -- --ignored --nocapture
 
       - name: Derive mempool live seeds from global config
         run: |
@@ -183,7 +183,7 @@ jobs:
       - name: Run mempool overlay DHT discovery live test
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils-mempool --test live mainnet_overlay_dht_discovery_returns_peers -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --test live mainnet_overlay_dht_discovery_returns_peers -- --ignored --nocapture
 
       - name: Run mempool overlay QUIC discovery live test
         # Runs in its own test binary (`--test live_quic`). Phase 2b
@@ -200,7 +200,7 @@ jobs:
         # for the reachability verdict and the per-target log format.
         env:
           TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils-mempool --test live_quic mainnet_overlay_quic_discovery_returns_peers -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --test live_quic mainnet_overlay_quic_discovery_returns_peers -- --ignored --nocapture
 
       - name: Run live workflow smoke tests
         # Last and unconditional so the two flaky live-test classes cannot
@@ -209,7 +209,7 @@ jobs:
         # lost them all to the notready-651 block race), while a mempool
         # failure would in turn hide these workflows.
         if: ${{ !cancelled() }}
-        run: cargo test -p tonutils-liteclient --test live_workflows -- --ignored --nocapture
+        run: cargo test -p tonutils --features mempool --test live_workflows -- --ignored --nocapture
 
   live-delivery:
     name: Live mempool delivery acceptance
@@ -218,7 +218,7 @@ jobs:
     env:
       # Same rationale as the live-tests job: the acceptance test's failure
       # diagnosis reads debug-level ADNL and mempool lines from its log.
-      RUST_LOG: tonutils_mempool=debug,tonutils_adnl=debug,tonutils_overlay=debug
+      RUST_LOG: tonutils=debug
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -348,7 +348,7 @@ jobs:
 
           echo "building the live test binary once for ${samples} delivery samples"
           bin="$(
-            cargo test -p tonutils-mempool --test live --no-run --message-format=json 2>/dev/null \
+            cargo test -p tonutils --features mempool --test live --no-run --message-format=json 2>/dev/null \
               | jq -r 'select(.reason == "compiler-artifact" and .target.name == "live") | .executable' \
               | tail -n 1
           )" || bin=""

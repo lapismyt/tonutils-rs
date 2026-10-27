@@ -339,9 +339,9 @@ impl Cli {
     pub(super) fn execute_schema(&self, command: &SchemaCommand) -> Result<()> {
         match command {
             SchemaCommand::Check => {
-                let generated = tonutils_tlb::schema::generate_block_summary()?;
+                let generated = tonutils::tlb::schema::generate_block_summary()?;
                 let constructors =
-                    tonutils_tlb::schema::parse_schema(tonutils_tlb::schema::BLOCK_TLB)?;
+                    tonutils::tlb::schema::parse_schema(tonutils::tlb::schema::BLOCK_TLB)?;
                 let view = SchemaCheckView {
                     schema: "block.tlb",
                     constructors: constructors.len(),
@@ -367,7 +367,7 @@ impl Cli {
                 verify_proof,
             } => {
                 let raw = read_raw_input(hex, base64, file, *stdin)?;
-                let root = tonutils_tvm::deserialize_boc(&raw).context("failed to decode BoC")?;
+                let root = tonutils::tvm::deserialize_boc(&raw).context("failed to decode BoC")?;
                 let (tlb_type, tlb, proof_verified) =
                     decode_known_tlb(root.clone(), *tlb, *verify_proof)?;
                 self.print_structured(&BocDecodeView {
@@ -422,10 +422,10 @@ impl Cli {
             } => {
                 let mut client = self.create_client(*ls_index).await?;
                 let last_block = client.get_masterchain_info().await?.last;
-                let method_id = tonutils_contracts::method_name_to_id(method);
+                let method_id = tonutils::contracts::method_name_to_id(method);
                 let result = client
                     .run_get_method(
-                        tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
+                        tonutils::contracts::RUN_METHOD_MODE_RETURN_RESULT,
                         last_block.clone(),
                         Address::from_str(address)?,
                         method_id,
@@ -616,11 +616,15 @@ impl Cli {
                 let last = client.get_masterchain_info().await?.last;
                 let block = latest_or_explicit_block(block.as_ref(), last)?;
                 let method_id = method_id
-                    .or_else(|| method.as_deref().map(tonutils_contracts::method_name_to_id))
+                    .or_else(|| {
+                        method
+                            .as_deref()
+                            .map(tonutils::contracts::method_name_to_id)
+                    })
                     .context("run-get-method-typed requires --method or --method-id")?;
                 let stack = client
                     .run_get_method_typed(
-                        tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
+                        tonutils::contracts::RUN_METHOD_MODE_RETURN_RESULT,
                         block.clone(),
                         Address::from_str(address)?,
                         method_id,
@@ -711,7 +715,11 @@ impl Cli {
                 let mut client = self.create_client(*ls_index).await?;
                 let address = Address::from_str(address)?;
                 let method_id = method_id
-                    .or_else(|| method.as_deref().map(tonutils_contracts::method_name_to_id))
+                    .or_else(|| {
+                        method
+                            .as_deref()
+                            .map(tonutils::contracts::method_name_to_id)
+                    })
                     .context("run-get-method requires --method or --method-id")?;
                 let stack = parse_stack_input(args, stack_json.as_deref())?;
                 let mut contract = Contract::new(&mut client, address);
@@ -775,7 +783,7 @@ impl Cli {
                     .run_get_method(
                         latest.clone(),
                         Address::from_str(address).context("wallet seqno: invalid address")?,
-                        tonutils_contracts::method_name_to_id("seqno"),
+                        tonutils::contracts::method_name_to_id("seqno"),
                         TvmStack::empty(),
                     )
                     .await
@@ -825,7 +833,7 @@ impl Cli {
                             .run_get_method(
                                 latest,
                                 Address::from_str(&wallet_address.address)?,
-                                tonutils_contracts::method_name_to_id("seqno"),
+                                tonutils::contracts::method_name_to_id("seqno"),
                                 TvmStack::empty(),
                             )
                             .await

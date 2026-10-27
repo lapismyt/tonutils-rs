@@ -165,7 +165,7 @@ impl Cli {
                     .or_else(|| {
                         args.method
                             .as_deref()
-                            .map(tonutils_contracts::method_name_to_id)
+                            .map(tonutils::contracts::method_name_to_id)
                     })
                     .context("run-get-method-typed requires --method or --method-id")?;
                 let stack = balancer
@@ -500,32 +500,32 @@ pub(super) fn decode_known_tlb(
     let name = format!("{known:?}");
     let (value, verified) = match known {
         KnownTlbType::Message => {
-            let _ = tonutils_tlb::Message::from_cell(root)?;
+            let _ = tonutils::tlb::Message::from_cell(root)?;
             (json!({ "type": "message" }), None)
         }
         KnownTlbType::MessageRelaxed => {
-            let _ = tonutils_tlb::MessageRelaxed::from_cell(root)?;
+            let _ = tonutils::tlb::MessageRelaxed::from_cell(root)?;
             (json!({ "type": "message_relaxed" }), None)
         }
         KnownTlbType::Transaction => (
-            transaction_value(&tonutils_tlb::Transaction::from_cell(root)?),
+            transaction_value(&tonutils::tlb::Transaction::from_cell(root)?),
             None,
         ),
         KnownTlbType::Account => (
-            account_value(&tonutils_tlb::Account::from_cell(root)?),
+            account_value(&tonutils::tlb::Account::from_cell(root)?),
             None,
         ),
-        KnownTlbType::Block => (block_value(&tonutils_tlb::Block::from_cell(root)?), None),
+        KnownTlbType::Block => (block_value(&tonutils::tlb::Block::from_cell(root)?), None),
         KnownTlbType::Config => (
-            config_params_value(&tonutils_tlb::ConfigParams::from_cell(root)?),
+            config_params_value(&tonutils::tlb::ConfigParams::from_cell(root)?),
             None,
         ),
         KnownTlbType::ShardState => (
-            shard_state_value(&tonutils_tlb::ShardState::from_cell(root)?),
+            shard_state_value(&tonutils::tlb::ShardState::from_cell(root)?),
             None,
         ),
         KnownTlbType::Proof => {
-            let proof = tonutils_tlb::MerkleProof::from_exotic_cell(root)?;
+            let proof = tonutils::tlb::MerkleProof::from_exotic_cell(root)?;
             let verified = verify_proof.then(|| proof.verify_virtual_hash());
             (
                 json!({
@@ -539,7 +539,7 @@ pub(super) fn decode_known_tlb(
             )
         }
         KnownTlbType::MerkleUpdate => {
-            let update = tonutils_tlb::MerkleUpdate::from_exotic_cell(root)?;
+            let update = tonutils::tlb::MerkleUpdate::from_exotic_cell(root)?;
             let verified = verify_proof.then(|| update.verify_virtual_hashes());
             (
                 json!({

@@ -39,7 +39,7 @@ jobs:
             exit 1
           fi
 
-          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "tonutils-crc") | .version')"
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "tonutils") | .version')"
           expected_tag="v${version}"
           release_tag="${{ github.event.release.tag_name }}"
 
@@ -54,13 +54,13 @@ jobs:
           cargo check --workspace --all-features
           cargo test --workspace --all-features
           cargo clippy --workspace --all-targets --all-features -- -D warnings
-          for package in tonutils-crc tonutils-tl tonutils-macros tonutils-tvm tonutils-tlb tonutils-adnl tonutils-network-config tonutils-metadata tonutils-contracts tonutils-liteclient tonutils-jetton tonutils-nft tonutils-wallet tonutils-cli; do
+          for package in tonutils tonutils-macros tonutils-cli; do
             cargo package -p "$package"
           done
 
       - name: Publish workspace packages
         shell: bash
         run: |
-          for package in tonutils-crc tonutils-tl tonutils-macros tonutils-tvm tonutils-tlb tonutils-adnl tonutils-network-config tonutils-metadata tonutils-contracts tonutils-liteclient tonutils-jetton tonutils-nft tonutils-wallet tonutils-cli; do
+          for package in tonutils tonutils-macros tonutils-cli; do
             cargo publish -p "$package"
           done

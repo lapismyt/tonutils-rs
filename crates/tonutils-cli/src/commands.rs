@@ -1,7 +1,7 @@
 use super::*;
 
 pub(super) fn run_get_method_view(
-    result: tonutils_tl::response::RunMethodResult,
+    result: tonutils::tl::response::RunMethodResult,
     method: Option<String>,
     method_id: u64,
 ) -> Result<RunGetMethodView> {
@@ -27,7 +27,7 @@ pub(super) fn run_get_method_view(
 }
 
 pub(super) fn masterchain_info_view(
-    info: tonutils_tl::response::MasterchainInfo,
+    info: tonutils::tl::response::MasterchainInfo,
 ) -> MasterchainInfoView {
     MasterchainInfoView {
         last: block_id_ext_view(&info.last),
@@ -78,7 +78,7 @@ impl HighLevelBackend {
 
     pub(super) async fn get_masterchain_info(
         &mut self,
-    ) -> Result<tonutils_tl::response::MasterchainInfo> {
+    ) -> Result<tonutils::tl::response::MasterchainInfo> {
         match self {
             HighLevelBackend::Single(client) => Ok(client.get_masterchain_info().await?),
             HighLevelBackend::Balanced(balancer) => Ok(balancer.get_masterchain_info().await?),
@@ -89,7 +89,7 @@ impl HighLevelBackend {
         &mut self,
         block: BlockIdExt,
         account: AccountId,
-    ) -> Result<tonutils_tl::response::AccountState> {
+    ) -> Result<tonutils::tl::response::AccountState> {
         match self {
             HighLevelBackend::Single(client) => {
                 Ok(client.get_account_state(block, account).await?)
@@ -116,11 +116,11 @@ impl HighLevelBackend {
         address: Address,
         method_id: u64,
         stack: TvmStack,
-    ) -> Result<tonutils_tl::response::RunMethodResult> {
+    ) -> Result<tonutils::tl::response::RunMethodResult> {
         match self {
             HighLevelBackend::Single(client) => Ok(client
                 .run_get_method(
-                    tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
+                    tonutils::contracts::RUN_METHOD_MODE_RETURN_RESULT,
                     block,
                     address,
                     method_id,
@@ -129,7 +129,7 @@ impl HighLevelBackend {
                 .await?),
             HighLevelBackend::Balanced(balancer) => Ok(balancer
                 .run_get_method(
-                    tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
+                    tonutils::contracts::RUN_METHOD_MODE_RETURN_RESULT,
                     block,
                     address,
                     method_id,
@@ -145,7 +145,7 @@ impl HighLevelBackend {
         account: AccountId,
         lt: u64,
         hash: Int256,
-    ) -> Result<(Vec<tonutils_tlb::Transaction>, Vec<BlockIdExt>)> {
+    ) -> Result<(Vec<tonutils::tlb::Transaction>, Vec<BlockIdExt>)> {
         match self {
             HighLevelBackend::Single(client) => Ok(client
                 .raw_get_transactions(count, account, lt, hash)
@@ -197,7 +197,7 @@ impl HighLevelBackend {
 
 pub(super) fn best_effort_account_state_view(
     address: &str,
-    raw: tonutils_tl::response::AccountState,
+    raw: tonutils::tl::response::AccountState,
 ) -> BestEffortAccountStateView {
     let mut decode_errors = Vec::new();
     let (shard_proof_root_count, shard_proof_root_hashes) =
@@ -208,7 +208,7 @@ pub(super) fn best_effort_account_state_view(
     let proof_root_hash = proof_root_hashes.first().cloned();
     let state_root_hash = decode_root_hash(&raw.state, "state", &mut decode_errors);
 
-    let decoded = match tonutils_tvm::Address::from_str(address) {
+    let decoded = match tonutils::tvm::Address::from_str(address) {
         Ok(address) => {
             tonutils_liteclient::boc::DecodedAccountState::from_raw_verified(raw.clone(), &address)
                 .ok()
@@ -245,8 +245,8 @@ pub(super) fn best_effort_account_state_view(
         .map(|account| account.last_trans_lt)
         .or_else(|| {
             account.as_ref().and_then(|account| match account {
-                tonutils_tlb::Account::None => None,
-                tonutils_tlb::Account::Full { storage, .. } => Some(storage.last_trans_lt),
+                tonutils::tlb::Account::None => None,
+                tonutils::tlb::Account::Full { storage, .. } => Some(storage.last_trans_lt),
             })
         });
     let last_transaction_hash = shard_account
@@ -285,7 +285,7 @@ pub(super) fn decode_root_hashes(
     if raw.is_empty() {
         return (None, Vec::new());
     }
-    match tonutils_tvm::inspect_boc(raw) {
+    match tonutils::tvm::inspect_boc(raw) {
         Ok(inspection) => (Some(inspection.root_count()), inspection.root_hashes_hex()),
         Err(error) => {
             errors.push(format!("{label} BoC decode failed: {error:#}"));
@@ -311,18 +311,20 @@ pub(super) fn decode_root_hash(
     }
 }
 
-pub(super) fn account_summary(account: Option<&tonutils_tlb::Account>) -> (String, Option<String>) {
+pub(super) fn account_summary(
+    account: Option<&tonutils::tlb::Account>,
+) -> (String, Option<String>) {
     match account {
-        None | Some(tonutils_tlb::Account::None) => ("none".to_owned(), None),
-        Some(tonutils_tlb::Account::Full { storage, .. }) => (
+        None | Some(tonutils::tlb::Account::None) => ("none".to_owned(), None),
+        Some(tonutils::tlb::Account::Full { storage, .. }) => (
             simple_account_state_name(&match &storage.state {
-                tonutils_tlb::AccountState::Uninit => {
+                tonutils::tlb::AccountState::Uninit => {
                     tonutils_liteclient::boc::SimpleAccountState::Uninit
                 }
-                tonutils_tlb::AccountState::Frozen { .. } => {
+                tonutils::tlb::AccountState::Frozen { .. } => {
                     tonutils_liteclient::boc::SimpleAccountState::Frozen
                 }
-                tonutils_tlb::AccountState::Active { .. } => {
+                tonutils::tlb::AccountState::Active { .. } => {
                     tonutils_liteclient::boc::SimpleAccountState::Active
                 }
             })
@@ -431,7 +433,7 @@ pub(super) fn valid_until_from_timeout(timeout: u32) -> Result<u32> {
     u32::try_from(valid_until).context("valid_until does not fit into uint32")
 }
 
-pub(super) fn seqno_from_stack(result: tonutils_tl::response::RunMethodResult) -> Result<u32> {
+pub(super) fn seqno_from_stack(result: tonutils::tl::response::RunMethodResult) -> Result<u32> {
     let stack = match result.result_stack_lossless() {
         DecodedRunMethodResult::Decoded(stack) => stack,
         DecodedRunMethodResult::Missing => anyhow::bail!("seqno get-method returned no stack"),
@@ -449,7 +451,7 @@ pub(super) fn seqno_from_stack(result: tonutils_tl::response::RunMethodResult) -
 }
 
 pub(super) fn seqno_from_stack_or_deploy_zero(
-    result: tonutils_tl::response::RunMethodResult,
+    result: tonutils::tl::response::RunMethodResult,
     deploy: bool,
 ) -> Result<u32> {
     if deploy

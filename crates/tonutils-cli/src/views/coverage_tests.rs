@@ -1,6 +1,6 @@
 use super::*;
 use num_bigint::BigUint;
-use tonutils_wallet::WALLET_V5R1_MAINNET_DEFAULT_ID;
+use tonutils::wallet::WALLET_V5R1_MAINNET_DEFAULT_ID;
 
 fn block_view(seqno: i32) -> BlockIdExtView {
     BlockIdExtView {
@@ -271,16 +271,16 @@ fn converts_tlb_helpers_to_json_values() {
     assert_eq!(cell_value(&cell)["refs"], 0);
     assert_eq!(anycast_value(None), Value::Null);
     assert_eq!(
-        anycast_value(Some(&tonutils_tlb::Anycast {
+        anycast_value(Some(&tonutils::tlb::Anycast {
             depth: 8,
             rewrite_pfx: vec![0xaa],
         }))["depth"],
         8
     );
 
-    let std_addr = tonutils_tlb::MsgAddressInt::std(Address::new(0, [0x11; 32]));
+    let std_addr = tonutils::tlb::MsgAddressInt::std(Address::new(0, [0x11; 32]));
     assert_eq!(msg_address_int_value(&std_addr)["type"], "std");
-    let var_addr = tonutils_tlb::MsgAddressInt::Var {
+    let var_addr = tonutils::tlb::MsgAddressInt::Var {
         anycast: None,
         workchain_id: -1,
         address: vec![0xf0],
@@ -289,37 +289,37 @@ fn converts_tlb_helpers_to_json_values() {
     assert_eq!(msg_address_int_value(&var_addr)["type"], "var");
 
     assert_eq!(
-        account_state_value(&tonutils_tlb::AccountState::Uninit)["type"],
+        account_state_value(&tonutils::tlb::AccountState::Uninit)["type"],
         "uninit"
     );
     assert_eq!(
-        account_state_value(&tonutils_tlb::AccountState::Frozen {
+        account_state_value(&tonutils::tlb::AccountState::Frozen {
             state_hash: [0x22; 32],
         })["type"],
         "frozen"
     );
     assert_eq!(
-        account_state_value(&tonutils_tlb::AccountState::Active {
-            state_init: tonutils_tlb::StateInit::empty(),
+        account_state_value(&tonutils::tlb::AccountState::Active {
+            state_init: tonutils::tlb::StateInit::empty(),
         })["type"],
         "active"
     );
     assert_eq!(
-        account_value(&tonutils_tlb::Account::None),
+        account_value(&tonutils::tlb::Account::None),
         json!({ "type": "none" })
     );
     assert_eq!(
-        currency_collection_value(&tonutils_tlb::CurrencyCollection::grams(
-            tonutils_tlb::Grams(BigUint::from(7u32),)
+        currency_collection_value(&tonutils::tlb::CurrencyCollection::grams(
+            tonutils::tlb::Grams(BigUint::from(7u32),)
         ))["grams"],
         "7"
     );
 
     for (status, name) in [
-        (tonutils_tlb::AccountStatus::Uninit, "uninit"),
-        (tonutils_tlb::AccountStatus::Frozen, "frozen"),
-        (tonutils_tlb::AccountStatus::Active, "active"),
-        (tonutils_tlb::AccountStatus::Nonexist, "nonexist"),
+        (tonutils::tlb::AccountStatus::Uninit, "uninit"),
+        (tonutils::tlb::AccountStatus::Frozen, "frozen"),
+        (tonutils::tlb::AccountStatus::Active, "active"),
+        (tonutils::tlb::AccountStatus::Nonexist, "nonexist"),
     ] {
         assert_eq!(account_status_name(status), name);
     }
@@ -343,20 +343,20 @@ fn converts_tlb_helpers_to_json_values() {
     }
 
     assert_eq!(
-        shard_state_value(&tonutils_tlb::ShardState::Unsplit {
+        shard_state_value(&tonutils::tlb::ShardState::Unsplit {
             payload: cell.clone(),
         })["type"],
         "unsplit"
     );
     assert_eq!(
-        shard_state_value(&tonutils_tlb::ShardState::Split {
+        shard_state_value(&tonutils::tlb::ShardState::Split {
             left: cell.clone(),
             right: cell.clone(),
         })["type"],
         "split"
     );
     assert_eq!(
-        config_params_value(&tonutils_tlb::ConfigParams {
+        config_params_value(&tonutils::tlb::ConfigParams {
             config_addr: [0x33; 32],
             config: cell.clone(),
         })["config_addr"],
@@ -374,7 +374,7 @@ fn converts_tlb_helpers_to_json_values() {
         last_transaction_lt: Some(3),
         last_transaction_hash: Some([0x66; 32]),
         state: tonutils_liteclient::boc::SimpleAccountState::None,
-        account: Some(tonutils_tlb::Account::None),
+        account: Some(tonutils::tlb::Account::None),
     };
     assert_eq!(simple_account_value(&simple)["state"], "none");
 }

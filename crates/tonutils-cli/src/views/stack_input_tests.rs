@@ -1,8 +1,8 @@
 use super::*;
 
 fn empty_boc_hex() -> String {
-    let cell = tonutils_tvm::CellBuilder::new().build().unwrap();
-    hex::encode(tonutils_tvm::serialize_boc(&cell, false).unwrap())
+    let cell = tonutils::tvm::CellBuilder::new().build().unwrap();
+    hex::encode(tonutils::tvm::serialize_boc(&cell, false).unwrap())
 }
 
 const RAW_ADDRESS: &str = "0:1111111111111111111111111111111111111111111111111111111111111111";
