@@ -19,6 +19,7 @@ evidence.
 
 ## `tonutils::overlay`
 - [x] Use Plumtree as the public-overlay broadcast path; keep signed simple/FEC broadcasting only for external-message compatibility.
+- [x] Gate PRs on real DHT, UDP, QUIC, and public Plumtree receive evidence through exact single-test invocations; zero-test matches and network-unavailable skips are failures.
 - [ ] Add upstream Plumtree statistics exchange and private-overlay authorized-key sets after their wire behavior is verified.
 
 ## `tonutils::provider`

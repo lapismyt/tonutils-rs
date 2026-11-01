@@ -277,14 +277,38 @@ cargo run -p tonutils-schema-gen -- check
 RUSTDOCFLAGS="-D warnings" cargo doc -p tonutils --all-features --no-deps
 ```
 
-The public-mainnet Plumtree smoke test is ignored by default because it needs
-live network access and public-overlay traffic:
+Live network gates are ignored by default because they need public TON access.
+Run them through `scripts/run-live-test.sh`, which saves the complete log and
+fails unless the exact filter executes exactly one test and reports
+`test <name> ... ok`:
 
 ```bash
-cargo test -p tonutils --all-features \
-  overlay::plumtree::integration_tests::mainnet_public_overlay_receives_a_completed_plumtree_payload \
-  -- --ignored --nocapture
+scripts/run-live-test.sh live_probe mainnet_dht_find_node_returns_valid_nodes
+scripts/run-live-test.sh live_probe testnet_dht_find_node_returns_valid_nodes
+scripts/run-live-test.sh live_probe mainnet_udp_overlay_get_random_peers_returns_valid_nodes
+scripts/run-live-test.sh live_probe mainnet_quic_overlay_get_random_peers_returns_valid_nodes
+scripts/run-live-test.sh live_delivery mainnet_public_plumtree_receives_payload
 ```
+
+`TON_GLOBAL_CONFIG_JSON` and `TON_TESTNET_GLOBAL_CONFIG_JSON` are required for
+their respective DHT gates. The overlay gates derive seeds directly from those
+configs. CI runs every live step with `if: ${{ !cancelled() }}` and uploads the
+saved logs, so one failure does not hide evidence from the remaining checks.
+
+- DHT evidence: config seed, remote peer, `dht.findNode`, elapsed time, raw and
+  valid node counts. A nonempty all-valid answer is required.
+- UDP evidence: config seeds, discovered member endpoints, direct
+  `overlay.getRandomPeers`, elapsed time, and valid node counts.
+- QUIC evidence: UDP-populated `advertised`/`udp+1000` targets, real handshake,
+  `overlay.getRandomPeers`, wave, elapsed time, and valid node counts. Up to five
+  waves are allowed; none may soft-skip.
+- Delivery evidence: three fresh-key, fresh-connection attempts of 120 seconds.
+  Success requires `plumtree_stats().completed_broadcasts > 0` and a real
+  `subscribe_packets()` payload. `MempoolServer` runs in parallel and logs peer
+  status, routing, validation metrics, and any external-message event.
+
+There is no network-unavailable bypass. Missing configuration, an unreachable
+network, an empty response, or no public payload is a failure.
 
 Check each standalone feature surface:
 

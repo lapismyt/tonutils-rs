@@ -88,7 +88,7 @@ impl QuicSession {
     }
 
     /// Wraps a connection accepted by [`QuicServer`] for in-process tests.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "overlay"))]
     pub(crate) fn from_accepted(connection: quinn::Connection, remote_key: AdnlPublicKey) -> Self {
         Self {
             _endpoint: None,

@@ -4,31 +4,22 @@ use std::env;
 
 use crate::{liteclient::LiteClient, network_config::ConfigGlobal};
 
-fn load_config() -> Option<ConfigGlobal> {
-    let json = match env::var("TON_GLOBAL_CONFIG_JSON") {
-        Ok(json) => json,
-        Err(env::VarError::NotPresent) => {
-            eprintln!("skipping live smoke test: TON_GLOBAL_CONFIG_JSON is not set");
-            return None;
-        }
-        Err(error) => panic!("failed to read TON_GLOBAL_CONFIG_JSON: {error}"),
-    };
-
-    Some(
-        json.parse()
-            .expect("TON_GLOBAL_CONFIG_JSON must be valid JSON"),
-    )
+fn load_config() -> ConfigGlobal {
+    let json = env::var("TON_GLOBAL_CONFIG_JSON")
+        .expect("set TON_GLOBAL_CONFIG_JSON to run this ignored live test");
+    json.parse()
+        .expect("TON_GLOBAL_CONFIG_JSON must be valid JSON")
 }
 
-async fn connect() -> Option<LiteClient> {
-    let config = load_config()?;
+async fn connect() -> LiteClient {
+    let config = load_config();
     let index = env::var("TON_LS_INDEX")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
 
     match LiteClient::connect_config(&config, index).await {
-        Ok(client) => Some(client),
+        Ok(client) => client,
         Err(error) => panic!("live liteserver connection failed: {error}"),
     }
 }
@@ -36,9 +27,7 @@ async fn connect() -> Option<LiteClient> {
 #[tokio::test]
 #[ignore = "requires public liteserver configuration and network access"]
 async fn live_get_masterchain_info_smoke() {
-    let Some(mut client) = connect().await else {
-        return;
-    };
+    let mut client = connect().await;
     let info = client
         .get_masterchain_info()
         .await
@@ -49,9 +38,7 @@ async fn live_get_masterchain_info_smoke() {
 #[tokio::test]
 #[ignore = "requires public liteserver configuration and network access"]
 async fn live_get_version_and_time_smoke() {
-    let Some(mut client) = connect().await else {
-        return;
-    };
+    let mut client = connect().await;
     let version = client
         .get_version()
         .await

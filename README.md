@@ -163,6 +163,33 @@ message submission is not, by itself, finality or inclusion proof. Decode
 helpers preserve evidence, but callers must opt in to the proof checks that
 their threat model requires.
 
+### Live Network Gates
+
+Live checks are ignored by default and require a downloaded public global
+config. Run each check through the exact-test wrapper so a renamed or removed
+test cannot produce a green zero-test result:
+
+```bash
+export TON_GLOBAL_CONFIG_JSON="$(curl -fsSL https://ton.org/global.config.json)"
+export TON_TESTNET_GLOBAL_CONFIG_JSON="$(curl -fsSL https://ton.org/testnet-global.config.json)"
+
+scripts/run-live-test.sh live_probe mainnet_dht_find_node_returns_valid_nodes
+scripts/run-live-test.sh live_probe testnet_dht_find_node_returns_valid_nodes
+scripts/run-live-test.sh live_probe mainnet_udp_overlay_get_random_peers_returns_valid_nodes
+scripts/run-live-test.sh live_probe mainnet_quic_overlay_get_random_peers_returns_valid_nodes
+scripts/run-live-test.sh live_delivery mainnet_public_plumtree_receives_payload
+```
+
+The DHT gate requires a nonempty `dht.findNode` answer whose nodes all validate.
+The UDP and QUIC gates require discovery plus a valid nonempty
+`overlay.getRandomPeers` response. The delivery gate starts an
+`OverlayNodeBuilder` server and `MempoolServer`, then requires both a completed
+Plumtree broadcast and an application packet from `subscribe_packets()` within
+one of three 120-second attempts. There is no network-unavailable skip:
+unreachable public infrastructure or missing payload traffic keeps the job red.
+Each successful log records target, peer, request, elapsed time, and node or
+payload counts. CI uploads the raw per-test logs as artifacts.
+
 ## Workspace
 
 - `tonutils` is the library.

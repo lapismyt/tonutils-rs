@@ -74,4 +74,5 @@ jobs:
       - name: Pair the C++ client with our rustls server
         env:
           QUIC_INTEROP_CLIENT: ${{ github.workspace }}/upstream-ton/build/quic/quic-example-client
-        run: cargo test -p tonutils --features adnl --lib quic_interop_tests -- --ignored --nocapture
+          TON_LIVE_FEATURES: adnl
+        run: ./scripts/run-live-test.sh lib adnl::tests::quic_interop_tests::cpp_quictls_client_completes_the_demo_pairing
