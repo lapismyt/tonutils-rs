@@ -1,8 +1,11 @@
-use super::*;
+use super::{
+    BigInt, Cli, Commands, ContractCommand, Parser, TvmStackEntry, parse_stack_arg,
+    parse_stack_json,
+};
 
 fn empty_boc_hex() -> String {
-    let cell = tonutils_tvm::CellBuilder::new().build().unwrap();
-    hex::encode(tonutils_tvm::serialize_boc(&cell, false).unwrap())
+    let cell = tonutils::tvm::CellBuilder::new().build().unwrap();
+    hex::encode(tonutils::tvm::serialize_boc(&cell, false).unwrap())
 }
 
 const RAW_ADDRESS: &str = "0:1111111111111111111111111111111111111111111111111111111111111111";
@@ -21,7 +24,7 @@ fn parses_high_level_call_stack_json_cli_arg() {
 
     match cli.command {
         Commands::Call(args) => {
-            assert!(args.args.is_empty());
+            assert_eq!(args.args, [] as [std::string::String; 0]);
             assert_eq!(
                 args.stack_json.as_deref(),
                 Some(r#"[{"type":"int","value":"1"}]"#)
@@ -101,7 +104,7 @@ fn parses_contract_run_get_method_stack_json_cli_arg() {
                     args, stack_json, ..
                 },
         } => {
-            assert!(args.is_empty());
+            assert_eq!(args, [] as [std::string::String; 0]);
             assert_eq!(
                 stack_json.as_deref(),
                 Some(r#"[{"type":"int","value":"1"}]"#)

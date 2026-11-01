@@ -1,47 +1,43 @@
-//! Runtime facade for the pure-Rust TON SDK.
+//! Pure-Rust TON SDK.
 //!
-//! The focused `tonutils-*` crates remain available independently. This crate
-//! groups their runtime APIs under one dependency while keeping CLI,
-//! procedural macros, and schema-generation tools separate.
-//!
-//! Use the facade when an application spans several runtime layers. Depend on
-//! a focused crate when compile time, feature control, or a small dependency
-//! graph matters. The default features enable ADNL TCP and network-config
-//! support; provider helpers for jettons, NFTs, and wallets are opt-in.
+//! Features are opt-in. Enable only the protocol layers your application uses.
 //!
 //! ```toml
-//! tonutils = { version = "2", features = ["wallet-provider"] }
+//! tonutils = { version = "2", features = ["wallet", "liteclient"] }
 //! ```
-//!
-//! The facade re-exports the `adnl`, `contracts`, `crc`, `jetton`, `liteclient`,
-//! `metadata`, `network_config`, `nft`, `tl`, `tlb`, `tvm`, and `wallet` modules.
 //! Network trust and proof assumptions remain the responsibility of the
 //! application.
 //!
-//! Start with the [project guide](https://lapismyt.github.io/tonutils-rs/) for
-//! feature selection and offline/live workflow boundaries. CLI, proc-macro,
-//! and schema-generation binaries remain separate packages.
+//! `tvm` and `tlb` support offline cell and message construction. `liteclient`
+//! and `adnl` add network access. `contracts` adds low-level get-method helpers;
+//! jetton and NFT modules are not currently included. The CLI, proc-macro, and
+//! schema-generation tools remain separate packages.
 
-#![allow(ambiguous_glob_reexports)]
+#![deny(rustdoc::broken_intra_doc_links)]
 
-pub use tonutils_adnl as adnl;
-pub use tonutils_contracts as contracts;
-pub use tonutils_crc as crc;
-pub use tonutils_jetton as jetton;
-pub use tonutils_liteclient as liteclient;
+extern crate self as tonutils;
+
+#[cfg(feature = "adnl")]
+pub mod adnl;
+#[cfg(feature = "contracts")]
+pub mod contracts;
+#[cfg(feature = "crc")]
+pub mod crc;
+#[cfg(feature = "liteclient")]
+pub mod liteclient;
 #[cfg(feature = "mempool")]
-pub use tonutils_mempool as mempool;
-pub use tonutils_metadata as metadata;
-pub use tonutils_network_config as network_config;
-pub use tonutils_nft as nft;
+pub mod mempool;
+#[cfg(feature = "metadata")]
+pub mod metadata;
+#[cfg(feature = "network-config")]
+pub mod network_config;
 #[cfg(feature = "overlay")]
-pub use tonutils_overlay as overlay;
-pub use tonutils_tl as tl;
-pub use tonutils_tlb as tlb;
-pub use tonutils_tvm as tvm;
-pub use tonutils_wallet as wallet;
-
-pub use tonutils_crc::*;
-pub use tonutils_tl::*;
-pub use tonutils_tlb::*;
-pub use tonutils_tvm::*;
+pub mod overlay;
+#[cfg(feature = "tl")]
+pub mod tl;
+#[cfg(feature = "tlb")]
+pub mod tlb;
+#[cfg(feature = "tvm")]
+pub mod tvm;
+#[cfg(feature = "wallet")]
+pub mod wallet;

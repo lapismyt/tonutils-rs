@@ -1,155 +1,136 @@
 # Contributing
 
-Thanks for improving `tonutils-rs`. The project aims to be a pure Rust TON SDK
-with native protocol implementations, feature-gated optional functionality, no
-third-party Rust TON SDK crate dependencies, and no native `.so` runtime
-dependencies.
+`tonutils-rs` is a pure-Rust SDK for The Open Network. Contributions must keep
+TON behavior native to this workspace: do not add a third-party TON SDK crate,
+and do not require users to install a native `.so` or `.dll` at runtime.
 
-## Local Setup
+## Documentation Layout
 
-Install Rust with `rustup` before selecting a toolchain. On Unix-like systems,
-including Linux, macOS, and WSL, run the official installer and follow the
-prompts:
+The maintained documentation surface is intentionally small:
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
+- `README.md` for the project overview, quickstart, feature matrix, and trust
+  boundary.
+- Rustdoc for the public API and item-level invariants.
+- `docs/reference/` for maintainer notes, protocol ownership, wire formats,
+  error boundaries, and schema workflow.
+- `CONTRIBUTING.md` for development and verification instructions.
 
-On Windows, use the official installer from
-<https://www.rust-lang.org/tools/install>. Reopen the shell if needed so the
-`~/.cargo/bin` or `%USERPROFILE%\.cargo\bin` PATH update is visible, then
-verify the Rust tools:
+`TODO.md` tracks deferred work and known gaps. Do not add a separate user-guide
+site or recreate removed guide pages.
 
-```bash
-rustc --version
-cargo --version
-```
+## Toolchain
 
-Install and select the stable Rust toolchain:
+The workspace targets Rust 1.85 or newer and uses the stable toolchain:
 
 ```bash
 rustup toolchain install stable
 rustup default stable
+rustc --version
+cargo --version
 ```
 
-Rustup provides the `cargo` command, Rust compiler, formatter, test runner, and
-Clippy checks used by this crate.
+All code, comments, tests, documentation, and commit messages must be in
+English.
 
-Install `prek` so you can run the configured pre-commit quality hooks locally
-before commits and pull requests. The preferred path is the standalone installer
-from the `j178/prek` releases:
+## Design Constraints
+
+- Use `thiserror` for library errors. `anyhow` is allowed only in tests and
+  binaries; it must not appear in `tonutils`'s normal dependency graph or public
+  API.
+- Do not leave stubs, `todo!()`, `unimplemented!()`, or dummy implementations.
+- Avoid `unsafe`. If it is unavoidable, document the invariants with a
+  `// SAFETY:` comment.
+- Keep async I/O on Tokio. Do not block a Tokio worker with synchronous file or
+  socket I/O.
+- Prefer explicit imports and readable code. Do not add function-local `use`
+  statements, glob imports, or `use super::*`.
+- Add focused tests for protocol, wire-format, serialization, and error-boundary
+  changes.
+
+## Verification
+
+Run formatting, linting, tests, schema validation, and rustdoc before opening a
+pull request:
 
 ```bash
-# Linux / macOS
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/j178/prek/releases/download/v0.4.1/prek-installer.sh | sh
-
-# Windows (PowerShell)
-powershell -ExecutionPolicy ByPass -c "irm https://github.com/j178/prek/releases/download/v0.4.1/prek-installer.ps1 | iex"
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo run -p tonutils-schema-gen -- check
+RUSTDOCFLAGS="-D warnings" cargo doc -p tonutils --all-features --no-deps
 ```
 
-If you already have a recent Rust toolchain, you can alternatively build `prek`
-from crates.io. Current upstream `prek` requires Rust 1.89 or newer for this
-path:
+Verify that the normal library dependency graph has no `anyhow`:
 
 ```bash
-cargo install --locked prek
+cargo tree -p tonutils -e normal
 ```
 
-CodeGraph is only needed when developing with agents. It gives agents a fast
-symbol and call-graph index so they can inspect Rust definitions, callers, and
-file structure without repeatedly scanning the checkout. Agent users need both
-the MCP server configuration and the CLI binaries.
-
-Configure the CodeGraph MCP server with:
+Check the individual public features when changing feature gates, imports, or
+error types:
 
 ```bash
-npx @colbymchenry/codegraph
+for feature in adnl tl tvm tlb network-config metadata liteclient contracts wallet overlay overlay-config mempool crc serde; do
+  cargo check -p tonutils --no-default-features --features "$feature"
+done
 ```
 
-If this fails with `npx: command not found`, install Node.js and npm first,
-then reopen the shell and verify:
+Run `cargo fmt --all` to apply formatting. If a check fails for a reason
+unrelated to your change, leave it visible in the pull request rather than
+silently changing unrelated code.
 
-```bash
-node --version
-npm --version
-npx --version
-```
+## Schema Workflow
 
-If `npm` is available but `npx` is not, use `npm exec -- @colbymchenry/codegraph`
-or update the npm/Node.js installation. Modern `npx` is backed by `npm exec`,
-so this uses the same package execution path.
+Checked-in `.tl` and `.tlb` snapshots are protocol evidence, not generated
+scratch files. The generator validates constructor metadata and the committed
+inventory.
 
-Install the CodeGraph CLI binaries with the portable installer:
+When a schema intentionally changes:
 
-```bash
-# macOS / Linux
-curl -fsSL https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.sh | sh
+1. Update the snapshot under `crates/tonutils/src/tl/schemas/` or
+   `crates/tonutils/src/tlb/schemas/` from an upstream-backed source.
+2. Update the handwritten wire types that consume it.
+3. Regenerate metadata and inventory with:
 
-# Windows (PowerShell)
-irm https://raw.githubusercontent.com/colbymchenry/codegraph/main/install.ps1 | iex
-```
+   ```bash
+   cargo run -p tonutils-schema-gen -- --write
+   ```
 
-If you do not use the portable installer, install the npm-provided CLI binary:
+4. Run `cargo run -p tonutils-schema-gen -- check` and commit the snapshot,
+   generated files, and `docs/reference/schema-inventory.tsv` together.
 
-```bash
-npm i -g @colbymchenry/codegraph
-```
-
-After the MCP server and CLI binary are available, initialize the index from
-the repository checkout:
-
-```bash
-codegraph init -i
-```
-
-Verify the checkout:
-
-```bash
-cargo fmt --check
-cargo check
-cargo test
-cargo clippy -- -D warnings
-```
-
-Run narrower checks while developing when they cover the changed surface. Before
-opening a pull request, run the full relevant checks, and add
-`cargo check --examples --all-features` when examples, feature declarations, or
-public docs change.
-
-## Branches And Pull Requests
-
-Create a focused topic branch for each change. Pull requests should describe
-the user-visible behavior, link related issues when applicable, and call out any
-feature flag, public API, protocol, trust-model, or live-network impact.
-
-Protocol, serialization, network, trust-model, and public API changes should
-include focused tests and relevant updates to `docs/`, `docs/reference/`, or
-`TODO.md`.
+Generated constructor metadata names are schema-specific:
+`LiteApiConstructorMetadata`, `TonApiConstructorMetadata`,
+`TonlibApiConstructorMetadata`, and `BlockTlbConstructorMetadata`.
 
 ## Protocol Research
 
-Do not invent TON behavior. Verify constructor names, ids, flags, numeric
-widths, byte order, hash rules, limits, and failure modes from upstream TON
-schemas and implementation, checked fixtures, or recorded live evidence.
+Do not invent TON behavior. Verify constructor names and ids, field widths,
+flags, byte order, hash rules, cell limits, and failure modes against upstream
+`ton-blockchain/ton`, checked fixtures, or recorded live evidence. Prefer
+upstream when references disagree. Other SDKs are comparison material only and
+must not become dependencies.
 
-Prefer upstream `ton-blockchain/ton` when references disagree. Use other SDKs
-only for capability ideas and compatibility comparison, not as dependency
-sources or parity targets. If evidence is incomplete, document the assumption
-and keep the gap visible in `TODO.md`.
+Protocol ownership and wire invariants live in `docs/reference/README.md`.
+Update that file when moving a wire type between modules or changing an error
+boundary. If evidence is incomplete, document the assumption and keep the gap
+visible in `TODO.md`.
 
-## Documentation And TODOs
+## Tests And Live Networks
 
-Keep repository text in English. Update public docs for user-facing behavior,
-internal `docs/reference/` for protocol or implementation details, and `TODO.md` for
-known gaps, deferred work, or missing fixture evidence.
+Deterministic offline tests are the default. Live liteserver, ADNL, overlay, and
+mempool tests are opt-in and must not run during a routine offline test pass.
+Their required environment variables are documented in the live-test workflow
+and in the relevant ignored test's module-level documentation.
 
-`TODO.md` follows `todo-md/todo-md` conventions: task lines begin with `- [ ]`,
-`- [x]`, or `- [-]`, active groups use `##` headings, and postponed/completed
-work belongs under `# BACKLOG` or `# DONE`.
+Never commit private keys, seed phrases, live credentials, production
+configuration, or non-public user data. Sanitize captured live evidence and
+prefer checked offline fixtures.
 
-## Commits And Versions
+## Branches, Commits, And Versions
 
-Use Conventional Commits 1.0.0 summaries, such as:
+Use a focused topic branch for each change. Use Conventional Commits, for
+example:
 
 ```text
 feat: add wallet transfer helper
@@ -157,16 +138,7 @@ fix: reject invalid cell descriptors
 docs: clarify LiteClient proof limits
 ```
 
-The crate follows SemVer 2.0.0. Public API additions, deprecations, removals,
-or behavior changes may require a version update. Security fixes and release
-workflow changes should call out the expected version impact.
-
-## Live Tests And Secrets
-
-Live-network tests and examples are opt-in and require explicit environment
-variables documented in [docs/testing.md](docs/testing.md) and
-[docs/examples.md](docs/examples.md).
-
-Never commit real private keys, seed phrases, live credentials, production
-configuration, or non-public user data. Use deterministic offline fixtures when
-possible, and sanitize live evidence before adding it to the repository.
+Do not use placeholder subjects such as `.` or `wip`. Public API changes,
+behavior changes, and deprecations follow SemVer 2.0.0. Call out feature-flag,
+protocol, trust-model, and live-network impact in the pull request. Update
+`TODO.md` only when the described work is actually complete and verified.

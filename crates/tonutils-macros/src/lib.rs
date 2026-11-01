@@ -1,12 +1,13 @@
-//! Procedural derives for the `tonutils-tlb` TL-B runtime traits.
+//! Procedural derives for the `tonutils` TL-B runtime traits.
 //!
-//! Most users should depend on [`tonutils_tlb`](https://docs.rs/tonutils-tlb)
-//! and use its re-exported derive workflow. This crate is the implementation
-//! package for the `Tlb` derive and is normally pulled in transitively.
+//! Most users should depend on [`tonutils`](https://docs.rs/tonutils) with the
+//! `tlb` feature and use its re-exported derive workflow. This crate is the
+//! implementation package for the `Tlb` derive and is normally pulled in
+//! transitively.
 //!
 //! The crate is a compile-time helper with no runtime or network behavior.
-//! Depend on [`tonutils_tlb`](https://docs.rs/tonutils-tlb) for the public
-//! TL-B traits and feature-gated derive workflow.
+//! Depend on [`tonutils`](https://docs.rs/tonutils) for the public TL-B traits
+//! and feature-gated derive workflow.
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
@@ -54,24 +55,24 @@ fn expand_struct(
     let construct = construct_struct(name, fields, &field_specs);
     let store_tag = tag
         .as_deref()
-        .map(|tag| quote!(::tonutils_tlb::store_tag(builder, #tag)?;))
+        .map(|tag| quote!(::tonutils::tlb::store_tag(builder, #tag)?;))
         .unwrap_or_default();
     let load_tag = tag
         .as_deref()
-        .map(|tag| quote!(::tonutils_tlb::expect_tag(slice, stringify!(#name), #tag)?;))
+        .map(|tag| quote!(::tonutils::tlb::expect_tag(slice, stringify!(#name), #tag)?;))
         .unwrap_or_default();
 
     Ok(quote! {
-        impl ::tonutils_tlb::TlbSerialize for #name {
-            fn store_tlb(&self, builder: &mut ::tonutils_tvm::Builder) -> ::tonutils_tlb::Result<()> {
+        impl ::tonutils::tlb::TlbSerialize for #name {
+            fn store_tlb(&self, builder: &mut ::tonutils::tvm::Builder) -> ::tonutils::tlb::TlbResult<()> {
                 #store_tag
                 #(#store_fields)*
                 Ok(())
             }
         }
 
-        impl ::tonutils_tlb::TlbDeserialize for #name {
-            fn load_tlb(slice: &mut ::tonutils_tvm::Slice) -> ::tonutils_tlb::Result<Self> {
+        impl ::tonutils::tlb::TlbDeserialize for #name {
+            fn load_tlb(slice: &mut ::tonutils::tvm::Slice) -> ::tonutils::tlb::TlbResult<Self> {
                 #load_tag
                 #(#load_fields)*
                 Ok(#construct)
@@ -113,7 +114,7 @@ fn expand_enum(name: &Ident, variants: &[syn::Variant]) -> Result<proc_macro2::T
         });
         store_arms.push(quote! {
             #pattern => {
-                ::tonutils_tlb::store_tag(builder, #tag)?;
+                ::tonutils::tlb::store_tag(builder, #tag)?;
                 #(#store_fields)*
             }
         });
@@ -134,8 +135,8 @@ fn expand_enum(name: &Ident, variants: &[syn::Variant]) -> Result<proc_macro2::T
     let expected = expected_tags.join("|");
 
     Ok(quote! {
-        impl ::tonutils_tlb::TlbSerialize for #name {
-            fn store_tlb(&self, builder: &mut ::tonutils_tvm::Builder) -> ::tonutils_tlb::Result<()> {
+        impl ::tonutils::tlb::TlbSerialize for #name {
+            fn store_tlb(&self, builder: &mut ::tonutils::tvm::Builder) -> ::tonutils::tlb::TlbResult<()> {
                 match self {
                     #(#store_arms),*
                 }
@@ -143,8 +144,8 @@ fn expand_enum(name: &Ident, variants: &[syn::Variant]) -> Result<proc_macro2::T
             }
         }
 
-        impl ::tonutils_tlb::TlbDeserialize for #name {
-            fn load_tlb(slice: &mut ::tonutils_tvm::Slice) -> ::tonutils_tlb::Result<Self> {
+        impl ::tonutils::tlb::TlbDeserialize for #name {
+            fn load_tlb(slice: &mut ::tonutils::tvm::Slice) -> ::tonutils::tlb::TlbResult<Self> {
                 let mut actual = String::new();
                 while actual.len() < #max_tag_len {
                     let bit = slice.load_bit()?;
@@ -154,7 +155,7 @@ fn expand_enum(name: &Ident, variants: &[syn::Variant]) -> Result<proc_macro2::T
                         _ => {}
                     }
                 }
-                Err(::tonutils_tlb::TlbError::TagMismatch {
+                Err(::tonutils::tlb::TlbError::TagMismatch {
                     constructor: stringify!(#name),
                     expected_bits: #expected,
                     actual_bits: actual,
@@ -176,23 +177,23 @@ struct FieldSpec {
 impl FieldSpec {
     fn store_tokens(&self, value: &proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         if self.referenced {
-            return quote!(::tonutils_tlb::store_ref_tlb(builder, #value)?;);
+            return quote!(::tonutils::tlb::store_ref_tlb(builder, #value)?;);
         }
         if let Some(bits) = self.bits {
-            return quote!(::tonutils_tlb::StoreBits::<#bits>::store_bits_tlb(#value, builder)?;);
+            return quote!(::tonutils::tlb::StoreBits::<#bits>::store_bits_tlb(#value, builder)?;);
         }
-        quote!(::tonutils_tlb::TlbSerialize::store_tlb(#value, builder)?;)
+        quote!(::tonutils::tlb::TlbSerialize::store_tlb(#value, builder)?;)
     }
 
     fn load_tokens(&self) -> proc_macro2::TokenStream {
         let ty = &self.ty;
         if self.referenced {
-            return quote!(::tonutils_tlb::load_ref_tlb::<#ty>(slice, stringify!(#ty))?);
+            return quote!(::tonutils::tlb::load_ref_tlb::<#ty>(slice, stringify!(#ty))?);
         }
         if let Some(bits) = self.bits {
-            return quote!(<#ty as ::tonutils_tlb::LoadBits<#bits>>::load_bits_tlb(slice)?);
+            return quote!(<#ty as ::tonutils::tlb::LoadBits<#bits>>::load_bits_tlb(slice)?);
         }
-        quote!(<#ty as ::tonutils_tlb::TlbDeserialize>::load_tlb(slice)?)
+        quote!(<#ty as ::tonutils::tlb::TlbDeserialize>::load_tlb(slice)?)
     }
 }
 

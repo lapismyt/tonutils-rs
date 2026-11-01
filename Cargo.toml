@@ -1,32 +1,14 @@
 [workspace]
 resolver = "3"
 members = [
-    "crates/tonutils-adnl",
     "crates/tonutils-cli",
-    "crates/tonutils-contracts",
-    "crates/tonutils-crc",
-    "crates/tonutils-jetton",
-    "crates/tonutils-liteclient",
     "crates/tonutils-macros",
-    "crates/tonutils-mempool",
-    "crates/tonutils-metadata",
-    "crates/tonutils-network-config",
-    "crates/tonutils-nft",
-    "crates/tonutils-overlay",
-    "crates/tonutils-tl",
-    "crates/tonutils-tlb",
     "crates/tonutils-schema-gen",
-    "crates/tonutils-tvm",
     "crates/tonutils",
-    "crates/tonutils-wallet",
 ]
 default-members = [
-    "crates/tonutils-cli",
-    "crates/tonutils-contracts",
-    "crates/tonutils-jetton",
-    "crates/tonutils-liteclient",
-    "crates/tonutils-nft",
-    "crates/tonutils-wallet",
+    "crates/tonutils",
+    "crates/tonutils-cli"
 ]
 
 [workspace.package]
@@ -38,15 +20,12 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 aes = "0.8"
-anyhow = "1.0.99"
-async-trait = "0.1.89"
+anyhow = "1.0"
+async-trait = "0.1"
 base64 = "0.23"
 bip39 = { version = "2.1", features = ["rand"] }
-byteorder = "1.5"
 clap = { version = "4.5", features = ["derive"] }
-crc = "3.3.0"
-crc32fast = "1.4"
-criterion = "0.8"
+crc = "3.3"
 ctr = "0.9"
 curve25519-dalek = "5.0"
 derivative = "2.2"
@@ -55,32 +34,33 @@ futures = "0.3"
 hex = "0.4"
 hmac = "0.12"
 log = "0.4"
-num-bigint = "0.5.1"
+num-bigint = "0.5"
 pbkdf2 = "0.12"
-pin-project = "1.1.10"
-pretty_env_logger = "0.5.0"
+pin-project = "1.1"
+pretty_env_logger = "0.5"
 proc-macro2 = "1.0"
 quinn = { version = "0.11", default-features = false, features = ["rustls-ring", "runtime-tokio"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = "1"
 quote = "1.0"
 raptorq = "1.7"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = "1.0.150"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 serde_with = { version = "3.21", features = ["base64"] }
 sha2 = "0.10"
 subtle = "2.6"
 syn = { version = "3.0", features = ["full"] }
-thiserror = "2.0.17"
-tl-proto = { version = "0.5.3", features = ["derive"] }
-tl-scheme = "0.3.0"
-tokio = { version = "1.47.1", features = ["full", "time"] }
-tokio-tower = "0.6.0"
-tokio-util = { version = "0.7.16", features = ["codec"] }
+thiserror = "2.0"
+tl-proto = { version = "0.5", features = ["derive"] }
+tl-scheme = { version = "0.3" }
+tokio = { version = "1.47", features = ["full", "time"] }
+tokio-tower = "0.6"
+tokio-util = { version = "0.7", features = ["codec"] }
 tower = { version = "0.5", features = ["make", "util"] }
-ureq = { version = "3.1.2", features = ["socks-proxy"] }
+tonutils = { path = "crates/tonutils" }
+tonutils-macros = { path = "crates/tonutils-macros" }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
@@ -88,44 +68,10 @@ complexity = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 
-# These checks are either intentionally broad for protocol/test fixtures or
-# require a repository-wide API and documentation cleanup. Keep them out of
-# the workspace baseline until they can be addressed consistently.
-cast_lossless = "allow"
-cast_possible_truncation = "allow"
-cast_possible_wrap = "allow"
-cast_sign_loss = "allow"
 doc_markdown = "allow"
-duration_suboptimal_units = "allow"
-fn_params_excessive_bools = "allow"
-if_not_else = "allow"
-inline_always = "allow"
-iter_without_into_iter = "allow"
-manual_let_else = "allow"
 map_unwrap_or = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 must_use_candidate = "allow"
-needless_pass_by_value = "allow"
-redundant_closure_for_method_calls = "allow"
-return_self_not_must_use = "allow"
-semicolon_if_nothing_returned = "allow"
-similar_names = "allow"
-single_char_pattern = "allow"
-single_match_else = "allow"
 unreadable_literal = "allow"
-uninlined_format_args = "allow"
-wildcard_imports = "allow"
-bool_to_int_with_if = "allow"
-match_bool = "allow"
-ref_option = "allow"
-unnecessary_semicolon = "allow"
-unnecessary_wraps = "allow"
-unnested_or_patterns = "allow"
-elidable_lifetime_names = "allow"
-match_same_arms = "allow"
-unused_async = "allow"
-unused_self = "allow"
-struct_excessive_bools = "allow"
-struct_field_names = "allow"
-too_many_lines = "allow"
+similar_names = "allow"

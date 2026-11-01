@@ -1,4 +1,14 @@
-use super::*;
+use super::{
+    Account, AccountId, BTreeMap, BigInt, BlockIdExt, BlockIdExtView, Cell, ConfigModeFlags,
+    Context, Engine, Int256, LiteBalancer, LiteClient, RawBytesView, Result, Serialize,
+    TransactionId3, TvmStack, TvmStackEntry, Value, WalletVersionArg, deserialize_boc, json,
+    lite_boc, method_name_to_id, serialize_boc,
+};
+#[cfg(test)]
+use super::{
+    Address, Arc, Builder, Cli, Commands, ContractCommand, MasterchainInfoView, Parser, TimeView,
+    VersionView, WALLET_V4R2_DEFAULT_ID,
+};
 
 #[derive(Debug, Serialize)]
 pub(super) struct CellView {
@@ -68,6 +78,10 @@ pub(super) enum TvmStackEntryView {
 }
 
 #[derive(Debug, Serialize)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "The JSON fields intentionally mirror the balancer peer-count metrics"
+)]
 pub(super) struct BalancerStatusView {
     pub(super) total_peers: usize,
     pub(super) alive_peers: usize,
@@ -234,10 +248,10 @@ pub(super) fn stack_entry_view(entry: &TvmStackEntry) -> Result<TvmStackEntryVie
             decimal: bigint_decimal(value),
         },
         TvmStackEntry::Cell(cell) => TvmStackEntryView::Cell {
-            boc: raw_bytes_view(&tonutils_tvm::serialize_boc(cell, false)?),
+            boc: raw_bytes_view(&serialize_boc(cell, false)?),
         },
         TvmStackEntry::Slice(cell) => TvmStackEntryView::Slice {
-            boc: raw_bytes_view(&tonutils_tvm::serialize_boc(cell, false)?),
+            boc: raw_bytes_view(&serialize_boc(cell, false)?),
         },
         TvmStackEntry::Tuple(entries) => TvmStackEntryView::Tuple {
             entries: entries
@@ -281,7 +295,8 @@ pub(super) fn parse_i64_decimal_or_hex(value: &str) -> Result<i64> {
         .strip_prefix("0x")
         .or_else(|| value.strip_prefix("0X"))
     {
-        Ok(u64::from_str_radix(hex, 16)? as i64)
+        let value = u64::from_str_radix(hex, 16)?;
+        Ok(i64::from_ne_bytes(value.to_ne_bytes()))
     } else {
         Ok(value.parse::<i64>()?)
     }
@@ -467,16 +482,13 @@ fn parse_stack_json_entries(
 
 pub(super) fn parse_boc_hex_cell(value: &str) -> Result<std::sync::Arc<Cell>> {
     let bytes = hex::decode(value.trim()).context("failed to decode stack BoC hex")?;
-    tonutils_tvm::deserialize_boc(&bytes).context("failed to decode stack BoC")
+    deserialize_boc(&bytes).context("failed to decode stack BoC")
 }
 
-pub(super) fn parse_method_ref(value: &str) -> Result<(Option<String>, u64)> {
+pub(super) fn parse_method_ref(value: &str) -> (Option<String>, u64) {
     match parse_u64_decimal_or_hex(value) {
-        Ok(method_id) => Ok((None, method_id)),
-        Err(_) => Ok((
-            Some(value.to_owned()),
-            tonutils_contracts::method_name_to_id(value),
-        )),
+        Ok(method_id) => (None, method_id),
+        Err(_) => (Some(value.to_owned()), method_name_to_id(value)),
     }
 }
 
@@ -500,7 +512,7 @@ pub(super) fn parse_comma_list<T>(
 }
 
 pub(super) fn parse_after_transaction(
-    account: &Option<String>,
+    account: Option<&String>,
     lt: Option<u64>,
 ) -> Result<Option<TransactionId3>> {
     match (account, lt) {
@@ -523,7 +535,7 @@ pub(super) fn latest_or_explicit_block(
     }
 }
 
-pub(super) fn decoded_boc_view(boc: &tonutils_liteclient::boc::DecodedBoc) -> Value {
+pub(super) fn decoded_boc_view(boc: &lite_boc::DecodedBoc) -> Value {
     json!({
         "raw": raw_bytes_view(&boc.raw),
         "root": cell_value(&boc.root),
@@ -535,7 +547,7 @@ pub(super) fn cell_value(cell: &Cell) -> Value {
     json!(cell_view(cell))
 }
 
-pub(super) fn block_value(block: &tonutils_tlb::Block) -> Value {
+pub(super) fn block_value(block: &tonutils::tlb::Block) -> Value {
     json!({
         "type": "block",
         "global_id": block.global_id,
@@ -546,10 +558,10 @@ pub(super) fn block_value(block: &tonutils_tlb::Block) -> Value {
     })
 }
 
-pub(super) fn account_value(account: &tonutils_tlb::Account) -> Value {
+pub(super) fn account_value(account: &Account) -> Value {
     match account {
-        tonutils_tlb::Account::None => json!({ "type": "none" }),
-        tonutils_tlb::Account::Full {
+        tonutils::tlb::Account::None => json!({ "type": "none" }),
+        tonutils::tlb::Account::Full {
             addr,
             storage_stat,
             storage,
@@ -569,7 +581,7 @@ pub(super) fn account_value(account: &tonutils_tlb::Account) -> Value {
     }
 }
 
-pub(super) fn shard_account_value(shard: &tonutils_tlb::ShardAccount) -> Value {
+pub(super) fn shard_account_value(shard: &tonutils::tlb::ShardAccount) -> Value {
     json!({
         "account": account_value(&shard.account),
         "last_trans_hash": hex::encode(shard.last_trans_hash),
@@ -577,7 +589,7 @@ pub(super) fn shard_account_value(shard: &tonutils_tlb::ShardAccount) -> Value {
     })
 }
 
-pub(super) fn transaction_value(tx: &tonutils_tlb::Transaction) -> Value {
+pub(super) fn transaction_value(tx: &tonutils::tlb::Transaction) -> Value {
     json!({
         "account_addr": hex::encode(tx.account_addr),
         "lt": tx.lt,
@@ -598,7 +610,7 @@ pub(super) fn transaction_value(tx: &tonutils_tlb::Transaction) -> Value {
     })
 }
 
-pub(super) fn simple_account_value(account: &tonutils_liteclient::boc::SimpleAccount) -> Value {
+pub(super) fn simple_account_value(account: &tonutils::liteclient::boc::SimpleAccount) -> Value {
     json!({
         "block_id": block_id_ext_view(&account.block_id),
         "shard_block_id": block_id_ext_view(&account.shard_block_id),
@@ -609,16 +621,16 @@ pub(super) fn simple_account_value(account: &tonutils_liteclient::boc::SimpleAcc
     })
 }
 
-pub(super) fn msg_address_int_value(addr: &tonutils_tlb::MsgAddressInt) -> Value {
+pub(super) fn msg_address_int_value(addr: &tonutils::tlb::MsgAddressInt) -> Value {
     match addr {
-        tonutils_tlb::MsgAddressInt::Std { anycast, address } => json!({
+        tonutils::tlb::MsgAddressInt::Std { anycast, address } => json!({
             "type": "std",
             "anycast": anycast_value(anycast.as_ref()),
             "workchain": address.workchain,
             "hash": hex::encode(address.hash_part),
             "friendly": format!("{address}"),
         }),
-        tonutils_tlb::MsgAddressInt::Var {
+        tonutils::tlb::MsgAddressInt::Var {
             anycast,
             workchain_id,
             address,
@@ -633,7 +645,7 @@ pub(super) fn msg_address_int_value(addr: &tonutils_tlb::MsgAddressInt) -> Value
     }
 }
 
-pub(super) fn anycast_value(anycast: Option<&tonutils_tlb::Anycast>) -> Value {
+pub(super) fn anycast_value(anycast: Option<&tonutils::tlb::Anycast>) -> Value {
     match anycast {
         Some(anycast) => json!({
             "depth": anycast.depth,
@@ -643,13 +655,13 @@ pub(super) fn anycast_value(anycast: Option<&tonutils_tlb::Anycast>) -> Value {
     }
 }
 
-pub(super) fn account_state_value(state: &tonutils_tlb::AccountState) -> Value {
+pub(super) fn account_state_value(state: &tonutils::tlb::AccountState) -> Value {
     match state {
-        tonutils_tlb::AccountState::Uninit => json!({ "type": "uninit" }),
-        tonutils_tlb::AccountState::Frozen { state_hash } => {
+        tonutils::tlb::AccountState::Uninit => json!({ "type": "uninit" }),
+        tonutils::tlb::AccountState::Frozen { state_hash } => {
             json!({ "type": "frozen", "state_hash": hex::encode(state_hash) })
         }
-        tonutils_tlb::AccountState::Active { state_init } => json!({
+        tonutils::tlb::AccountState::Active { state_init } => json!({
             "type": "active",
             "has_code": state_init.code.is_some(),
             "has_data": state_init.data.is_some(),
@@ -658,53 +670,53 @@ pub(super) fn account_state_value(state: &tonutils_tlb::AccountState) -> Value {
     }
 }
 
-pub(super) fn currency_collection_value(value: &tonutils_tlb::CurrencyCollection) -> Value {
+pub(super) fn currency_collection_value(value: &tonutils::tlb::CurrencyCollection) -> Value {
     json!({
         "grams": grams_decimal(&value.grams),
         "other": { "key_bits": value.other.key_bits() },
     })
 }
 
-pub(super) fn grams_decimal(value: &tonutils_tlb::Grams) -> String {
+pub(super) fn grams_decimal(value: &tonutils::tlb::Grams) -> String {
     value.0.to_str_radix(10)
 }
 
-pub(super) fn account_status_name(status: tonutils_tlb::AccountStatus) -> &'static str {
+pub(super) fn account_status_name(status: tonutils::tlb::AccountStatus) -> &'static str {
     match status {
-        tonutils_tlb::AccountStatus::Uninit => "uninit",
-        tonutils_tlb::AccountStatus::Frozen => "frozen",
-        tonutils_tlb::AccountStatus::Active => "active",
-        tonutils_tlb::AccountStatus::Nonexist => "nonexist",
+        tonutils::tlb::AccountStatus::Uninit => "uninit",
+        tonutils::tlb::AccountStatus::Frozen => "frozen",
+        tonutils::tlb::AccountStatus::Active => "active",
+        tonutils::tlb::AccountStatus::Nonexist => "nonexist",
     }
 }
 
 pub(super) fn simple_account_state_name(
-    state: &tonutils_liteclient::boc::SimpleAccountState,
+    state: &tonutils::liteclient::boc::SimpleAccountState,
 ) -> &'static str {
     match state {
-        tonutils_liteclient::boc::SimpleAccountState::None => "none",
-        tonutils_liteclient::boc::SimpleAccountState::Uninit => "uninit",
-        tonutils_liteclient::boc::SimpleAccountState::Frozen => "frozen",
-        tonutils_liteclient::boc::SimpleAccountState::Active => "active",
+        tonutils::liteclient::boc::SimpleAccountState::None => "none",
+        tonutils::liteclient::boc::SimpleAccountState::Uninit => "uninit",
+        tonutils::liteclient::boc::SimpleAccountState::Frozen => "frozen",
+        tonutils::liteclient::boc::SimpleAccountState::Active => "active",
     }
 }
 
 pub(super) fn transaction_description_name(
-    description: &tonutils_tlb::TransactionDescr,
+    description: &tonutils::tlb::TransactionDescr,
 ) -> &'static str {
     match description {
-        tonutils_tlb::TransactionDescr::Ordinary { .. } => "ordinary",
-        tonutils_tlb::TransactionDescr::Storage { .. } => "storage",
-        tonutils_tlb::TransactionDescr::TickTock { .. } => "tick_tock",
-        tonutils_tlb::TransactionDescr::SplitPrepare { .. } => "split_prepare",
-        tonutils_tlb::TransactionDescr::SplitInstall { .. } => "split_install",
-        tonutils_tlb::TransactionDescr::MergePrepare { .. } => "merge_prepare",
-        tonutils_tlb::TransactionDescr::MergeInstall { .. } => "merge_install",
+        tonutils::tlb::TransactionDescr::Ordinary { .. } => "ordinary",
+        tonutils::tlb::TransactionDescr::Storage { .. } => "storage",
+        tonutils::tlb::TransactionDescr::TickTock { .. } => "tick_tock",
+        tonutils::tlb::TransactionDescr::SplitPrepare { .. } => "split_prepare",
+        tonutils::tlb::TransactionDescr::SplitInstall { .. } => "split_install",
+        tonutils::tlb::TransactionDescr::MergePrepare { .. } => "merge_prepare",
+        tonutils::tlb::TransactionDescr::MergeInstall { .. } => "merge_install",
     }
 }
 
 pub(super) fn decoded_block_data_value(
-    decoded: &tonutils_liteclient::boc::DecodedBlockData,
+    decoded: &tonutils::liteclient::boc::DecodedBlockData,
 ) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
@@ -716,7 +728,7 @@ pub(super) fn decoded_block_data_value(
 }
 
 pub(super) fn decoded_block_header_value(
-    decoded: &tonutils_liteclient::boc::DecodedBlockHeader,
+    decoded: &tonutils::liteclient::boc::DecodedBlockHeader,
 ) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
@@ -726,7 +738,7 @@ pub(super) fn decoded_block_header_value(
 }
 
 pub(super) fn decoded_shard_info_value(
-    decoded: &tonutils_liteclient::boc::DecodedShardInfo,
+    decoded: &tonutils::liteclient::boc::DecodedShardInfo,
 ) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
@@ -737,7 +749,7 @@ pub(super) fn decoded_shard_info_value(
 }
 
 pub(super) fn decoded_all_shards_info_value(
-    decoded: &tonutils_liteclient::boc::DecodedAllShardsInfo,
+    decoded: &tonutils::liteclient::boc::DecodedAllShardsInfo,
 ) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
@@ -747,7 +759,7 @@ pub(super) fn decoded_all_shards_info_value(
 }
 
 pub(super) fn decoded_config_info_value(
-    decoded: &tonutils_liteclient::boc::DecodedConfigInfo,
+    decoded: &tonutils::liteclient::boc::DecodedConfigInfo,
 ) -> Value {
     json!({
         "mode": decoded.raw.mode,
@@ -760,20 +772,20 @@ pub(super) fn decoded_config_info_value(
     })
 }
 
-pub(super) fn config_params_value(config: &tonutils_tlb::ConfigParams) -> Value {
+pub(super) fn config_params_value(config: &tonutils::tlb::ConfigParams) -> Value {
     json!({
         "config_addr": hex::encode(config.config_addr),
         "config": cell_value(&config.config),
     })
 }
 
-pub(super) fn shard_state_value(state: &tonutils_tlb::ShardState) -> Value {
+pub(super) fn shard_state_value(state: &tonutils::tlb::ShardState) -> Value {
     match state {
-        tonutils_tlb::ShardState::Unsplit { payload } => json!({
+        tonutils::tlb::ShardState::Unsplit { payload } => json!({
             "type": "unsplit",
             "payload": cell_value(payload),
         }),
-        tonutils_tlb::ShardState::Split { left, right } => json!({
+        tonutils::tlb::ShardState::Split { left, right } => json!({
             "type": "split",
             "left": cell_value(left),
             "right": cell_value(right),
@@ -797,7 +809,7 @@ pub(super) fn libraries_value(
 }
 
 pub(super) fn decoded_libraries_with_proof_value(
-    decoded: &tonutils_liteclient::boc::DecodedLibrariesWithProof,
+    decoded: &tonutils::liteclient::boc::DecodedLibrariesWithProof,
 ) -> Value {
     json!({
         "mode": decoded.raw.mode,
@@ -808,7 +820,7 @@ pub(super) fn decoded_libraries_with_proof_value(
     })
 }
 
-pub(super) fn transactions_value(transactions: &[tonutils_tlb::Transaction]) -> Value {
+pub(super) fn transactions_value(transactions: &[tonutils::tlb::Transaction]) -> Value {
     json!(
         transactions
             .iter()
@@ -842,8 +854,8 @@ pub(super) async fn get_config_all_client(
     block: BlockIdExt,
     flags: &ConfigModeFlags,
 ) -> std::result::Result<
-    tonutils_liteclient::boc::DecodedConfigInfo,
-    tonutils_liteclient::types::LiteError,
+    tonutils::liteclient::boc::DecodedConfigInfo,
+    tonutils::liteclient::types::LiteError,
 > {
     client
         .get_config_all_typed(
@@ -869,8 +881,8 @@ pub(super) async fn get_config_params_client(
     params: Vec<i32>,
     flags: &ConfigModeFlags,
 ) -> std::result::Result<
-    tonutils_liteclient::boc::DecodedConfigInfo,
-    tonutils_liteclient::types::LiteError,
+    tonutils::liteclient::boc::DecodedConfigInfo,
+    tonutils::liteclient::types::LiteError,
 > {
     client
         .get_config_params_typed(
@@ -896,8 +908,8 @@ pub(super) async fn get_config_all_balancer(
     block: BlockIdExt,
     flags: &ConfigModeFlags,
 ) -> std::result::Result<
-    tonutils_liteclient::boc::DecodedConfigInfo,
-    tonutils_liteclient::balancer::BalancerError,
+    tonutils::liteclient::boc::DecodedConfigInfo,
+    tonutils::liteclient::balancer::BalancerError,
 > {
     balancer
         .get_config_all_typed(
@@ -923,8 +935,8 @@ pub(super) async fn get_config_params_balancer(
     params: Vec<i32>,
     flags: &ConfigModeFlags,
 ) -> std::result::Result<
-    tonutils_liteclient::boc::DecodedConfigInfo,
-    tonutils_liteclient::balancer::BalancerError,
+    tonutils::liteclient::boc::DecodedConfigInfo,
+    tonutils::liteclient::balancer::BalancerError,
 > {
     balancer
         .get_config_params_typed(
@@ -945,7 +957,9 @@ pub(super) async fn get_config_params_balancer(
         .await
 }
 
-pub(super) fn account_state_view(state: tonutils_tl::response::AccountState) -> AccountStateView {
+pub(super) fn account_state_view(
+    state: &tonutils::liteclient::tl::LiteServerAccountState,
+) -> AccountStateView {
     AccountStateView {
         block: block_id_ext_view(&state.id),
         shard_block: block_id_ext_view(&state.shardblk),
@@ -955,7 +969,7 @@ pub(super) fn account_state_view(state: tonutils_tl::response::AccountState) -> 
     }
 }
 
-#[cfg(any())]
+#[cfg(test)]
 mod coverage_tests;
-#[cfg(any())]
+#[cfg(test)]
 mod stack_input_tests;

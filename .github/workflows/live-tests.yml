@@ -83,18 +83,16 @@ jobs:
         run: python3 scripts/cross_sdk/gen_py.py
 
       - name: Verify fixtures against tonutils-rs
-        run: cargo test -p tonutils-tl --lib
+        run: cargo test -p tonutils --features tl,adnl,overlay,liteclient --lib tl::tests::cross_sdk
 
   live-tests:
-    name: Live liteserver and mempool smoke tests
+    name: Live DHT, UDP, QUIC, and liteserver gates
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     env:
-      # Surface mempool/ADNL diagnostics in the live-test logs so failed runs
-      # can be traced without reproducing them locally. The ADNL target must be
-      # debug: the inbound query census, per-peer address view, and ping
-      # senders all log at debug level and would otherwise be invisible.
-      RUST_LOG: tonutils_mempool=debug,tonutils_adnl=debug,tonutils_overlay=debug
+      RUST_LOG: tonutils=debug
+      TON_LIVE_FEATURES: liteclient,mempool,overlay-config
+      TON_LIVE_LOG_DIR: ${{ github.workspace }}/live-logs
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -108,10 +106,6 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          # The live jobs build default features, unlike the checks job's
-          # --all-features, so they key their own cache entry; the
-          # all-features entry is only a restore-time fallback for the
-          # registry and matching-dependency artifacts.
           key: ${{ runner.os }}-cargo-live-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-live-
@@ -134,91 +128,47 @@ jobs:
             echo 'TON_TESTNET_GLOBAL_CONFIG_JSON_EOF'
           } >> "$GITHUB_ENV"
 
-      - name: Run mempool bootstrap smoke test
-        run: cargo test -p tonutils-mempool --test live configured_global_config_can_start_scanner -- --ignored --nocapture
-
-      - name: Run seed-only scanner stream test
-        run: cargo test -p tonutils-mempool --test seed_scanner -- --nocapture
-
-      - name: Run mempool mainnet DHT probe
-        env:
-          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils-mempool --test live mainnet_dht_seed_answers_find_node -- --ignored --nocapture
-
-      - name: Run mempool testnet DHT probe
-        env:
-          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils-mempool --test live testnet_dht_seed_answers_find_node -- --ignored --nocapture
-
-      - name: Derive mempool live seeds from global config
-        run: |
-          seeds=$(
-            echo "$TON_GLOBAL_CONFIG_JSON" | jq -r '
-              [.dht.static_nodes.nodes[]? |
-               .id.key as $key |
-               .addr_list.addrs[]? |
-               select(.ip != null and .port != null) |
-               (.ip + if .ip < 0 then 4294967296 else 0 end) as $ip |
-               $key + "@" +
-               (($ip / 16777216 | floor | tostring) + "." +
-                (($ip % 16777216) / 65536 | floor | tostring) + "." +
-                (($ip % 65536) / 256 | floor | tostring) + "." +
-                ($ip % 256 | tostring)) + ":" + (.port | tostring)
-              ] | join("\n")
-            ' | while IFS='@' read -r b64key rest; do
-              hexkey=$(printf '%s' "$b64key" | base64 -d | xxd -p | tr -d ' \n')
-              printf '%s@%s\n' "$hexkey" "$rest"
-            done | paste -sd ';'
-          )
-          if [ -n "$seeds" ]; then
-            echo "TON_MEMPOOL_LIVE_SEEDS=$seeds" >> "$GITHUB_ENV"
-          fi
-
-      - name: Set default mempool overlay ID
-        run: |
-          if [ -z "${TON_MEMPOOL_LIVE_OVERLAY_ID:-}" ]; then
-            echo "TON_MEMPOOL_LIVE_OVERLAY_ID=12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649" >> "$GITHUB_ENV"
-          fi
-
-      - name: Run mempool overlay DHT discovery live test
-        env:
-          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils-mempool --test live mainnet_overlay_dht_discovery_returns_peers -- --ignored --nocapture
-
-      - name: Run mempool overlay QUIC discovery live test
-        # Runs in its own test binary (`--test live_quic`). Phase 2b
-        # hard-asserts at least one member QUIC connect (`connected > 0`,
-        # the gate stays hard by project decision) with a 10 s per-target
-        # connect budget and up to three retry waves: wave 1 dials every
-        # registered member, waves 2-3 redial only the targets that timed
-        # out or errored, and the loop stops at the first handshake. Every
-        # per-target line carries `source=advertised|udp+1000` and the wave
-        # number, and the summary adds `connected_advertised=`,
-        # `connected_udp_offset=` and `waves=`. Green only while some
-        # mainnet member completes a handshake from hosted runners (first
-        # seen in CI run 38292378027); see docs/reference/network/quic.md
-        # for the reachability verdict and the per-target log format.
-        env:
-          TON_MEMPOOL_ALLOW_LIVE_UNAVAILABLE: '1'
-        run: cargo test -p tonutils-mempool --test live_quic mainnet_overlay_quic_discovery_returns_peers -- --ignored --nocapture
-
-      - name: Run live workflow smoke tests
-        # Last and unconditional so the two flaky live-test classes cannot
-        # skip each other's coverage: a transient liteserver failure here
-        # used to fail-fast past every mempool smoke step (run 38579887480
-        # lost them all to the notready-651 block race), while a mempool
-        # failure would in turn hide these workflows.
+      - name: Run mainnet DHT findNode gate
         if: ${{ !cancelled() }}
-        run: cargo test -p tonutils-liteclient --test live_workflows -- --ignored --nocapture
+        run: ./scripts/run-live-test.sh live_probe mainnet_dht_find_node_returns_valid_nodes
+
+      - name: Run testnet DHT findNode gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh live_probe testnet_dht_find_node_returns_valid_nodes
+
+      - name: Run UDP overlay.getRandomPeers gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh live_probe mainnet_udp_overlay_get_random_peers_returns_valid_nodes
+
+      - name: Run QUIC handshake and overlay.getRandomPeers gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh live_probe mainnet_quic_overlay_get_random_peers_returns_valid_nodes
+
+      - name: Run liteserver masterchain info gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_get_masterchain_info_smoke
+
+      - name: Run liteserver version and time gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_get_version_and_time_smoke
+
+      - name: Upload live probe logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-probe-logs
+          path: ${{ github.workspace }}/live-logs
+          retention-days: 7
+          if-no-files-found: warn
 
   live-delivery:
-    name: Live mempool delivery acceptance
+    name: Live public Plumtree payload gate
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     env:
-      # Same rationale as the live-tests job: the acceptance test's failure
-      # diagnosis reads debug-level ADNL and mempool lines from its log.
-      RUST_LOG: tonutils_mempool=debug,tonutils_adnl=debug,tonutils_overlay=debug
+      RUST_LOG: tonutils=debug
+      TON_LIVE_FEATURES: mempool,overlay-config
+      TON_LIVE_LOG_DIR: ${{ github.workspace }}/live-logs
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -232,29 +182,13 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-cargo-live-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-live-delivery-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
+            ${{ runner.os }}-cargo-live-delivery-
             ${{ runner.os }}-cargo-live-
             ${{ runner.os }}-cargo-
 
-      - name: Cache the durable peer store
-        # Durable overlay-member memory for the delivery samples only: the
-        # most recent run's store (restored by restore-keys) lets each sample
-        # start warm - saved peers are dialed in persisted-priority order and
-        # the blocking discovery lookup is skipped - which shortens the
-        # bootstrap toward the registered_peers census.  The unique run-id key
-        # forces a fresh save every green gate; actions/cache persists only on
-        # job success, so a red run keeps the previous roster.
-        uses: actions/cache@v6
-        with:
-          path: .tonutils-peer-store
-          key: peer-store-${{ github.run_id }}
-          restore-keys: |
-            peer-store-
-
       - name: Load public TON global config
-        # The delivery test derives mainnet seeds only; the testnet config
-        # stays in the live-tests job.
         run: |
           {
             echo 'TON_GLOBAL_CONFIG_JSON<<TON_GLOBAL_CONFIG_JSON_EOF'
@@ -264,403 +198,15 @@ jobs:
             echo 'TON_GLOBAL_CONFIG_JSON_EOF'
           } >> "$GITHUB_ENV"
 
-      - name: Derive mempool live seeds from global config
-        run: |
-          seeds=$(
-            echo "$TON_GLOBAL_CONFIG_JSON" | jq -r '
-              [.dht.static_nodes.nodes[]? |
-               .id.key as $key |
-               .addr_list.addrs[]? |
-               select(.ip != null and .port != null) |
-               (.ip + if .ip < 0 then 4294967296 else 0 end) as $ip |
-               $key + "@" +
-               (($ip / 16777216 | floor | tostring) + "." +
-                (($ip % 16777216) / 65536 | floor | tostring) + "." +
-                (($ip % 65536) / 256 | floor | tostring) + "." +
-                ($ip % 256 | tostring)) + ":" + (.port | tostring)
-              ] | join("\n")
-            ' | while IFS='@' read -r b64key rest; do
-              hexkey=$(printf '%s' "$b64key" | base64 -d | xxd -p | tr -d ' \n')
-              printf '%s@%s\n' "$hexkey" "$rest"
-            done | paste -sd ';'
-          )
-          if [ -n "$seeds" ]; then
-            echo "TON_MEMPOOL_LIVE_SEEDS=$seeds" >> "$GITHUB_ENV"
-          fi
+      - name: Run public Plumtree receive gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh live_delivery mainnet_public_plumtree_receives_payload
 
-      - name: Set default mempool overlay ID
-        run: |
-          if [ -z "${TON_MEMPOOL_LIVE_OVERLAY_ID:-}" ]; then
-            echo "TON_MEMPOOL_LIVE_OVERLAY_ID=12b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649" >> "$GITHUB_ENV"
-          fi
-
-      - name: Run configured seed-only mempool live test
-        env:
-          TON_MEMPOOL_LIVE_TIMEOUT_SECS: ${{ vars.TON_MEMPOOL_LIVE_TIMEOUT_SECS || '600' }}
-          TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS: '256'
-          TON_MEMPOOL_LIVE_DELIVERY_SAMPLES: ${{ vars.TON_MEMPOOL_LIVE_DELIVERY_SAMPLES || '8' }}
-        # The delivery outcome is a per-run sample of the upstream push
-        # lottery, not a deterministic property of this build: a verified
-        # member receives a broadcast only while some full node samples it
-        # into its get_neighbours() fan-out, and the recorded arms deliver in
-        # roughly one 300 s window of three on identical test code (green
-        # ids 38558546040, 38594880666, 38828796572; red ids 38579887480,
-        # 38723511984, 38745254834, 38814358139, 38819591750, 38865936964;
-        # the mechanics and per-arm counters are recorded in
-        # docs/reference/network/overlay-delivery-ledger.md). A single sample is therefore
-        # red on about two healthy runs of three, so this step runs
-        # TON_MEMPOOL_LIVE_DELIVERY_SAMPLES independent samples in parallel
-        # (each process generates its own ADNL keypair and binds ephemeral
-        # UDP ports) and passes when at least one delivers; set the repo
-        # variable to 1 to restore the single-sample behavior. A red gate
-        # then means every sample saw zero inbound broadcasts - a
-        # (1 - p)^samples false alarm at the recorded p, and therefore real
-        # evidence of a regression. Job logs require admin access, so a
-        # failed gate still publishes its own diagnosis: the per-sample
-        # publish progress census with panic counts, the funnel counters of a
-        # silent sample (listings, pingers, pushers), the panic cause of a
-        # sample that delivered but failed a later phase, the raw log tail of
-        # the first timed-out sample, the final metrics line, ADNL channel
-        # negotiation counts, custom-message (broadcast candidate) counters,
-        # the inbound query census by constructor, and the growth/publishing
-        # lines go to a check annotation (GitHub caps annotations at 4 KiB,
-        # so the decisive evidence leads and long hex blobs are elided) and
-        # to the step summary, both readable on a public repo without admin
-        # rights.
-        # Policy update 2026-10-17: the per-sample window is 600 s (env block
-        # above; a TON_MEMPOOL_LIVE_TIMEOUT_SECS repo variable can still
-        # override it).  The post-fix record - two green gates delivering at
-        # 269.9 s and 274.8 s of the 300 s window, then a red draw at the
-        # strongest admission counters recorded (run 39005547863:
-        # unique_pingers=16, pings_received=64 answered 1:1, a served
-        # published address, no broadcast) - showed the residual failure mode
-        # is the upstream neighbour-slot lottery and no client-side lever
-        # reaches it.  A longer window is the cheapest lever: at the observed
-        # ~8 % per sample in 300 s the constant-hazard extrapolation is
-        # ~15 % at 600 s with a k=8 gate green rate of ~74 %, without the
-        # CPU/DHT contention a larger k would add.  Numbers and mechanics:
-        # TODO item 440 and docs/reference/network/overlay-delivery-ledger.md.
-        run: |
-          set -o pipefail
-          samples="${TON_MEMPOOL_LIVE_DELIVERY_SAMPLES:-8}"
-          artifacts="$RUNNER_TEMP/delivery"
-          mkdir -p "$artifacts"
-
-          echo "building the live test binary once for ${samples} delivery samples"
-          bin="$(
-            cargo test -p tonutils-mempool --test live --no-run --message-format=json 2>/dev/null \
-              | jq -r 'select(.reason == "compiler-artifact" and .target.name == "live") | .executable' \
-              | tail -n 1
-          )" || bin=""
-          if [ -z "$bin" ] || [ ! -x "$bin" ]; then
-            echo "::error title=Mempool delivery acceptance::failed to locate the compiled live test binary"
-            exit 1
-          fi
-
-          pids=()
-          # Peer-store continuity: each sample process reads its own store
-          # file under .tonutils-peer-store/ (restored by the cache step when
-          # a previous run left one).  A sample whose own file is missing is
-          # seeded from the largest restored store, so one rich roster warms
-          # every parallel process on the first wired run.  Each sample
-          # rewrites only its own file, so parallel writers never collide.
-          store_dir="$PWD/.tonutils-peer-store"
-          mkdir -p "$store_dir"
-          best="$(ls -S "$store_dir"/*.json 2>/dev/null | head -n 1 || true)"
-          for i in $(seq 1 "$samples"); do
-            store_file="$store_dir/store-$i.json"
-            if [ ! -f "$store_file" ] && [ -n "$best" ]; then
-              cp "$best" "$store_file"
-            fi
-          done
-
-          for i in $(seq 1 "$samples"); do
-            TON_MEMPOOL_LIVE_PEER_STORE="$store_dir/store-$i.json" \
-            "$bin" configured_seed_delivers_valid_external_message --ignored --nocapture \
-              > "$artifacts/sample-$i.log" 2>&1 &
-            pids+=("$!")
-            echo "sample $i: started pid=${pids[$((i - 1))]}"
-          done
-
-          winner=""
-          while [ -z "$winner" ]; do
-            alive=0
-            for i in $(seq 1 "$samples"); do
-              pid="${pids[$((i - 1))]}"
-              [ -n "$pid" ] || continue
-              if kill -0 "$pid" 2>/dev/null; then
-                alive=$((alive + 1))
-              else
-                if wait "$pid" 2>/dev/null; then
-                  winner="$i"
-                fi
-                pids[$((i - 1))]=""
-              fi
-            done
-            if [ -z "$winner" ] && [ "$alive" -eq 0 ]; then
-              break
-            fi
-            sleep 5
-          done
-
-          if [ -n "$winner" ]; then
-            echo "sample $winner delivered; stopping the remaining samples"
-            for i in $(seq 1 "$samples"); do
-              pid="${pids[$((i - 1))]}"
-              if [ -n "$pid" ]; then
-                kill "$pid" 2>/dev/null || true
-                wait "$pid" 2>/dev/null || true
-              fi
-            done
-          fi
-
-          # Everything below only reports: the verdict is decided by the
-          # winner flag above.  The runner invokes this script as bash -e,
-          # and a grep that finds no match inside an assignment aborts the
-          # whole step silently - the re-run of 39008789830 failed exactly
-          # that way, right after the classification header, with no
-          # diagnosis at all.  Sample logs come from a multi-threaded
-          # process, so any long line can interleave and break an
-          # extraction; diagnostics must degrade, never die.
-          set +e
-
-          classify() {
-            local i="$1" log="$artifacts/sample-$i.log"
-            if [ ! -s "$log" ]; then
-              echo "sample $i: no output captured"
-              return
-            fi
-            if grep -q 'phase=delivery time_to_message=' "$log"; then
-              local time_line
-              time_line="$(grep -oE 'phase=delivery time_to_message=[0-9.]+s' "$log" | tail -n 1)"
-              if grep -q 'test result: ok' "$log"; then
-                echo "sample $i: delivered and passed ($time_line)"
-              elif grep -q 'test result: FAILED' "$log"; then
-                local cause
-                cause="$(grep -A1 'panicked at' "$log" | tail -n 2 | tr '\n' ' ' | cut -c1-220)"
-                echo "sample $i: delivered but failed a later phase ($time_line) cause=$cause"
-              else
-                echo "sample $i: delivered, then stopped with the gate already satisfied ($time_line)"
-              fi
-              return
-            fi
-            if grep -q 'phase=delivery timed out' "$log"; then
-              local line peers pingers storing answers pings pongs listings dht_pings pushers customs
-              line="$(grep -oE 'phase=delivery timed out after [0-9]+s:.*' "$log" | tail -n 1)"
-              # An interleaved stderr write can split the metrics line; keep
-              # the usable prefix instead of degrading to empty fields.
-              [ -n "$line" ] || line="$(grep -oE 'phase=delivery timed out.*' "$log" | tail -n 1)"
-              peers="$(printf '%s' "$line" | grep -oE 'registered_peers=[0-9]+' | tail -n 1 | cut -d= -f2)"
-              pingers="$(printf '%s' "$line" | grep -oE 'unique_pingers: [0-9]+' | tail -n 1 | awk '{print $2}')"
-              storing="$(printf '%s' "$line" | grep -oE 'address_storing_peers: [0-9]+' | tail -n 1 | awk '{print $2}')"
-              answers="$(printf '%s' "$line" | grep -oE 'membership_answers: [0-9]+' | tail -n 1 | awk '{print $2}')"
-              pings="$(printf '%s' "$line" | grep -oE ' pings_received: [0-9]+' | tail -n 1 | awk '{print $2}')"
-              pongs="$(printf '%s' "$line" | grep -oE 'pongs_sent: [0-9]+' | tail -n 1 | awk '{print $2}')"
-              listings="$(printf '%s' "$line" | grep -oE 'membership_listing_peers: [0-9]+' | tail -n 1 | awk '{print $2}')"
-              dht_pings="$(printf '%s' "$line" | grep -oE 'dht_pings_received: [0-9]+' | tail -n 1 | awk '{print $2}')"
-              pushers="$(printf '%s' "$line" | grep -oE 'pushers: [0-9]+' | tail -n 1 | awk '{print $2}')"
-              customs="$(printf '%s' "$line" | grep -oE 'custom_messages: [0-9]+' | tail -n 1 | awk '{print $2}')"
-              echo "sample $i: timed out with no inbound broadcast (registered_peers=$peers unique_pingers=$pingers pings=$pings pongs=$pongs address_storing_peers=$storing membership_answers=$answers membership_listing_peers=$listings dht_pings=$dht_pings pushers=$pushers custom_messages=$customs)"
-              return
-            fi
-            if grep -q 'test result: FAILED' "$log"; then
-              local cause
-              cause="$(grep -E 'panicked at' "$log" | tail -n 1 | cut -c1-200)"
-              echo "sample $i: failed before the delivery window ($cause)"
-              return
-            fi
-            echo "sample $i: stopped after another sample delivered"
-          }
-
-          summary="$artifacts/classification.txt"
-          : > "$summary"
-          echo "== delivery samples (k=$samples) =="
-          for i in $(seq 1 "$samples"); do
-            classify "$i" | tee -a "$summary"
-          done
-
-          # The bootstrap digest: what discovery reached before the growth
-          # cadence.  TODO item 381 watches whether the bootstrap attempt
-          # set reaches the whole overlay-node value union; the census is
-          # the only place the digest reaches the job log on a green run.
-          for i in $(seq 1 "$samples"); do
-            s="$artifacts/sample-$i.log"
-            [ -s "$s" ] || continue
-            digest="$(grep -oE 'mempool::start: seeds=[0-9]+ discovery_results=[0-9]+ peers=[0-9]+ attempting [0-9]+ session\(s\)' "$s" | tail -n 1)"
-            echo "sample $i: bootstrap=${digest:-none}"
-          done
-
-          # The delivery-quality census: the live evidence behind the
-          # scoring thresholds and the churn default (TODO items 491/492).
-          for i in $(seq 1 "$samples"); do
-            s="$artifacts/sample-$i.log"
-            [ -s "$s" ] || continue
-            quality="$(grep -oE 'peer quality: snapshot .*' "$s" | tail -n 1)"
-            echo "sample $i: ${quality:-peer quality: snapshot not reached}"
-          done
-
-          # The STUN observations behind each sample's address publication.
-          # Distinct servers reporting different ports are the signature of
-          # a per-destination NAT, which correctly publishes nothing; the
-          # sample logs stay on the runner, so this is the only place those
-          # observations reach the job log.
-          for i in $(seq 1 "$samples"); do
-            s="$artifacts/sample-$i.log"
-            [ -s "$s" ] || continue
-            reports="$(grep -oE 'stun server [0-9.]+:[0-9]+ reports [0-9.]+:[0-9]+' "$s" \
-              | sed -E 's/stun server ([0-9.]+:[0-9]+) reports ([0-9.]+:[0-9]+)/\1=\2/' \
-              | head -n 8 | paste -sd' ' -)"
-            failed="$(grep -cE 'binding request to .* failed|stun server .* did not resolve' "$s" || true)"
-            verdict="$(grep -oE 'stun reached no agreement \([^)]*\)|stun reports [0-9.]+:[0-9]+ reachable' "$s" | tail -n 1)"
-            echo "sample $i: stun_reports=[$reports] stun_failed=$failed stun_verdict=${verdict:-none}"
-          done
-
-          # Publish progress lines: the step summary carries them on both
-          # paths, and on the green path they also reach the job log so a
-          # passed gate still shows whether every sample published.
-          publish_progress() {
-            echo "-- publish progress (all samples, hex elided) --"
-            local i s
-            for i in $(seq 1 "$samples"); do
-              s="$artifacts/sample-$i.log"
-              [ -s "$s" ] || { echo "sample $i: no output captured"; continue; }
-              printf 'sample %s: publish_lines=%s stored_lines=%s findnode_failures=%s enrich_exhausted=%s task_panics=%s last=[%s]\n' \
-                "$i" \
-                "$(grep -c 'dht address publish' "$s")" \
-                "$(grep -c 'stored on' "$s")" \
-                "$(grep -c 'findNode via .* failed' "$s")" \
-                "$(grep -c 'findNode enrichment exhausted' "$s")" \
-                "$(grep 'panicked at' "$s" | grep -v 'tests/live.rs' | wc -l)" \
-                "$(grep 'dht address publish' "$s" | tail -n 1 | cut -c1-140)"
-            done
-          }
-
-          if [ -n "$winner" ]; then
-            {
-              echo '### Mempool delivery acceptance passed'
-              echo
-              echo "Sample $winner of $samples delivered; the remaining samples were stopped once the gate was satisfied."
-              echo
-              echo '```'
-              cat "$summary"
-              echo '```'
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            publish_progress | tee -a "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          # Prefer the sample that actually delivered and then failed a
-          # later phase; fall back to the first timed-out sample so the
-          # digest still shows the passive window.
-          ref=""
-          for i in $(seq 1 "$samples"); do
-            s="$artifacts/sample-$i.log"
-            if grep -q 'phase=delivery time_to_message=' "$s" && grep -q 'test result: FAILED' "$s"; then
-              ref="$i"
-              break
-            fi
-          done
-          if [ -z "$ref" ]; then
-            for i in $(seq 1 "$samples"); do
-              if grep -q 'phase=delivery timed out' "$artifacts/sample-$i.log"; then
-                ref="$i"
-                break
-              fi
-            done
-          fi
-          [ -n "$ref" ] || ref=1
-          log="$artifacts/sample-$ref.log"
-
-          elide_hex() {
-            sed -E 's/([0-9a-f]{48})[0-9a-f]{16,}/\1[hex elided]/g'
-          }
-          diag="$artifacts/delivery-diag.txt"
-          annot="$artifacts/delivery-annotation.txt"
-          {
-            echo "-- delivery samples (k=$samples) --"
-            cat "$summary"
-            publish_progress
-            echo "-- task panics (all samples, harness assertion excluded) --"
-            for i in $(seq 1 "$samples"); do
-              s="$artifacts/sample-$i.log"
-              [ -s "$s" ] || continue
-              p="$(grep 'panicked at' "$s" | grep -v 'tests/live.rs' | head -n 1 | cut -c1-200)"
-              if [ -n "$p" ]; then
-                printf 'sample %s: %s\n' "$i" "$p"
-              fi
-            done
-            echo "-- log tail (sample $ref, waiting metrics elided, hex elided) --"
-            grep -v 'phase=waiting metrics=' "$log" | tail -n 12 | elide_hex | cut -c1-170
-            echo "-- diagnostics from sample $ref --"
-            echo "-- final delivery --"
-            grep 'phase=delivery' "$log" | tail -n 1 | elide_hex | cut -c1-600
-            echo "-- channel negotiation --"
-            printf 'requested=%s confirmed=%s installed=%s\n' \
-              "$(grep -c 'ADNL channel requested' "$log")" \
-              "$(grep -c 'ADNL channel confirmed by peer' "$log")" \
-              "$(grep -c 'ADNL channel installed' "$log")"
-            echo "-- custom overlay messages (broadcast candidates) --"
-            printf 'arrived=%s rejected=%s foreign_overlay=%s\n' \
-              "$(grep -c 'overlay UDP custom message' "$log")" \
-              "$(grep -c 'custom payload rejected' "$log")" \
-              "$(grep -c 'custom payload for another overlay' "$log")"
-            echo "-- ping answers --"
-            printf 'overlay.ping_distinct_peers=%s dht.ping=%s pongs=%s\n' \
-              "$(grep -oE 'answering overlay.ping for peer=PeerId\(\[[0-9, ]+\]\)' "$log" | sort -u | wc -l)" \
-              "$(grep -c 'answering dht.ping' "$log")" \
-              "$(grep -oE 'pongs_sent: [0-9]+' "$log" | tail -n 1 | grep -oE '[0-9]+')"
-            echo "-- inbound query census (distinct peers / total) --"
-            for spec in 'ping 690cb481' 'capabilities dee618f8' 'getRandomPeers 48ee64ab' 'getRandomPeersV2 a58e7ecc'; do
-              set -- $spec
-              all=$(grep 'ADNL inbound overlay query:' "$log" | grep "inner=0x$2" | grep -oE 'peer=\[[0-9, ]+\]')
-              distinct=$(printf '%s\n' "$all" | sed '/^$/d' | sort -u | wc -l)
-              total=$(printf '%s\n' "$all" | sed '/^$/d' | wc -l)
-              echo "$1: distinct_peers=$distinct total=$total"
-            done
-            echo "-- growth rounds --"
-            grep 'peer growth' "$log" | tail -n 4
-            echo "-- growth address resolution --"
-            grep -E 'udp_peer_growth:|udp_overlay_lookup:' "$log" | tail -n 6
-            echo "-- dht address publishing --"
-            grep 'dht address publish' "$log" | elide_hex | tail -n 10
-            echo "-- non-seed connectivity --"
-            grep 'phase=non-seed' "$log" | tail -n 12
-            echo "-- log tail (full, waiting metrics elided) --"
-            grep -v 'phase=waiting metrics=' "$log" | tail -n 60 | elide_hex
-          } > "$diag"
-          # GitHub caps a check-run annotation at 4096 chars; the decisive
-          # evidence leads the digest so the cap only trims known-good
-          # sections, while the step summary carries the full digest.
-          head -c 3800 "$diag" > "$annot"
-          {
-            echo '### Mempool delivery gate failed'
-            echo
-            echo '```'
-            cat "$diag"
-            echo '```'
-            echo '<details><summary>Full log tail (sample '"$ref"')</summary>'
-            echo
-            echo '```'
-            tail -n 60 "$log" | elide_hex
-            echo '```'
-            echo '</details>'
-          } >> "$GITHUB_STEP_SUMMARY"
-          msg=$(awk 'BEGIN{ORS="%0A"}1' "$annot")
-          echo "::error title=Mempool delivery test failed::$msg"
-          exit 1
-
-      - name: Upload delivery sample logs
-        # The check annotation is capped at 4 KiB and job logs need admin
-        # rights, so a red draw also keeps the raw per-sample logs as an
-        # artifact: they are what turns a silent classification into a root
-        # cause (the re-run of run 39008789830 died mid-classification under
-        # the runner's bash -e and left an empty diagnosis).
-        if: failure() || cancelled()
+      - name: Upload delivery log
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: delivery-sample-logs
-          path: ${{ runner.temp }}/delivery
+          name: live-delivery-logs
+          path: ${{ github.workspace }}/live-logs
           retention-days: 7
-          if-no-files-found: ignore
+          if-no-files-found: warn

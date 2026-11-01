@@ -1,13 +1,32 @@
-use super::*;
+use super::{
+    Address, BalancerCommand, BalancerStatusView, BestEffortAccountStateView, Cell, Cli, Context,
+    Engine, FromStr, HighLevelCallView, HighLevelTransactionsView, KnownTlbType, OutputFormat,
+    Read, Result, Serialize, StatusView, TlbDeserialize, TvmStack, TvmStackView, Value,
+    WalletAddressView, WalletGenerateView, WalletPreparedTransferView, WalletSendView,
+    WalletSeqnoView, Write, account_value, best_effort_account_state_view, block_id_ext_view,
+    block_value, cell_value, config_params_value, decoded_all_shards_info_value,
+    decoded_block_data_value, decoded_block_header_value, decoded_boc_view,
+    decoded_config_info_value, decoded_libraries_with_proof_value, decoded_shard_info_value, fs,
+    get_config_all_balancer, get_config_params_balancer, io, json, latest_or_explicit_block,
+    libraries_value, masterchain_info_view, parse_account_id, parse_after_transaction,
+    parse_block_id_ext, parse_int256, parse_libraries, parse_params, parse_u64_decimal_or_hex,
+    print_block_human, raw_bytes_view, shard_account_value, shard_state_value,
+    simple_account_value, stack_entry_human, stack_entry_view, transaction_value,
+    transactions_value,
+};
 
 impl Cli {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The balancer command dispatcher keeps every wire command and output mapping in one exhaustive match"
+    )]
     pub(super) async fn execute_balancer(&self, command: &BalancerCommand) -> Result<()> {
         match command {
             BalancerCommand::MasterchainInfo { num_servers } => {
                 let mut balancer = self.create_balancer(*num_servers).await?;
                 let info = balancer.get_masterchain_info().await?;
                 balancer.close_all().await?;
-                self.print_structured(&masterchain_info_view(info))
+                self.print_structured(&masterchain_info_view(&info))
             }
             BalancerCommand::Status { num_servers } => {
                 let mut balancer = self.create_balancer(*num_servers).await?;
@@ -51,7 +70,7 @@ impl Cli {
                     .get_account_state(block, address.to_account_id())
                     .await?;
                 balancer.close_all().await?;
-                self.print_account(&best_effort_account_state_view(&args.address, raw))
+                self.print_account(&best_effort_account_state_view(&args.address, &raw))
             }
             BalancerCommand::RawGetAccountState(args) => {
                 let mut balancer = self.create_balancer(args.num_servers).await?;
@@ -144,7 +163,7 @@ impl Cli {
                     .list_block_transactions_ext_decoded(
                         parse_block_id_ext(&args.block)?,
                         args.count,
-                        parse_after_transaction(&args.after_account, args.after_lt)?,
+                        parse_after_transaction(args.after_account.as_ref(), args.after_lt)?,
                         args.reverse_order,
                         args.want_proof,
                     )
@@ -162,11 +181,7 @@ impl Cli {
                 let block = latest_or_explicit_block(args.block.as_ref(), last)?;
                 let method_id = args
                     .method_id
-                    .or_else(|| {
-                        args.method
-                            .as_deref()
-                            .map(tonutils_contracts::method_name_to_id)
-                    })
+                    .or_else(|| args.method.as_deref().map(tonutils::tvm::method_name_to_id))
                     .context("run-get-method-typed requires --method or --method-id")?;
                 let stack = balancer
                     .run_get_method_typed(
@@ -437,16 +452,12 @@ impl Cli {
 
     pub(super) fn print_structured<T: Serialize>(&self, value: &T) -> Result<()> {
         match self.output {
-            OutputFormat::Human => {
+            OutputFormat::Human | OutputFormat::PrettyJson => {
                 println!("{}", serde_json::to_string_pretty(value)?);
                 Ok(())
             }
             OutputFormat::Json => {
                 println!("{}", serde_json::to_string(value)?);
-                Ok(())
-            }
-            OutputFormat::PrettyJson => {
-                println!("{}", serde_json::to_string_pretty(value)?);
                 Ok(())
             }
             OutputFormat::Raw | OutputFormat::Hex | OutputFormat::Base64 => {
@@ -472,12 +483,12 @@ impl Cli {
                 println!("{}", hex::encode(bytes));
                 Ok(())
             }
-            OutputFormat::Json => self.print_raw_json(bytes, false),
-            OutputFormat::PrettyJson => self.print_raw_json(bytes, true),
+            OutputFormat::Json => Self::print_raw_json(bytes, false),
+            OutputFormat::PrettyJson => Self::print_raw_json(bytes, true),
         }
     }
 
-    pub(super) fn print_raw_json(&self, bytes: &[u8], pretty: bool) -> Result<()> {
+    pub(super) fn print_raw_json(bytes: &[u8], pretty: bool) -> Result<()> {
         let value = raw_bytes_view(bytes);
         if pretty {
             println!("{}", serde_json::to_string_pretty(&value)?);
@@ -500,32 +511,32 @@ pub(super) fn decode_known_tlb(
     let name = format!("{known:?}");
     let (value, verified) = match known {
         KnownTlbType::Message => {
-            let _ = tonutils_tlb::Message::from_cell(root)?;
+            let _ = tonutils::tlb::Message::from_cell(root)?;
             (json!({ "type": "message" }), None)
         }
         KnownTlbType::MessageRelaxed => {
-            let _ = tonutils_tlb::MessageRelaxed::from_cell(root)?;
+            let _ = tonutils::tlb::MessageRelaxed::from_cell(root)?;
             (json!({ "type": "message_relaxed" }), None)
         }
         KnownTlbType::Transaction => (
-            transaction_value(&tonutils_tlb::Transaction::from_cell(root)?),
+            transaction_value(&tonutils::tlb::Transaction::from_cell(root)?),
             None,
         ),
         KnownTlbType::Account => (
-            account_value(&tonutils_tlb::Account::from_cell(root)?),
+            account_value(&tonutils::tlb::Account::from_cell(root)?),
             None,
         ),
-        KnownTlbType::Block => (block_value(&tonutils_tlb::Block::from_cell(root)?), None),
+        KnownTlbType::Block => (block_value(&tonutils::tlb::Block::from_cell(root)?), None),
         KnownTlbType::Config => (
-            config_params_value(&tonutils_tlb::ConfigParams::from_cell(root)?),
+            config_params_value(&tonutils::tlb::ConfigParams::from_cell(root)?),
             None,
         ),
         KnownTlbType::ShardState => (
-            shard_state_value(&tonutils_tlb::ShardState::from_cell(root)?),
+            shard_state_value(&tonutils::tlb::ShardState::from_cell(root)?),
             None,
         ),
         KnownTlbType::Proof => {
-            let proof = tonutils_tlb::MerkleProof::from_exotic_cell(root)?;
+            let proof = tonutils::tlb::MerkleProof::from_exotic_cell(root)?;
             let verified = verify_proof.then(|| proof.verify_virtual_hash());
             (
                 json!({
@@ -539,7 +550,7 @@ pub(super) fn decode_known_tlb(
             )
         }
         KnownTlbType::MerkleUpdate => {
-            let update = tonutils_tlb::MerkleUpdate::from_exotic_cell(root)?;
+            let update = tonutils::tlb::MerkleUpdate::from_exotic_cell(root)?;
             let verified = verify_proof.then(|| update.verify_virtual_hashes());
             (
                 json!({
@@ -560,9 +571,9 @@ pub(super) fn decode_known_tlb(
 }
 
 pub(super) fn read_raw_input(
-    hex_input: &Option<String>,
-    base64_input: &Option<String>,
-    file: &Option<String>,
+    hex_input: Option<&String>,
+    base64_input: Option<&String>,
+    file: Option<&String>,
     stdin: bool,
 ) -> Result<Vec<u8>> {
     match (hex_input, base64_input, file, stdin) {
