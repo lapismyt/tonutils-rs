@@ -92,7 +92,7 @@ jobs:
     env:
       RUST_LOG: tonutils=debug
       TON_LIVE_FEATURES: liteclient,mempool,overlay-config
-      TON_LIVE_LOG_DIR: ${{ runner.temp }}/live-logs
+      TON_LIVE_LOG_DIR: ${{ github.workspace }}/live-logs
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -157,7 +157,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: live-probe-logs
-          path: ${{ runner.temp }}/live-logs
+          path: ${{ github.workspace }}/live-logs
           retention-days: 7
           if-no-files-found: warn
 
@@ -168,7 +168,7 @@ jobs:
     env:
       RUST_LOG: tonutils=debug
       TON_LIVE_FEATURES: mempool,overlay-config
-      TON_LIVE_LOG_DIR: ${{ runner.temp }}/live-logs
+      TON_LIVE_LOG_DIR: ${{ github.workspace }}/live-logs
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -207,6 +207,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: live-delivery-logs
-          path: ${{ runner.temp }}/live-logs
+          path: ${{ github.workspace }}/live-logs
           retention-days: 7
           if-no-files-found: warn
