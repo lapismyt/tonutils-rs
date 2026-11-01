@@ -14,7 +14,10 @@ use crate::{
     adnl::{
         AdnlAddress, AdnlKeyPair, AdnlPublicKey, now_i32,
         quic::QuicSession,
-        tl::{AdnlIdShort, AdnlTlPublicKey as TlPublicKey, DhtKey, DhtValueResult, QuicMessage},
+        tl::{
+            AdnlIdShort, AdnlTlPublicKey as TlPublicKey, DhtKey, DhtValueResult, QuicAnswer,
+            QuicMessage, QuicQuery,
+        },
     },
     overlay::{
         OverlayId, OverlaySession, OverlaySessionSender, PeerId, SeedDiscoveryLookup, SeedPeer,
@@ -27,8 +30,10 @@ use crate::{
     overlay::{
         OverlayMemberEndpoints, OverlaySessionFactory, QuicEndpointSource,
         broadcast::{MAX_FEC_SOURCE_SYMBOLS, fec_wire_symbol_id_to_internal},
+        inbound::answer_repair_query,
         known_member_seeds, member_quic_target,
         packet_dedup::PacketPreDedup,
+        plumtree::{PayloadOrigin, PlumtreeHandle},
         protocol_stats::{
             record_fec_decoded, record_fec_param_rejection, record_fec_symbol,
             record_payload_duplicate,
@@ -65,9 +70,23 @@ pub struct QuicOverlaySession {
     /// so byte-identical flood copies stop before the TL parse and
     /// signature verification.
     pre_dedup: PacketPreDedup,
+    /// Shared Plumtree state; `None` on sessions created without the
+    /// Plumtree factory variants.
+    plumtree: Option<PlumtreeHandle>,
 }
 
 impl QuicOverlaySession {
+    #[cfg(test)]
+    pub(crate) fn test_with_plumtree(
+        session: Arc<QuicSession>,
+        overlay: OverlayId,
+        plumtree: PlumtreeHandle,
+    ) -> Self {
+        let mut session = Self::new(session, overlay.as_bytes());
+        session.plumtree = Some(plumtree);
+        session
+    }
+
     pub fn new(session: Arc<QuicSession>, overlay: [u8; 32]) -> Self {
         let peer = PeerId::from_bytes(session.remote_public_key().to_bytes());
         Self {
@@ -77,6 +96,7 @@ impl QuicOverlaySession {
             fec: std::collections::HashMap::new(),
             last_keepalive: Instant::now(),
             pre_dedup: PacketPreDedup::default(),
+            plumtree: None,
         }
     }
 
@@ -214,6 +234,47 @@ impl QuicOverlaySession {
             Err(_) => Err("invalid overlay payload".to_owned()),
         }
     }
+
+    /// Handles one `overlay.message` body, including any Plumtree frame.
+    ///
+    /// Returns `None` when the body belongs to another overlay, was
+    /// rejected, or carried a control frame with no application
+    /// payload.
+    async fn receive_overlay_body(&mut self, data: &[u8]) -> Option<Arc<[u8]>> {
+        let mut data = data;
+        let Ok(
+            OverlayMessage::Message { overlay } | OverlayMessage::MessageWithExtra { overlay, .. },
+        ) = OverlayMessage::read_from(&mut data)
+        else {
+            return None;
+        };
+        if overlay.0 != self.overlay {
+            return None;
+        }
+        if let Some(plumtree) = self.plumtree.clone()
+            && let Ok(broadcast) = tl_proto::deserialize::<OverlayBroadcast>(data)
+            && broadcast.is_plumtree()
+        {
+            return match plumtree
+                .process(self.peer, broadcast, PayloadOrigin::Push)
+                .await
+            {
+                Ok(payload) => payload.map(Arc::from),
+                Err(error) => {
+                    log::debug!(
+                        "QUIC Plumtree frame rejected: peer={:?} reason={error}",
+                        self.peer
+                    );
+                    None
+                }
+            };
+        }
+        if self.pre_dedup.is_duplicate(data) {
+            record_payload_duplicate();
+            return None;
+        }
+        self.unwrap_overlay_payload(data).ok().map(Arc::from)
+    }
 }
 
 impl OverlaySession for QuicOverlaySession {
@@ -250,66 +311,45 @@ impl OverlaySession for QuicOverlaySession {
                         .await
                 else {
                     let _ = send.finish();
-                    let _ = send.write_all(&[]).await;
                     continue;
                 };
+                if buf.len() >= 4 {
+                    let id = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                    if id == 0xe60b607e {
+                        // `quic.query` carries an `overlay.query`-wrapped
+                        // query; only Plumtree repair queries need an
+                        // answer from this SDK.
+                        if let Ok(query) = tl_proto::deserialize::<QuicQuery>(&buf)
+                            && let Some(Some(answer)) = answer_repair_query(
+                                &self.peer,
+                                OverlayId::from_bytes(self.overlay),
+                                self.plumtree.as_ref(),
+                                &query.data,
+                            )
+                            .await
+                        {
+                            let answer = tl_proto::serialize(QuicAnswer { data: answer });
+                            let _ = send.write_all(&answer).await;
+                        }
+                        let _ = send.finish();
+                        continue;
+                    }
+                    if id == 0xe003df31
+                        && let Ok(message) = tl_proto::deserialize::<QuicMessage>(&buf)
+                    {
+                        let _ = send.finish();
+                        if let Some(payload) = self.receive_overlay_body(&message.data).await {
+                            return Ok(payload);
+                        }
+                        continue;
+                    }
+                }
                 let _ = send.finish();
                 if buf.is_empty() {
                     continue;
                 }
-                if buf.len() >= 4 {
-                    let id = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-                    if id == 0xe003df31
-                        && let Ok(message) = tl_proto::deserialize::<QuicMessage>(&buf)
-                    {
-                        let data = message.data;
-                        let mut data_slice = data.as_slice();
-                        let Ok(
-                            OverlayMessage::Message {
-                                overlay: message_overlay,
-                            }
-                            | OverlayMessage::MessageWithExtra {
-                                overlay: message_overlay,
-                                ..
-                            },
-                        ) = OverlayMessage::read_from(&mut data_slice)
-                        else {
-                            continue;
-                        };
-                        if message_overlay.0 != self.overlay {
-                            continue;
-                        }
-                        if self.pre_dedup.is_duplicate(data_slice) {
-                            record_payload_duplicate();
-                            continue;
-                        }
-                        if let Ok(data) = self.unwrap_overlay_payload(data_slice) {
-                            return Ok(Arc::from(data));
-                        }
-                    }
-                }
-                let mut data_slice = buf.as_slice();
-                let Ok(
-                    OverlayMessage::Message {
-                        overlay: message_overlay,
-                    }
-                    | OverlayMessage::MessageWithExtra {
-                        overlay: message_overlay,
-                        ..
-                    },
-                ) = OverlayMessage::read_from(&mut data_slice)
-                else {
-                    continue;
-                };
-                if message_overlay.0 != self.overlay {
-                    continue;
-                }
-                if self.pre_dedup.is_duplicate(data_slice) {
-                    record_payload_duplicate();
-                    continue;
-                }
-                if let Ok(data) = self.unwrap_overlay_payload(data_slice) {
-                    return Ok(Arc::from(data));
+                if let Some(payload) = self.receive_overlay_body(&buf).await {
+                    return Ok(payload);
                 }
             }
         })
@@ -323,6 +363,15 @@ impl OverlaySession for QuicOverlaySession {
     fn send_object(&mut self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
         let sender = self.sender_handle();
         Box::pin(async move { sender.send_raw_object(object).await })
+    }
+
+    fn send_query(
+        &mut self,
+        query: Arc<[u8]>,
+        timeout: Duration,
+    ) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+        let sender = self.sender_handle();
+        Box::pin(async move { sender.send_query(query, timeout).await })
     }
 
     fn sender(&self) -> Option<Arc<dyn OverlaySessionSender>> {
@@ -362,6 +411,14 @@ impl QuicOverlaySender {
             .await
             .map_err(|error| error.to_string())
     }
+
+    async fn send_query(&self, query: Arc<[u8]>, timeout: Duration) -> Result<Arc<[u8]>, String> {
+        self.session
+            .send_query(query.to_vec(), timeout)
+            .await
+            .map(Arc::from)
+            .map_err(|error| error.to_string())
+    }
 }
 
 impl OverlaySessionSender for QuicOverlaySender {
@@ -371,6 +428,14 @@ impl OverlaySessionSender for QuicOverlaySender {
 
     fn send_object(&self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(self.send_raw_object(object))
+    }
+
+    fn send_query(
+        &self,
+        query: Arc<[u8]>,
+        timeout: Duration,
+    ) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+        Box::pin(self.send_query(query, timeout))
     }
 }
 
@@ -412,16 +477,46 @@ pub fn quic_overlay_factory_with_endpoints(
     overlay: OverlayId,
     endpoints: OverlayMemberEndpoints,
 ) -> OverlaySessionFactory {
+    build_quic_overlay_factory(local_addr, &local_keypair, overlay, endpoints, None)
+}
+
+/// [`quic_overlay_factory_with_endpoints`] that attaches one shared
+/// Plumtree state handle to every session it spawns.
+pub(crate) fn quic_overlay_factory_with_endpoints_and_plumtree(
+    local_addr: SocketAddr,
+    local_keypair: &AdnlKeyPair,
+    overlay: OverlayId,
+    endpoints: OverlayMemberEndpoints,
+    plumtree: PlumtreeHandle,
+) -> OverlaySessionFactory {
+    build_quic_overlay_factory(
+        local_addr,
+        local_keypair,
+        overlay,
+        endpoints,
+        Some(plumtree),
+    )
+}
+
+fn build_quic_overlay_factory(
+    local_addr: SocketAddr,
+    local_keypair: &AdnlKeyPair,
+    overlay: OverlayId,
+    endpoints: OverlayMemberEndpoints,
+    plumtree: Option<PlumtreeHandle>,
+) -> OverlaySessionFactory {
     // One pre-dedup for every session this factory spawns: flood copies
     // of one broadcast arrive from different peers, and the first
     // sighting of a payload hash suppresses the rest.
     let pre_dedup = PacketPreDedup::default();
+    let local_keypair = *local_keypair;
     Arc::new(move |seed: SeedPeer| {
         let local_addr = local_addr;
         let local_keypair = local_keypair;
         let overlay = overlay;
         let endpoints = Arc::clone(&endpoints);
         let pre_dedup = pre_dedup.clone();
+        let plumtree = plumtree.clone();
         Box::pin(async move {
             let remote_key = AdnlPublicKey::from_bytes(seed.peer.as_bytes())
                 .ok_or_else(|| format!("invalid peer public key for {:?}", seed.peer))?;
@@ -444,6 +539,7 @@ pub fn quic_overlay_factory_with_endpoints(
                 .await;
             let mut overlay_session = QuicOverlaySession::new(session, overlay.as_bytes());
             overlay_session.pre_dedup = pre_dedup;
+            overlay_session.plumtree = plumtree;
             Ok(Box::new(overlay_session) as Box<dyn OverlaySession>)
         })
     })

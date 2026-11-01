@@ -70,6 +70,7 @@ async fn reassembles_single_source_raptorq_external_message() {
         members: OverlayMemberCache::default(),
         endpoints: OverlayMemberEndpoints::default(),
         pre_dedup: PacketPreDedup::default(),
+        plumtree: None,
     };
     let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
     let fec = OverlayBroadcastFec {
@@ -127,6 +128,7 @@ async fn waits_for_all_source_symbols_before_publishing_fec_payload() {
         members: OverlayMemberCache::default(),
         endpoints: OverlayMemberEndpoints::default(),
         pre_dedup: PacketPreDedup::default(),
+        plumtree: None,
     };
     let symbols_count = (external.len() as u64).div_ceil(config.symbol_size() as u64) as i32;
     for (index, packet) in packets.into_iter().enumerate() {
@@ -182,6 +184,7 @@ async fn rejects_truncated_serialized_fec_packet() {
         members: OverlayMemberCache::default(),
         endpoints: OverlayMemberEndpoints::default(),
         pre_dedup: PacketPreDedup::default(),
+        plumtree: None,
     };
     let payload = tl_proto::serialize(OverlayBroadcastFec {
         src: TlPublicKey::Overlay { name: vec![3] },
@@ -379,6 +382,7 @@ async fn broadcast_test_adapter() -> AdnlUdpOverlaySession {
         members: OverlayMemberCache::default(),
         endpoints: OverlayMemberEndpoints::default(),
         pre_dedup: PacketPreDedup::default(),
+        plumtree: None,
     }
 }
 
@@ -522,6 +526,7 @@ async fn send_object_delivers_signed_broadcast_to_peer() {
         members: OverlayMemberCache::default(),
         endpoints: OverlayMemberEndpoints::default(),
         pre_dedup: PacketPreDedup::default(),
+        plumtree: None,
     };
     let mut sender = session(receiver_key.public_key.to_bytes(), sender_session);
     let mut receiver = session(sender_key.public_key.to_bytes(), receiver_session);
@@ -584,6 +589,7 @@ async fn duplicate_broadcast_copies_are_suppressed_before_unwrap() {
         members: OverlayMemberCache::default(),
         endpoints: OverlayMemberEndpoints::default(),
         pre_dedup: PacketPreDedup::default(),
+        plumtree: None,
     };
     let mut sender = session(receiver_key.public_key.to_bytes(), sender_session);
     let mut receiver = session(sender_key.public_key.to_bytes(), receiver_session);

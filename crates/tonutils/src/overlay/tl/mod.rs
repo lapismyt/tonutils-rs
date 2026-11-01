@@ -16,11 +16,21 @@ use crate::{
 };
 
 mod fullnode;
+mod plumtree;
 
 pub use fullnode::{
     FULL_NODE_PROTO_VERSION_MAJOR, FULL_NODE_PROTO_VERSION_MINOR, TonNodeCapabilities,
     TonNodeExternalMessage, TonNodeExternalMessageBroadcast, TonNodeGetCapabilities,
     TonNodeShardPublicOverlayId,
+};
+pub use plumtree::{
+    OverlayBroadcastNotFound, OverlayBroadcastPlumtreeFec, OverlayBroadcastPlumtreeFecId,
+    OverlayBroadcastPlumtreeFecToSign, OverlayBroadcastPlumtreeIHave,
+    OverlayBroadcastPlumtreePrune, OverlayBroadcastPlumtreeSimple,
+    OverlayBroadcastPlumtreeSimpleToSign, OverlayBroadcastPlumtreeUseful, OverlayCertificateId,
+    OverlayCertificateIdV2, OverlayPlumtreeStatsDump, OverlayPlumtreeStatsExchange,
+    OverlayPlumtreeStatsPush, OverlayPlumtreeStatsRecord, OverlayRepairPlumtreePart, TlDouble,
+    TonNodeShardId,
 };
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -151,6 +161,68 @@ pub enum OverlayBroadcast {
         date: i32,
         signature: Vec<u8>,
     },
+    /// overlay.broadcastNotFound = overlay.Broadcast;
+    #[tl(id = 0x95863624)]
+    BroadcastNotFound,
+    /// overlay.broadcastPlumtreeSimple flags:int timestamp:double src:PublicKey certificate:overlay.Certificate broadcast_id:int256 tree_index:int data:bytes signature:bytes = overlay.Broadcast;
+    #[tl(id = 0x3eccd26d)]
+    PlumtreeSimple {
+        flags: i32,
+        timestamp: TlDouble,
+        src: TlPublicKey,
+        certificate: OverlayCertificate,
+        broadcast_id: Int256,
+        tree_index: i32,
+        data: Vec<u8>,
+        signature: Vec<u8>,
+    },
+    /// overlay.broadcastPlumtreeFec flags:int timestamp:double src:PublicKey certificate:overlay.Certificate full_data_hash:int256 full_data_size:int part_index:int tree_index:int data:bytes signature:bytes = overlay.Broadcast;
+    #[tl(id = 0x8cba5fcf)]
+    PlumtreeFec {
+        flags: i32,
+        timestamp: TlDouble,
+        src: TlPublicKey,
+        certificate: OverlayCertificate,
+        full_data_hash: Int256,
+        full_data_size: i32,
+        part_index: i32,
+        tree_index: i32,
+        data: Vec<u8>,
+        signature: Vec<u8>,
+    },
+    /// overlay.broadcastPlumtreeIHave broadcast_id:int256 timestamp:double part_index:int tree_index:int src:PublicKey certificate:overlay.Certificate payload_timestamp:double data_size:int data_hash:int256 signature:bytes = overlay.Broadcast;
+    #[tl(id = 0x6150c07b)]
+    PlumtreeIHave {
+        broadcast_id: Int256,
+        timestamp: TlDouble,
+        part_index: i32,
+        tree_index: i32,
+        src: TlPublicKey,
+        certificate: OverlayCertificate,
+        payload_timestamp: TlDouble,
+        data_size: i32,
+        data_hash: Int256,
+        signature: Vec<u8>,
+    },
+    /// overlay.broadcastPlumtreePrune broadcast_id:int256 timestamp:double part_index:int tree_index:int = overlay.Broadcast;
+    #[tl(id = 0xf0f73196)]
+    PlumtreePrune {
+        broadcast_id: Int256,
+        timestamp: TlDouble,
+        part_index: i32,
+        tree_index: i32,
+    },
+    /// overlay.broadcastPlumtreeUseful broadcast_id:int256 timestamp:double part_index:int tree_index:int = overlay.Broadcast;
+    #[tl(id = 0xaf825e83)]
+    PlumtreeUseful {
+        broadcast_id: Int256,
+        timestamp: TlDouble,
+        part_index: i32,
+        tree_index: i32,
+    },
+    /// overlay.plumtreeStatsPush record:overlay.plumtreeStatsRecord = overlay.Broadcast;
+    #[tl(id = 0x22dfaa6e)]
+    PlumtreeStatsPush { record: OverlayPlumtreeStatsRecord },
 }
 
 impl OverlayBroadcast {
@@ -209,6 +281,21 @@ impl OverlayBroadcast {
             .verify(&tl_proto::serialize(to_sign), &signature)
             .ok()?;
         Some(data)
+    }
+
+    /// Whether this object belongs to the Plumtree broadcast machinery.
+    #[must_use]
+    pub const fn is_plumtree(&self) -> bool {
+        matches!(
+            self,
+            Self::BroadcastNotFound
+                | Self::PlumtreeSimple { .. }
+                | Self::PlumtreeFec { .. }
+                | Self::PlumtreeIHave { .. }
+                | Self::PlumtreePrune { .. }
+                | Self::PlumtreeUseful { .. }
+                | Self::PlumtreeStatsPush { .. }
+        )
     }
 }
 
@@ -382,6 +469,14 @@ pub enum OverlayQuery {
         overlay: Int256,
         extra: OverlayMessageExtra,
     },
+    /// overlay.repairPlumtreePart broadcast_id:int256 timestamp:double part_index:int tree_index:int = overlay.Broadcast;
+    #[tl(id = 0x7bd0590d)]
+    RepairPlumtreePart {
+        broadcast_id: Int256,
+        timestamp: TlDouble,
+        part_index: i32,
+        tree_index: i32,
+    },
 }
 
 #[derive(TlRead, TlWrite, Derivative)]
@@ -406,8 +501,8 @@ pub enum OverlayMessage {
 mod tests {
     use super::{
         Digest, Int256, OverlayBroadcast, OverlayBroadcastId, OverlayBroadcastToSign,
-        OverlayCertificate, OverlayMemberCertificate, OverlayMessageExtra, OverlayNodeV2,
-        OverlayNodesV2, OverlayNodesV2Boxed, OverlayQuery, Sha256, TlPublicKey,
+        OverlayCertificate, OverlayMemberCertificate, OverlayMessage, OverlayMessageExtra,
+        OverlayNodeV2, OverlayNodesV2, OverlayNodesV2Boxed, OverlayQuery, Sha256, TlPublicKey,
     };
     use tl_proto::{deserialize, serialize};
 
@@ -444,6 +539,17 @@ mod tests {
         framed.extend_from_slice(&serialize(OverlayQuery::Ping));
         assert_eq!(&framed[..4], &[0x43, 0x84, 0xfd, 0xcc]);
         assert_eq!(&framed[36..], &[0x81, 0xb4, 0x0c, 0x69]);
+    }
+
+    #[test]
+    fn overlay_message_header_matches_golden_vector() {
+        let bytes = serialize(OverlayMessage::Message {
+            overlay: Int256([0x55; 32]),
+        });
+        assert_eq!(
+            hex::encode(bytes),
+            "202425755555555555555555555555555555555555555555555555555555555555555555"
+        );
     }
 
     #[test]
@@ -587,5 +693,104 @@ mod tests {
         let bytes = serialize(query.clone());
         assert_eq!(&bytes[..4], &0xa58e7eccu32.to_le_bytes());
         assert_eq!(deserialize::<OverlayQuery>(&bytes).unwrap(), query);
+    }
+
+    #[test]
+    fn plumtree_broadcasts_are_classified_by_shape() {
+        let source = TlPublicKey::Ed25519 {
+            key: Int256([1; 32]),
+        };
+        let certificate = OverlayCertificate::Empty;
+        let timestamp = 5.0.into();
+        let id = Int256([2; 32]);
+        let control = |constructor| match constructor {
+            0 => OverlayBroadcast::PlumtreePrune {
+                broadcast_id: id.clone(),
+                timestamp,
+                part_index: 0,
+                tree_index: 0,
+            },
+            _ => OverlayBroadcast::PlumtreeUseful {
+                broadcast_id: id.clone(),
+                timestamp,
+                part_index: 0,
+                tree_index: 0,
+            },
+        };
+        let plumtree = [
+            OverlayBroadcast::BroadcastNotFound,
+            OverlayBroadcast::PlumtreeSimple {
+                flags: 0,
+                timestamp,
+                src: source.clone(),
+                certificate: certificate.clone(),
+                broadcast_id: id.clone(),
+                tree_index: 0,
+                data: vec![3],
+                signature: vec![4; 64],
+            },
+            OverlayBroadcast::PlumtreeFec {
+                flags: 0,
+                timestamp,
+                src: source.clone(),
+                certificate: certificate.clone(),
+                full_data_hash: id.clone(),
+                full_data_size: 4,
+                part_index: 0,
+                tree_index: 1,
+                data: vec![5],
+                signature: vec![6; 64],
+            },
+            OverlayBroadcast::PlumtreeIHave {
+                broadcast_id: id.clone(),
+                timestamp,
+                part_index: 0,
+                tree_index: 0,
+                src: source.clone(),
+                certificate: OverlayCertificate::Empty,
+                payload_timestamp: timestamp,
+                data_size: 4,
+                data_hash: id.clone(),
+                signature: vec![7; 64],
+            },
+            control(0),
+            control(1),
+            OverlayBroadcast::PlumtreeStatsPush {
+                record: super::OverlayPlumtreeStatsRecord {
+                    src: id.clone(),
+                    epoch: 1,
+                    tree_index: 2,
+                    eager_0: vec![3],
+                    eager_index: vec![4],
+                    delivered_bcsts: 5,
+                    parts_in_p99_bcsts: 6,
+                    useful_avg_ms: 7,
+                    useful_max_ms: 8,
+                    useful_p99_ms: 9,
+                },
+            },
+        ];
+        for broadcast in &plumtree {
+            assert!(
+                broadcast.is_plumtree(),
+                "{broadcast:?} must be routed to the Plumtree handler"
+            );
+        }
+        for broadcast in [
+            OverlayBroadcast::Unicast { data: vec![1] },
+            OverlayBroadcast::Broadcast {
+                src: source,
+                certificate: OverlayCertificate::Empty,
+                flags: 0,
+                data: vec![2],
+                date: 3,
+                signature: vec![4; 64],
+            },
+        ] {
+            assert!(
+                !broadcast.is_plumtree(),
+                "{broadcast:?} must stay on the legacy broadcast path"
+            );
+        }
     }
 }

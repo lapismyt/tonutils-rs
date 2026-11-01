@@ -9,8 +9,8 @@ use tokio::sync::{Mutex, broadcast};
 
 use super::{
     DiscoveryStats, OverlayBroadcastPeer, OverlayError, OverlayMemberEndpoints, OverlayPacket,
-    OverlayPeerPool, PeerId, PeerManager, PeerQualityRegistry, PeerStatus, ProtocolStats, SeedPeer,
-    protocol_stats,
+    OverlayPeerPool, PeerId, PeerManager, PeerQualityRegistry, PeerStatus, PlumtreeBroadcastId,
+    PlumtreeHandle, PlumtreeStats, ProtocolStats, SeedPeer, protocol_stats,
 };
 
 /// A cloneable handle that owns overlay transport, discovery, and broadcast
@@ -30,6 +30,8 @@ struct Inner {
     quality: Arc<PeerQualityRegistry>,
     packets: broadcast::Sender<OverlayPacket>,
     packet_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    plumtree: Option<PlumtreeHandle>,
+    plumtree_task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     member_endpoints: OverlayMemberEndpoints,
     known_peers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>>,
     discovery_seeds: AtomicU64,
@@ -37,18 +39,34 @@ struct Inner {
     discovery_peers: AtomicU64,
 }
 
+pub(crate) struct OverlayClientInit {
+    pub manager: PeerManager,
+    pub broadcast: Option<OverlayBroadcastPeer>,
+    pub quality: Arc<PeerQualityRegistry>,
+    pub member_endpoints: OverlayMemberEndpoints,
+    pub known_peers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>>,
+    pub discovery: DiscoveryStats,
+    pub packet_capacity: usize,
+    pub plumtree: Option<PlumtreeHandle>,
+}
+
 impl OverlayClient {
-    pub(crate) fn new(
-        manager: PeerManager,
-        broadcast: Option<OverlayBroadcastPeer>,
-        quality: Arc<PeerQualityRegistry>,
-        member_endpoints: OverlayMemberEndpoints,
-        known_peers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>>,
-        discovery: DiscoveryStats,
-        packet_capacity: usize,
-    ) -> Self {
+    pub(crate) fn new(init: OverlayClientInit) -> Self {
+        let OverlayClientInit {
+            manager,
+            broadcast,
+            quality,
+            member_endpoints,
+            known_peers,
+            discovery,
+            packet_capacity,
+            plumtree,
+        } = init;
         let (packets, _) = broadcast::channel(packet_capacity);
         let task = spawn_packet_pump(&manager, packets.clone());
+        let plumtree_task = plumtree.clone().map(|plumtree| {
+            super::plumtree::spawn_plumtree_tasks(plumtree, manager.clone(), packets.clone())
+        });
         Self {
             inner: Arc::new(Inner {
                 manager,
@@ -56,6 +74,8 @@ impl OverlayClient {
                 quality,
                 packets,
                 packet_task: Mutex::new(Some(task)),
+                plumtree,
+                plumtree_task: Mutex::new(plumtree_task),
                 member_endpoints,
                 known_peers,
                 discovery_seeds: AtomicU64::new(discovery.seeds),
@@ -138,9 +158,17 @@ impl OverlayClient {
             .await
     }
 
-    /// Signs `payload` as a generic simple or FEC overlay broadcast and fans
-    /// it out to every connected peer. Returns the number of successful
-    /// session sends.
+    /// Signs `payload` as a legacy generic simple or FEC overlay broadcast
+    /// and fans it out to every connected peer.
+    ///
+    /// This is the external-message broadcast path retained for
+    /// compatibility with [`crate::mempool::MempoolClient::send_external`];
+    /// it does not use Plumtree state, repair, or eager-neighbour feedback.
+    /// New public-overlay traffic should use
+    /// [`Self::broadcast_plumtree_simple`] or [`Self::broadcast_plumtree_fec`].
+    ///
+    /// Returns the number of successful session sends, not an application
+    /// delivery guarantee.
     pub async fn broadcast_signed(
         &self,
         payload: Arc<[u8]>,
@@ -152,6 +180,53 @@ impl OverlayClient {
             .as_ref()
             .ok_or(OverlayError::MissingLocalKey)?;
         broadcast.broadcast(payload.as_ref(), flags).await
+    }
+
+    /// Broadcasts `payload` as one Plumtree simple broadcast.
+    ///
+    /// Returns the number of payload frames immediately queued for eager
+    /// neighbours. The background Plumtree pump performs the actual session
+    /// sends, so this is not a delivery guarantee.
+    pub async fn broadcast_plumtree_simple(
+        &self,
+        id: PlumtreeBroadcastId,
+        payload: Arc<[u8]>,
+        flags: i32,
+    ) -> Result<usize, OverlayError> {
+        self.plumtree_handle()?
+            .broadcast_simple(id, payload.to_vec(), flags)
+            .await
+    }
+
+    /// Encodes `payload` with RaptorQ and broadcasts every Plumtree FEC part.
+    ///
+    /// Returns the number of payload frames immediately queued for eager
+    /// neighbours. The background Plumtree pump performs the actual session
+    /// sends, so this is not a delivery guarantee.
+    pub async fn broadcast_plumtree_fec(
+        &self,
+        payload: Arc<[u8]>,
+        flags: i32,
+    ) -> Result<usize, OverlayError> {
+        self.plumtree_handle()?
+            .broadcast_fec(payload.to_vec(), flags)
+            .await
+    }
+
+    /// Returns this overlay's Plumtree counters.
+    pub fn plumtree_stats(&self) -> PlumtreeStats {
+        self.inner
+            .plumtree
+            .as_ref()
+            .map_or_else(PlumtreeStats::default, PlumtreeHandle::stats)
+    }
+
+    fn plumtree_handle(&self) -> Result<PlumtreeHandle, OverlayError> {
+        self.inner.plumtree.clone().ok_or_else(|| {
+            OverlayError::PlumtreeUnavailable(
+                "this overlay client has no Plumtree state".to_owned(),
+            )
+        })
     }
 
     /// Returns the packet pool's drop counter.
@@ -168,6 +243,9 @@ impl OverlayClient {
     pub async fn shutdown_wait(&self) {
         self.inner.manager.shutdown_wait().await;
         if let Some(task) = self.inner.packet_task.lock().await.take() {
+            let _ = task.await;
+        }
+        if let Some(task) = self.inner.plumtree_task.lock().await.take() {
             let _ = task.await;
         }
     }

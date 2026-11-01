@@ -137,7 +137,14 @@ impl MempoolClient {
     }
 
     /// Validates, deduplicates, emits a local event, and broadcasts one
-    /// external-message BoC through the overlay client.
+    /// external-message BoC through the legacy signed overlay broadcast path.
+    ///
+    /// TON external messages are not generic Plumtree payloads: their wire
+    /// object is [`crate::overlay::tl::TonNodeExternalMessageBroadcast`], and
+    /// this method intentionally calls
+    /// [`OverlayClient::broadcast_signed`] rather than the Plumtree simple/FEC
+    /// methods. The returned hash means the local mempool accepted the BoC;
+    /// it does not prove network delivery, inclusion, or finality.
     pub async fn send_external(
         &self,
         raw_boc: impl Into<Arc<[u8]>>,

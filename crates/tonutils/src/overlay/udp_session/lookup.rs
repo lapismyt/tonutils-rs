@@ -22,6 +22,7 @@ use crate::{
         AdnlUdpOverlaySession, OverlayMemberEndpoints, OverlaySessionFactory,
         inbound::OverlayMemberCache,
         packet_dedup::PacketPreDedup,
+        plumtree::PlumtreeHandle,
         record_member, record_member_quic,
         udp_session::{growth::query_overlay_random_peers, valid_overlay_node},
     },
@@ -789,6 +790,44 @@ pub fn overlay_factory_with_endpoints(
     channel_timeout: Option<Duration>,
     endpoints: OverlayMemberEndpoints,
 ) -> OverlaySessionFactory {
+    build_overlay_factory(
+        local_addr,
+        &local_keypair,
+        overlay,
+        channel_timeout,
+        endpoints,
+        None,
+    )
+}
+
+/// [`overlay_factory_with_endpoints`] that attaches one shared Plumtree
+/// state handle to every session it spawns.
+pub(crate) fn overlay_factory_with_endpoints_and_plumtree(
+    local_addr: std::net::SocketAddr,
+    local_keypair: &AdnlKeyPair,
+    overlay: OverlayId,
+    channel_timeout: Option<Duration>,
+    endpoints: OverlayMemberEndpoints,
+    plumtree: PlumtreeHandle,
+) -> OverlaySessionFactory {
+    build_overlay_factory(
+        local_addr,
+        local_keypair,
+        overlay,
+        channel_timeout,
+        endpoints,
+        Some(plumtree),
+    )
+}
+
+fn build_overlay_factory(
+    local_addr: std::net::SocketAddr,
+    local_keypair: &AdnlKeyPair,
+    overlay: OverlayId,
+    channel_timeout: Option<Duration>,
+    endpoints: OverlayMemberEndpoints,
+    plumtree: Option<PlumtreeHandle>,
+) -> OverlaySessionFactory {
     // One cache for every session this factory spawns: a member admitted
     // through one peer becomes gossip for all of them, which is what keeps
     // answers to `overlay.getRandomPeers` from collapsing to this node alone.
@@ -797,11 +836,13 @@ pub fn overlay_factory_with_endpoints(
     // arrive from different peers, and the first sighting of a payload
     // hash suppresses the rest.
     let pre_dedup = PacketPreDedup::default();
+    let local_keypair = *local_keypair;
     Arc::new(move |seed: SeedPeer| {
         let remote = AdnlPublicKey::from_bytes(seed.peer.as_bytes());
         let shared = shared.clone();
         let endpoints = Arc::clone(&endpoints);
         let pre_dedup = pre_dedup.clone();
+        let plumtree = plumtree.clone();
         Box::pin(async move {
             let remote = remote.ok_or_else(|| "seed peer is not a valid Ed25519 key".to_owned())?;
             let mut session = match channel_timeout {
@@ -836,6 +877,7 @@ pub fn overlay_factory_with_endpoints(
             session.members = shared;
             session.endpoints = endpoints;
             session.pre_dedup = pre_dedup;
+            session.plumtree = plumtree;
             Ok(Box::new(session) as Box<dyn OverlaySession>)
         })
     })

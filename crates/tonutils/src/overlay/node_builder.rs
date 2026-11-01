@@ -19,20 +19,20 @@ use crate::{
     adnl::AdnlKeyPair,
     overlay::{
         DEFAULT_PEER_STORE_SAVE_INTERVAL, DhtAddressPublisher, DiscoveryConfig, DiscoveryLookup,
-        DiscoveryStats, OverlayBroadcastPeer, OverlayClient, OverlayConfig, OverlayError,
-        OverlayId, OverlayMemberEndpoints, OverlayServer, OverlaySessionFactory,
+        DiscoveryStats, OverlayBroadcastPeer, OverlayClient, OverlayClientInit, OverlayConfig,
+        OverlayError, OverlayId, OverlayMemberEndpoints, OverlayServer, OverlaySessionFactory,
         PUBLISH_FIRST_ROUND_STAGGER_MAX, PUBLISH_INTERVAL, PeerId, PeerManager, PeerQualityConfig,
-        PeerQualityRegistry, ReconnectFactory, SeedDiscoveryLookup, SeedPeer, TypedDiscoveryLookup,
-        address_publisher,
+        PeerQualityRegistry, PlumtreeConfig, PlumtreeHandle, ReconnectFactory, SeedDiscoveryLookup,
+        SeedPeer, TypedDiscoveryLookup, address_publisher,
         bootstrap::{BootstrapDial, await_registered, merge_peer_sets, warm_store_fallback},
         discovery_task::{
             DEFAULT_PEER_STORE_DISCOVERY_INTERVAL, PeerDiscoveryTask, discovery_runner,
         },
-        overlay_factory_with_endpoints,
+        overlay_factory_with_endpoints_and_plumtree,
         peer_growth::PeerGrowthTask,
         peer_quality::spawn_quality_tasks,
         peer_store::{PeerStore, PeerStoreWriter},
-        quic_overlay_factory_with_endpoints, quic_overlay_lookup_with_endpoints,
+        quic_overlay_factory_with_endpoints_and_plumtree, quic_overlay_lookup_with_endpoints,
         registered_member_count, udp_overlay_lookup_with_endpoints, udp_peer_growth_with_resolvers,
     },
 };
@@ -86,6 +86,11 @@ pub struct OverlayNodeBuilder {
     /// Local ADNL key, remembered by the transport configurators
     /// so `start` can sign overlay broadcasts with it.
     local_keypair: Option<AdnlKeyPair>,
+    /// Plumtree tuning; applied to `plumtree_handle` at `start`.
+    plumtree: PlumtreeConfig,
+    /// Shared Plumtree state, created eagerly so the transport
+    /// configurators can attach it regardless of call order.
+    plumtree_handle: PlumtreeHandle,
     /// Fixed ADNL address lists (seeds, validators) that bootstrap with
     /// reconnect support, are never evicted, and never count against
     /// [`overlay_max_peers`](Self::overlay_max_peers).
@@ -142,6 +147,7 @@ impl fmt::Debug for OverlayNodeBuilder {
             .field("external_address", &self.external_address)
             .field("address_publisher", &self.address_publisher.is_some())
             .field("local_keypair", &self.local_keypair.is_some())
+            .field("plumtree", &self.plumtree)
             .field("pinned_peers", &self.pinned_peers)
             .field("pinned_max_peers", &self.pinned_max_peers)
             .field("peer_quality", &self.peer_quality)
@@ -185,6 +191,8 @@ impl Default for OverlayNodeBuilder {
             external_address: None,
             address_publisher: None,
             local_keypair: None,
+            plumtree: PlumtreeConfig::default(),
+            plumtree_handle: PlumtreeHandle::new(PlumtreeConfig::default()),
             pinned_peers: Vec::new(),
             pinned_max_peers: None,
             peer_quality: PeerQualityConfig::default(),
@@ -230,6 +238,17 @@ impl OverlayNodeBuilder {
 
     pub fn overlay_config(mut self, config: OverlayConfig) -> Self {
         self.overlay = config;
+        self
+    }
+
+    /// Overrides the Plumtree broadcast parameters.
+    ///
+    /// Plumtree is enabled with upstream defaults by default.  The
+    /// configuration is applied when [`start_client`](Self::start_client)
+    /// or [`start_server`](Self::start_server) runs, so calling this
+    /// before or after a transport configurator has the same effect.
+    pub fn plumtree(mut self, config: PlumtreeConfig) -> Self {
+        self.plumtree = config;
         self
     }
 
@@ -288,12 +307,13 @@ impl OverlayNodeBuilder {
         // session pool can hold instead of a small fixed sample.
         // `overlay_max_peers(0)` disables managed discovery entirely.
         let discovery_records = usize::try_from(self.overlay_max_peers).unwrap_or(usize::MAX);
-        let session_factory = overlay_factory_with_endpoints(
+        let session_factory = overlay_factory_with_endpoints_and_plumtree(
             local_addr,
-            local_keypair,
+            &local_keypair,
             overlay,
             channel_timeout,
             self.member_endpoints.clone(),
+            self.plumtree_handle.clone(),
         );
         let mut builder = self.session_factory(session_factory);
         // The transport configurators remember the local key so
@@ -360,11 +380,12 @@ impl OverlayNodeBuilder {
         let discovery_timeout = self.discovery_timeout;
         let overlay = self.overlay_id;
         let endpoints = self.member_endpoints.clone();
-        let session_factory = quic_overlay_factory_with_endpoints(
+        let session_factory = quic_overlay_factory_with_endpoints_and_plumtree(
             local_addr,
-            local_keypair,
+            &local_keypair,
             overlay,
             endpoints.clone(),
+            self.plumtree_handle.clone(),
         );
         let mut builder = self.session_factory(session_factory);
         builder.local_keypair = Some(local_keypair);
@@ -400,12 +421,13 @@ impl OverlayNodeBuilder {
         self.seed_discovery_lookup = None;
         let discovery_timeout = self.discovery_timeout;
         let external_address = self.external_address;
-        let session_factory = overlay_factory_with_endpoints(
+        let session_factory = overlay_factory_with_endpoints_and_plumtree(
             local_addr,
-            local_keypair,
+            &local_keypair,
             self.overlay_id,
             channel_timeout,
             self.member_endpoints.clone(),
+            self.plumtree_handle.clone(),
         );
         let mut builder = self.session_factory(session_factory);
         builder.local_keypair = Some(local_keypair);
@@ -620,6 +642,9 @@ impl OverlayNodeBuilder {
         server: bool,
     ) -> Result<(OverlayClient, Vec<tokio::task::JoinHandle<()>>), OverlayError> {
         let seeds = self.resolve_bootstrap().await?;
+        self.plumtree_handle
+            .configure(self.plumtree, self.overlay_id, self.local_keypair.as_ref())
+            .await?;
         let seed_count = seeds.len();
         // Pinned peers are validated up front and merged into the bootstrap
         // set below; they must not be silently dropped by a failed lookup.
@@ -770,15 +795,16 @@ impl OverlayNodeBuilder {
         };
         let known_peers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>> =
             Arc::new(tokio::sync::RwLock::new(known_init));
-        let client = OverlayClient::new(
-            manager.clone(),
+        let client = OverlayClient::new(OverlayClientInit {
+            manager: manager.clone(),
             broadcast,
-            Arc::clone(&quality),
-            self.member_endpoints.clone(),
-            Arc::clone(&known_peers),
-            discovery_stats,
+            quality: Arc::clone(&quality),
+            member_endpoints: self.member_endpoints.clone(),
+            known_peers: Arc::clone(&known_peers),
+            discovery: discovery_stats,
             packet_capacity,
-        );
+            plumtree: Some(self.plumtree_handle.clone()),
+        });
         let mut server_tasks = Vec::new();
         if let Some(factory) = self.session_factory {
             let reconnect_factory: ReconnectFactory = {

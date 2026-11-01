@@ -59,6 +59,62 @@ network configuration. `mempool` depends on `overlay` for transport traits but
 does not imply `network-config` or `overlay-config`; callers select bootstrap
 configuration explicitly.
 
+## Plumtree Runtime
+
+Plumtree is the public-overlay broadcast path. `OverlayNodeBuilder::plumtree`
+is the public configuration point; the shared `PlumtreeHandle` and the
+`*_with_plumtree` transport factories stay crate-private. UDP and QUIC sessions
+share one handle per overlay, so `subscribe_packets()` observes only decoded
+application payloads. `IHave`, `Prune`, `Useful`, statistics pushes, and repair
+queries are consumed internally.
+
+The signed simple/FEC broadcast implementation and
+`MempoolClient::send_external` remain the legacy external-message path. They
+send a single overlay object directly to connected peers and do not participate
+in Plumtree eager feedback, duplicate pruning, or repair. Generic public-overlay
+payloads should use `broadcast_plumtree_simple` or `broadcast_plumtree_fec`.
+
+Runtime invariants:
+
+- The simple tree is index `0` with part index `0`. FEC part `i` uses tree
+  `i + 1`; `tree_slots` must exceed `parts`, and both indices are bounds-checked
+  before signature or certificate work.
+- For a simple broadcast, the signed `data_size` is the full payload length.
+  For FEC, it is the RaptorQ symbol length and the broadcast id is
+  `SHA256(TL(overlay.broadcastPlumtreeFecId))` over flags, full-data hash,
+  full-data size, and part size.
+- Signatures cover the dedicated `...ToSign` TL constructors. Timestamps must
+  be finite and within 20 seconds of local time; payloads are capped at 16 MiB.
+  Certificates enforce expiry, size, and the FEC-permission flag. Empty
+  certificates are accepted for public-overlay traffic; private-overlay
+  authorized-key sets are not modelled.
+- The `AnySender` flag is preserved and signed like any other flags value.
+  Eligibility still binds the payload to the signing source key and certificate;
+  the flag does not bypass signature checks.
+- Delivery is exactly once per broadcast id. Duplicate payload parts produce a
+  `Prune` without application publication. A changed payload under an existing
+  id is a conflict and is rejected.
+- At most 1,024 missing FEC parts and 512 active repair queries are tracked.
+  Repair requests wait for the configured timeout unless the tree has no eager
+  slot. A repair response must match the requested key and a part is served only
+  after an `IHave` to that peer while eager capacity remains. Delivered and
+  broadcast state expires after 20 seconds.
+- A node with `receive_broadcasts` disabled does not publish or forward incoming
+  Plumtree payloads, but its outbound broadcast methods remain available. This
+  is internal state semantics for `DoNotReceivePlumtreeBroadcasts`; there is no
+  public private-overlay authorization model.
+
+Each overlay owns a Tokio `Mutex` around the Plumtree state. State transitions,
+signature checks, duplicate checks, and action planning happen under that lock;
+network sends, repair queries, and packet publication happen after it is
+released. Queued actions are drained by the overlay's Plumtree task, and repair
+queries are answered by the shared inbound dispatcher for both UDP and QUIC.
+
+The loopback tests cover eager relay, control-frame hiding, and lost-FEC-part
+repair over both transports. A client-only node cannot be discovered as a live
+relay because it does not publish an address. Use `start_server` and a reachable
+UDP endpoint for relay work; public-overlay delivery remains best effort.
+
 ## Wire Invariants
 
 - TL constructor identifiers are 32-bit little-endian values.
@@ -70,6 +126,10 @@ configuration explicitly.
 - Overlay query framing includes the overlay id before the inner query.
   Overlay broadcasts are raw overlay objects and must not be wrapped as
   `overlay.unicast`; only unicast payloads use that wrapper.
+- A Plumtree repair query uses `overlay.query{overlay_id}` followed by
+  `overlay.repairPlumtreePart`; QUIC wraps that query in `quic.query` and the
+  answer in `quic.answer`. Repair responses are ordinary simple/FEC broadcast
+  objects, never `overlay.unicast`.
 - TL-B decoding is exact at schema boundaries. Trailing bits or references are
   an error unless the schema explicitly owns them.
 - Ordinary cells hold at most 1,023 data bits and four references. Builders and
@@ -215,6 +275,15 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo run -p tonutils-schema-gen -- check
 RUSTDOCFLAGS="-D warnings" cargo doc -p tonutils --all-features --no-deps
+```
+
+The public-mainnet Plumtree smoke test is ignored by default because it needs
+live network access and public-overlay traffic:
+
+```bash
+cargo test -p tonutils --all-features \
+  overlay::plumtree::integration_tests::mainnet_public_overlay_receives_a_completed_plumtree_payload \
+  -- --ignored --nocapture
 ```
 
 Check each standalone feature surface:

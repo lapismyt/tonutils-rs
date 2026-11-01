@@ -5,7 +5,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use super::{
-    DiscoveryStats, OverlayClient, OverlayError, OverlayPacket, PeerId, PeerStatus, ProtocolStats,
+    DiscoveryStats, OverlayClient, OverlayError, OverlayPacket, PeerId, PeerStatus,
+    PlumtreeBroadcastId, PlumtreeStats, ProtocolStats,
 };
 
 /// An overlay node that owns inbound-serving state such as DHT address
@@ -65,12 +66,52 @@ impl OverlayServer {
         self.client.broadcast_object(object).await
     }
 
+    /// Signs `payload` as a legacy simple or FEC overlay broadcast and sends it
+    /// directly to every connected peer.
+    ///
+    /// This path does not use Plumtree state or repair. It is retained for
+    /// external-message compatibility; use [`Self::broadcast_plumtree_simple`]
+    /// or [`Self::broadcast_plumtree_fec`] for public-overlay payloads.
+    /// The returned count is the number of successful session sends, not an
+    /// application delivery guarantee.
     pub async fn broadcast_signed(
         &self,
         payload: Arc<[u8]>,
         flags: i32,
     ) -> Result<usize, OverlayError> {
         self.client.broadcast_signed(payload, flags).await
+    }
+
+    /// Queues one Plumtree simple broadcast for eager neighbours.
+    ///
+    /// The returned count is immediately queued payload frames, not a delivery
+    /// guarantee. The background Plumtree pump performs the session sends.
+    pub async fn broadcast_plumtree_simple(
+        &self,
+        id: PlumtreeBroadcastId,
+        payload: Arc<[u8]>,
+        flags: i32,
+    ) -> Result<usize, OverlayError> {
+        self.client
+            .broadcast_plumtree_simple(id, payload, flags)
+            .await
+    }
+
+    /// Encodes `payload` with RaptorQ and queues every Plumtree FEC part.
+    ///
+    /// The returned count is immediately queued payload frames, not a delivery
+    /// guarantee. The background Plumtree pump performs the session sends.
+    pub async fn broadcast_plumtree_fec(
+        &self,
+        payload: Arc<[u8]>,
+        flags: i32,
+    ) -> Result<usize, OverlayError> {
+        self.client.broadcast_plumtree_fec(payload, flags).await
+    }
+
+    /// Returns the local Plumtree counters for this overlay.
+    pub fn plumtree_stats(&self) -> PlumtreeStats {
+        self.client.plumtree_stats()
     }
 
     pub fn shutdown(&self) {

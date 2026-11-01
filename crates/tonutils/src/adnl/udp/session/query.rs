@@ -156,6 +156,23 @@ impl AdnlUdpSession {
         }
     }
 
+    /// Sends an arbitrary ADNL query object and awaits its answer.
+    ///
+    /// The answer is routed by query id to this call, so concurrent
+    /// callers of a shared session each get their own answer.  Overlay
+    /// queries must include their `overlay.query{overlay}` wrapper in
+    /// `query`; this method adds only the ADNL query envelope.
+    pub async fn query(
+        &self,
+        query: Vec<u8>,
+        timeout: Duration,
+        operation: &'static str,
+    ) -> Result<Vec<u8>, AdnlError> {
+        self.inner
+            .exchange(Int256::random(), query, timeout, operation)
+            .await
+    }
+
     #[cfg(feature = "overlay")]
     pub async fn overlay_get_random_peers(
         &self,

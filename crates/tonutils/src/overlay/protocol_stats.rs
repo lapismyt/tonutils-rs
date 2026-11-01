@@ -133,6 +133,20 @@ pub struct ProtocolStats {
     /// FEC parts rejected on bounds: an unsupported FEC type, invalid
     /// reassembly parameters, or an excessive wire symbol id.
     pub fec_param_rejections: u64,
+    /// Plumtree payload parts accepted into the shared receive state.
+    pub plumtree_parts_received: u64,
+    /// Plumtree payload parts sent to neighbours.
+    pub plumtree_parts_sent: u64,
+    /// `IHave`, `Prune`, `Useful`, and statistics control frames received.
+    pub plumtree_control_received: u64,
+    /// Plumtree control frames sent to neighbours.
+    pub plumtree_control_sent: u64,
+    /// Plumtree broadcasts delivered exactly once to the application.
+    pub plumtree_broadcasts_completed: u64,
+    /// `repairPlumtreePart` queries received or issued for repair.
+    pub plumtree_repair_requests: u64,
+    /// Plumtree frames rejected by timestamp, size, signature, or bounds.
+    pub plumtree_validation_rejections: u64,
 }
 
 struct Counters {
@@ -161,6 +175,13 @@ struct Counters {
     fec_repair_symbols_received: AtomicU64,
     fec_decoded: AtomicU64,
     fec_param_rejections: AtomicU64,
+    plumtree_parts_received: AtomicU64,
+    plumtree_parts_sent: AtomicU64,
+    plumtree_control_received: AtomicU64,
+    plumtree_control_sent: AtomicU64,
+    plumtree_broadcasts_completed: AtomicU64,
+    plumtree_repair_requests: AtomicU64,
+    plumtree_validation_rejections: AtomicU64,
     pingers_seen: DistinctPeers,
     listing_peers_seen: DistinctPeers,
     pushers_seen: DistinctPeers,
@@ -217,6 +238,13 @@ static COUNTERS: Counters = Counters {
     fec_repair_symbols_received: AtomicU64::new(0),
     fec_decoded: AtomicU64::new(0),
     fec_param_rejections: AtomicU64::new(0),
+    plumtree_parts_received: AtomicU64::new(0),
+    plumtree_parts_sent: AtomicU64::new(0),
+    plumtree_control_received: AtomicU64::new(0),
+    plumtree_control_sent: AtomicU64::new(0),
+    plumtree_broadcasts_completed: AtomicU64::new(0),
+    plumtree_repair_requests: AtomicU64::new(0),
+    plumtree_validation_rejections: AtomicU64::new(0),
     pingers_seen: DistinctPeers::new(),
     listing_peers_seen: DistinctPeers::new(),
     pushers_seen: DistinctPeers::new(),
@@ -319,6 +347,34 @@ pub(crate) fn record_fec_param_rejection() {
     inc(&COUNTERS.fec_param_rejections);
 }
 
+pub(crate) fn record_plumtree_part_received() {
+    inc(&COUNTERS.plumtree_parts_received);
+}
+
+pub(crate) fn record_plumtree_part_sent() {
+    inc(&COUNTERS.plumtree_parts_sent);
+}
+
+pub(crate) fn record_plumtree_control_received() {
+    inc(&COUNTERS.plumtree_control_received);
+}
+
+pub(crate) fn record_plumtree_control_sent() {
+    inc(&COUNTERS.plumtree_control_sent);
+}
+
+pub(crate) fn record_plumtree_broadcast_completed() {
+    inc(&COUNTERS.plumtree_broadcasts_completed);
+}
+
+pub(crate) fn record_plumtree_repair_request() {
+    inc(&COUNTERS.plumtree_repair_requests);
+}
+
+pub(crate) fn record_plumtree_validation_rejection() {
+    inc(&COUNTERS.plumtree_validation_rejections);
+}
+
 /// Returns the current overlay protocol counters.
 pub fn protocol_stats() -> ProtocolStats {
     ProtocolStats {
@@ -348,6 +404,17 @@ pub fn protocol_stats() -> ProtocolStats {
         fec_repair_symbols_received: COUNTERS.fec_repair_symbols_received.load(Ordering::Relaxed),
         fec_decoded: COUNTERS.fec_decoded.load(Ordering::Relaxed),
         fec_param_rejections: COUNTERS.fec_param_rejections.load(Ordering::Relaxed),
+        plumtree_parts_received: COUNTERS.plumtree_parts_received.load(Ordering::Relaxed),
+        plumtree_parts_sent: COUNTERS.plumtree_parts_sent.load(Ordering::Relaxed),
+        plumtree_control_received: COUNTERS.plumtree_control_received.load(Ordering::Relaxed),
+        plumtree_control_sent: COUNTERS.plumtree_control_sent.load(Ordering::Relaxed),
+        plumtree_broadcasts_completed: COUNTERS
+            .plumtree_broadcasts_completed
+            .load(Ordering::Relaxed),
+        plumtree_repair_requests: COUNTERS.plumtree_repair_requests.load(Ordering::Relaxed),
+        plumtree_validation_rejections: COUNTERS
+            .plumtree_validation_rejections
+            .load(Ordering::Relaxed),
     }
 }
 

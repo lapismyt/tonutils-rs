@@ -56,6 +56,13 @@ impl SharedSession {
             None => self.session.lock().await.send_object(object).await,
         }
     }
+
+    async fn send_query(&self, query: Arc<[u8]>, timeout: Duration) -> Result<Arc<[u8]>, String> {
+        match &self.sender {
+            Some(sender) => sender.send_query(query, timeout).await,
+            None => self.session.lock().await.send_query(query, timeout).await,
+        }
+    }
 }
 
 /// Per-peer cancellation slot for the receive or reconnect task.
@@ -104,6 +111,11 @@ impl PeerManager {
 
     pub fn pool(&self) -> Arc<OverlayPeerPool> {
         self.pool.clone()
+    }
+
+    /// Returns the overlay identifier this manager's sessions belong to.
+    pub fn overlay(&self) -> OverlayId {
+        self.overlay
     }
 
     /// Subscribes to connection and failure notifications from the manager.
@@ -511,6 +523,35 @@ impl PeerManager {
         }))
         .await;
         results.into_iter().flatten().count()
+    }
+
+    /// Sends a raw overlay object to one peer.
+    ///
+    /// Returns `false` when the peer has no registered session or the
+    /// session rejected the object.
+    pub async fn send_object_to(&self, peer: PeerId, object: Arc<[u8]>) -> bool {
+        let session = self.sessions.read().await.get(&peer).cloned();
+        match session {
+            Some(session) => session.send_object(object).await.is_ok(),
+            None => false,
+        }
+    }
+
+    /// Sends an overlay query to one peer and awaits its answer.
+    pub async fn send_query_to(
+        &self,
+        peer: PeerId,
+        query: Arc<[u8]>,
+        timeout: Duration,
+    ) -> Result<Arc<[u8]>, String> {
+        let session = self
+            .sessions
+            .read()
+            .await
+            .get(&peer)
+            .cloned()
+            .ok_or_else(|| format!("overlay peer {peer:?} has no registered session"))?;
+        session.send_query(query, timeout).await
     }
 
     pub async fn score(&self, peer: PeerId) -> i32 {

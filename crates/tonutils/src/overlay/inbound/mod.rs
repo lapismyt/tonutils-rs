@@ -50,10 +50,11 @@ use crate::{
         tl::{DhtMessage, DhtPong},
     },
     overlay::{
-        OverlayId, OverlayMemberEndpoints, PeerId, protocol_stats, record_member,
+        OverlayId, OverlayMemberEndpoints, PeerId, PlumtreeHandle, protocol_stats, record_member,
         tl::{
             OverlayMemberCertificate, OverlayNode, OverlayNodeV2, OverlayNodesBoxed,
-            OverlayNodesV2Boxed, OverlayPong, OverlayQuery, TonNodeCapabilities,
+            OverlayNodesV2Boxed, OverlayPong, OverlayQuery, OverlayRepairPlumtreePart,
+            TonNodeCapabilities,
         },
         udp_session::valid_overlay_node,
     },
@@ -173,7 +174,12 @@ pub(crate) fn build_overlay_answer(
         // `Err` is a constructor this enum does not model — `dht.ping` is
         // the one that matters in practice; a nested `overlay.query` is a
         // double-wrapped query and equally unanswerable.
-        Ok(OverlayQuery::Query { .. } | OverlayQuery::QueryWithExtra { .. }) | Err(_) => {
+        Ok(
+            OverlayQuery::Query { .. }
+            | OverlayQuery::QueryWithExtra { .. }
+            | OverlayQuery::RepairPlumtreePart { .. },
+        )
+        | Err(_) => {
             // pytoniq pings its overlay peers with `dht.ping` wrapped in
             // `overlay.query` and removes a peer after four unanswered
             // pings (`Node.ping` in `pytoniq/adnl/adnl.py`), so silence
@@ -193,6 +199,81 @@ pub(crate) fn build_overlay_answer(
                 query.len(),
             );
             None
+        }
+    }
+}
+
+/// Parses an `overlay.repairPlumtreePart` query, with or without the
+/// `overlay.query{overlay}` wrapper.
+pub(crate) fn parse_repair_query(
+    query: &[u8],
+    overlay: OverlayId,
+) -> Option<OverlayRepairPlumtreePart> {
+    let mut data = query;
+    let parsed = match OverlayQuery::read_from(&mut data) {
+        Ok(
+            OverlayQuery::Query { overlay: wrapper }
+            | OverlayQuery::QueryWithExtra {
+                overlay: wrapper, ..
+            },
+        ) => {
+            if wrapper.0 != overlay.as_bytes() {
+                return None;
+            }
+            OverlayQuery::read_from(&mut data)
+        }
+        other => other,
+    };
+    match parsed {
+        Ok(OverlayQuery::RepairPlumtreePart {
+            broadcast_id,
+            timestamp,
+            part_index,
+            tree_index,
+        }) => Some(OverlayRepairPlumtreePart {
+            broadcast_id,
+            timestamp,
+            part_index,
+            tree_index,
+        }),
+        _ => None,
+    }
+}
+
+/// Dispatches an `overlay.repairPlumtreePart` query to the shared Plumtree
+/// state.
+///
+/// Returns `None` when the query is not a repair query, `Some(None)` when it
+/// is a repair query this node cannot answer, and `Some(Some(answer))` when
+/// the part is available. The caller only owns transport framing and the
+/// answer write; repair validation, quota accounting, and statistics stay in
+/// one place for UDP and QUIC.
+pub(crate) async fn answer_repair_query(
+    peer: &PeerId,
+    overlay: OverlayId,
+    plumtree: Option<&PlumtreeHandle>,
+    query: &[u8],
+) -> Option<Option<Vec<u8>>> {
+    let part = parse_repair_query(query, overlay)?;
+    let Some(plumtree) = plumtree else {
+        return Some(None);
+    };
+    protocol_stats::record_query_received();
+    match plumtree
+        .answer_repair(
+            *peer,
+            part.broadcast_id,
+            part.timestamp.to_f64(),
+            part.part_index,
+            part.tree_index,
+        )
+        .await
+    {
+        Ok(answer) => Some(answer),
+        Err(error) => {
+            protocol_stats::record_query_answer_failed();
+            log::debug!("overlay repair query rejected: peer={peer:?} error={error}");
+            Some(None)
         }
     }
 }

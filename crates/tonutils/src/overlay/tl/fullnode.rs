@@ -80,7 +80,7 @@ pub struct TonNodeCapabilities {
 /// `FullNode::PROTO_VERSION_MAJOR` (`validator/full-node.h:186`).
 pub const FULL_NODE_PROTO_VERSION_MAJOR: i32 = 3;
 /// `FullNode::PROTO_VERSION_MINOR` (`validator/full-node.h:187`).
-pub const FULL_NODE_PROTO_VERSION_MINOR: i32 = 2;
+pub const FULL_NODE_PROTO_VERSION_MINOR: i32 = 3;
 
 impl TonNodeCapabilities {
     /// Capabilities a node answering with upstream's own defaults would send.
@@ -103,7 +103,7 @@ mod tests {
         let bytes = tl_proto::serialize(TonNodeCapabilities::current());
         let mut expected = 0xf5bf60c0u32.to_le_bytes().to_vec();
         expected.extend_from_slice(&3i32.to_le_bytes());
-        expected.extend_from_slice(&2i32.to_le_bytes());
+        expected.extend_from_slice(&3i32.to_le_bytes());
         expected.extend_from_slice(&0i32.to_le_bytes());
         assert_eq!(bytes, expected);
     }

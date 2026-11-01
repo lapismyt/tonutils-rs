@@ -17,6 +17,10 @@ evidence.
 ## `tonutils::mempool`
 - [x] Looks like some part of Overlay-communication implementation is there. Move EVERYTHING Overlay-related to the `tonutils::overlay`. `tonutils::overlay` must contain everyting to build Overlay clients and servers. And `tonutils::mempool` must be just implementation of client+server that can send and receive external messages from public Overlay.
 
+## `tonutils::overlay`
+- [x] Use Plumtree as the public-overlay broadcast path; keep signed simple/FEC broadcasting only for external-message compatibility.
+- [ ] Add upstream Plumtree statistics exchange and private-overlay authorized-key sets after their wire behavior is verified.
+
 ## `tonutils::provider`
 - [ ] Make high-level provider abstractions that will open possibilities to connect to custom providers, i.e. Toncenter or TonAPI. Providers must be defined not by one big trait, but with separate trait for each feature, because some providers can miss some functionality and some providers can have extra functionality - i want to be able to check it on type-system level, not with runtime panics. It must replace ContractProvider.
 

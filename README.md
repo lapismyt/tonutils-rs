@@ -94,7 +94,7 @@ It is intentionally not a proof that a liteserver answered honestly.
 | `adnl` | ADNL identity, encrypted UDP transport, QUIC transport, and ADNL TL wire types | Yes for transport |
 | `liteclient` | LiteAPI types, direct client, balancer, and typed BoC decode helpers | Yes |
 | `contracts` | Provider traits, account-state reads, and get-method stack helpers | Yes for reads |
-| `overlay` | ADNL UDP/QUIC overlay sessions, discovery, peer management and persistence, inbound serving, signed simple/FEC broadcasts, DHT publication, STUN, and protocol statistics | Yes for transport |
+| `overlay` | ADNL UDP/QUIC overlay sessions, discovery, peer management and persistence, inbound serving, Plumtree public-overlay broadcasts, legacy signed simple/FEC broadcasts, DHT publication, STUN, and protocol statistics | Yes for transport |
 | `overlay-config` | Global-config bootstrap download and parsing for `OverlayNodeBuilder`; implies `overlay` and `network-config` | Yes for download |
 | `mempool` | External-message validation, deduplication, events, and client/server submission through a caller-supplied overlay client | Yes, through `overlay` |
 | `serde` | Serde support for enabled public types that expose it, currently ADNL public keys | No |
@@ -113,6 +113,28 @@ capabilities, DHT address publication, STUN, packet pre-deduplication, and
 signed simple/FEC broadcasts. Build a client with
 `OverlayNodeBuilder::start_client()` or a serving node with
 `start_server()`.
+
+Public-overlay payloads use Plumtree by default. Configure it with
+`OverlayNodeBuilder::plumtree`, then call
+`OverlayClient::broadcast_plumtree_simple` or
+`OverlayClient::broadcast_plumtree_fec`; the server variants expose the same
+operations. The returned count is the number of payload frames immediately
+queued for eager neighbours, not a delivery guarantee. Use
+`plumtree_stats()` for local receive, send, completed-broadcast, repair, and
+validation counters.
+
+`OverlayClient::broadcast_signed` is the legacy single-object signed broadcast
+path. It remains the wire path for external-message traffic, including
+`MempoolClient::send_external`, because that payload is a
+`tonNode.externalMessageBroadcast` rather than a generic Plumtree payload. It
+does not use Plumtree eager feedback or repair; new public-overlay bulk traffic
+should use the Plumtree methods.
+
+`start_client` does not publish an ADNL address, so other members cannot select
+the node as a relay. `start_server` enables DHT publication and relay
+participation, but reachability, overlay membership rules, and peer selection
+still determine whether mainnet peers route a particular broadcast through the
+node. Neither mode guarantees application delivery.
 
 `mempool` owns only external-message semantics. `MempoolServer::new` takes an
 already-built `OverlayClient` and a `MempoolConfig`, subscribes to verified

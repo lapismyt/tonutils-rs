@@ -44,7 +44,7 @@ const MAX_FRAME_SIZE: usize = 1 << 20;
 
 /// QUIC connection wrapper for TON protocol.
 pub struct QuicSession {
-    _endpoint: quinn::Endpoint,
+    _endpoint: Option<quinn::Endpoint>,
     connection: quinn::Connection,
     remote_key: AdnlPublicKey,
 }
@@ -81,10 +81,20 @@ impl QuicSession {
             .map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
 
         Ok(Self {
-            _endpoint: endpoint,
+            _endpoint: Some(endpoint),
             connection,
             remote_key,
         })
+    }
+
+    /// Wraps a connection accepted by [`QuicServer`] for in-process tests.
+    #[cfg(test)]
+    pub(crate) fn from_accepted(connection: quinn::Connection, remote_key: AdnlPublicKey) -> Self {
+        Self {
+            _endpoint: None,
+            connection,
+            remote_key,
+        }
     }
 
     /// Sends a `quic.query` on a fresh bidirectional stream and waits for the

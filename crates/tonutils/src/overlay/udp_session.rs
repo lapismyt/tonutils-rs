@@ -25,10 +25,11 @@ use crate::{
         OverlayMemberEndpoints,
         broadcast::{MAX_FEC_SOURCE_SYMBOLS, fec_wire_symbol_id_to_internal},
         inbound::{
-            FAST_ANSWER_IDS, OverlayMemberCache, build_fast_answer, build_overlay_answer,
-            trace_membership,
+            FAST_ANSWER_IDS, OverlayMemberCache, answer_repair_query, build_fast_answer,
+            build_overlay_answer, trace_membership,
         },
         packet_dedup::PacketPreDedup,
+        plumtree::{PayloadOrigin, PlumtreeHandle},
         protocol_stats::{
             record_custom_message_from, record_fec_decoded, record_fec_param_rejection,
             record_fec_symbol, record_payload_duplicate, record_query_answer_failed,
@@ -75,6 +76,9 @@ pub struct AdnlUdpOverlaySession {
     /// so byte-identical flood copies stop before the TL parse and
     /// signature verification.
     pre_dedup: PacketPreDedup,
+    /// Shared Plumtree state; `None` on sessions created without the
+    /// Plumtree factory variants.
+    plumtree: Option<PlumtreeHandle>,
 }
 
 mod growth;
@@ -89,7 +93,8 @@ pub use lookup::{
     udp_overlay_lookup_with_endpoints,
 };
 pub(crate) use lookup::{
-    dht_key_id, parse_address_record, resolve_address_on_session, shared_session,
+    dht_key_id, overlay_factory_with_endpoints_and_plumtree, parse_address_record,
+    resolve_address_on_session, shared_session,
 };
 pub use publish::{
     DhtAddressPublisher, PUBLISH_FIRST_ROUND_STAGGER_MAX, PUBLISH_INTERVAL, address_publisher,
@@ -137,6 +142,27 @@ pub(crate) fn valid_overlay_node(node: &OverlayNode, overlay: OverlayId, now: i3
 }
 
 impl AdnlUdpOverlaySession {
+    #[cfg(test)]
+    pub(crate) fn test_with_plumtree(
+        session: AdnlUdpSession,
+        peer: PeerId,
+        overlay: OverlayId,
+        plumtree: PlumtreeHandle,
+    ) -> Self {
+        Self {
+            peer,
+            session,
+            overlay: Some(overlay),
+            fec: HashMap::new(),
+            last_keepalive: Instant::now(),
+            last_activity: Instant::now(),
+            members: OverlayMemberCache::default(),
+            endpoints: OverlayMemberEndpoints::default(),
+            pre_dedup: PacketPreDedup::default(),
+            plumtree: Some(plumtree),
+        }
+    }
+
     /// Returns the shared-transport session for one peer.
     ///
     /// Every ADNL/UDP session of this scanner - live overlay
@@ -184,6 +210,7 @@ impl AdnlUdpOverlaySession {
             members: OverlayMemberCache::default(),
             endpoints: OverlayMemberEndpoints::default(),
             pre_dedup: PacketPreDedup::default(),
+            plumtree: None,
         })
     }
 
@@ -212,6 +239,7 @@ impl AdnlUdpOverlaySession {
             members: OverlayMemberCache::default(),
             endpoints: OverlayMemberEndpoints::default(),
             pre_dedup: PacketPreDedup::default(),
+            plumtree: None,
         })
     }
 
@@ -266,6 +294,7 @@ impl AdnlUdpOverlaySession {
             members: OverlayMemberCache::default(),
             endpoints: OverlayMemberEndpoints::default(),
             pre_dedup: PacketPreDedup::default(),
+            plumtree: None,
         };
         session.register_fast_answers();
         if let Err(error) = session
@@ -397,6 +426,27 @@ impl OverlaySession for AdnlUdpOverlaySession {
                                 );
                                 continue;
                             }
+                            if let Ok(broadcast) = tl_proto::deserialize::<OverlayBroadcast>(data)
+                                && broadcast.is_plumtree()
+                            {
+                                let Some(plumtree) = self.plumtree.clone() else {
+                                    continue;
+                                };
+                                match plumtree
+                                    .process(self.peer, broadcast, PayloadOrigin::Push)
+                                    .await
+                                {
+                                    Ok(Some(payload)) => return Ok(Arc::from(payload)),
+                                    Ok(None) => continue,
+                                    Err(error) => {
+                                        log::debug!(
+                                            "overlay UDP Plumtree frame rejected: peer={:?} reason={error}",
+                                            self.peer
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
                             if self.pre_dedup.is_duplicate(data) {
                                 record_payload_duplicate();
                                 log::debug!(
@@ -464,6 +514,15 @@ impl OverlaySession for AdnlUdpOverlaySession {
         Box::pin(async move { sender.send_raw_object(object).await })
     }
 
+    fn send_query(
+        &mut self,
+        query: Arc<[u8]>,
+        timeout: Duration,
+    ) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+        let sender = self.sender_handle();
+        Box::pin(async move { sender.send_query(query, timeout).await })
+    }
+
     fn sender(&self) -> Option<Arc<dyn OverlaySessionSender>> {
         Some(Arc::new(self.sender_handle()))
     }
@@ -513,6 +572,14 @@ impl AdnlUdpOverlaySender {
         self.transmit(data).await
     }
 
+    async fn send_query(&self, query: Arc<[u8]>, timeout: Duration) -> Result<Arc<[u8]>, String> {
+        self.session
+            .query(query.to_vec(), timeout, "overlay query")
+            .await
+            .map(Arc::from)
+            .map_err(|error| error.to_string())
+    }
+
     async fn transmit(&self, data: Vec<u8>) -> Result<(), String> {
         self.session
             .send_contents(PacketContents {
@@ -547,6 +614,14 @@ impl OverlaySessionSender for AdnlUdpOverlaySender {
     fn send_object(&self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(self.send_raw_object(object))
     }
+
+    fn send_query(
+        &self,
+        query: Arc<[u8]>,
+        timeout: Duration,
+    ) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+        Box::pin(self.send_query(query, timeout))
+    }
 }
 
 impl AdnlUdpOverlaySession {
@@ -580,10 +655,27 @@ impl AdnlUdpOverlaySession {
     /// Answers the overlay queries this node is expected to serve.
     ///
     /// The dispatch, including the `overlay.query` wrapper that upstream
-    /// always adds, lives in [`crate::inbound`].
+    /// always adds, lives in [`crate::inbound`].  Plumtree repair
+    /// queries are served from the shared state before the generic
+    /// dispatcher sees them.
     ///
     /// Returns `true` when the query was recognised and answered.
     async fn answer_overlay_query(&mut self, query_id: &Int256, query: &[u8]) -> bool {
+        if let Some(overlay) = self.overlay
+            && let Some(answer) =
+                answer_repair_query(&self.peer, overlay, self.plumtree.as_ref(), query).await
+        {
+            if let Some(answer) = answer
+                && let Err(error) = self.session.send_answer(query_id.clone(), answer).await
+            {
+                record_query_answer_failed();
+                log::trace!(
+                    "overlay repair answer failed: peer={:?} error={error}",
+                    self.peer
+                );
+            }
+            return true;
+        }
         let Some(answer) = build_overlay_answer(
             &self.peer,
             &self.session,

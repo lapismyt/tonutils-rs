@@ -12,9 +12,9 @@ use crate::{
     adnl::AdnlKeyPair,
     mempool::{MempoolEvent, MempoolServer},
     overlay::{
-        DiscoveryStats, OverlayBroadcastPeer, OverlayClient, OverlayConfig, OverlayId,
-        OverlayMemberEndpoints, OverlaySession, OverlaySessionSender, PeerId, PeerManager,
-        PeerQualityConfig, PeerQualityRegistry, PeerStatus, SeedPeer,
+        DiscoveryStats, OverlayBroadcastPeer, OverlayClient, OverlayClientInit, OverlayConfig,
+        OverlayId, OverlayMemberEndpoints, OverlaySession, OverlaySessionSender, PeerId,
+        PeerManager, PeerQualityConfig, PeerQualityRegistry, PeerStatus, SeedPeer,
     },
     tlb::{CommonMsgInfo, Either, Grams, Message, MsgAddressExt, MsgAddressInt, TlbSerialize},
     tvm::{Address, Builder, serialize_boc},
@@ -99,15 +99,16 @@ async fn test_overlay() -> TestOverlay {
         AdnlKeyPair::generate(&mut rand::rngs::OsRng),
     )
     .with_quality(Arc::clone(&quality));
-    let client = OverlayClient::new(
-        manager.clone(),
-        Some(broadcast),
+    let client = OverlayClient::new(OverlayClientInit {
+        manager: manager.clone(),
+        broadcast: Some(broadcast),
         quality,
-        OverlayMemberEndpoints::default(),
-        Arc::new(RwLock::new(Vec::<SeedPeer>::new())),
-        DiscoveryStats::default(),
-        64,
-    );
+        member_endpoints: OverlayMemberEndpoints::default(),
+        known_peers: Arc::new(RwLock::new(Vec::<SeedPeer>::new())),
+        discovery: DiscoveryStats::default(),
+        packet_capacity: 64,
+        plumtree: None,
+    });
     TestOverlay {
         client,
         manager,

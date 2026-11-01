@@ -46,6 +46,7 @@ mod packet_dedup;
 mod peer_growth;
 mod peer_quality;
 mod peer_store;
+mod plumtree;
 mod protocol_stats;
 mod quic_session;
 mod server;
@@ -56,6 +57,7 @@ pub use broadcast::{
     fec_broadcast_parts, fec_wire_symbol_id_to_internal, signed_broadcast, signed_simple_broadcast,
 };
 pub use client::OverlayClient;
+pub(crate) use client::OverlayClientInit;
 pub use endpoints::{
     MemberEndpoint, OverlayMemberEndpoints, QuicEndpointSource, known_member_seeds,
     member_quic_target, record_member, record_member_quic, registered_member_count,
@@ -68,12 +70,16 @@ pub use peer_store::{
     DEFAULT_PEER_STORE_SAVE_INTERVAL, MAX_STORED_PEERS, PEER_STORE_VERSION, PeerStore,
     PeerStoreFile, StoredPeer,
 };
+pub(crate) use plumtree::PlumtreeHandle;
+pub use plumtree::{PlumtreeBroadcastId, PlumtreeConfig, PlumtreeStats};
 pub use protocol_stats::{ProtocolStats, protocol_stats};
+pub(crate) use quic_session::quic_overlay_factory_with_endpoints_and_plumtree;
 pub use quic_session::{
     QuicOverlaySession, quic_overlay_factory, quic_overlay_factory_with_endpoints,
     quic_overlay_lookup, quic_overlay_lookup_with_endpoints,
 };
 pub use server::OverlayServer;
+pub(crate) use udp_session::overlay_factory_with_endpoints_and_plumtree;
 pub use udp_session::{
     AdnlUdpOverlaySession, DhtAddressPublisher, PUBLISH_FIRST_ROUND_STAGGER_MAX, PUBLISH_INTERVAL,
     address_publisher, channel_factory, direct_factory, overlay_factory,
@@ -215,6 +221,19 @@ pub trait OverlaySessionSender: Send + Sync {
     /// frame it after the `overlay.message` header with no
     /// `overlay.unicast` wrapper.
     fn send_object(&self, object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>>;
+
+    /// Sends an overlay query and awaits the answer payload.
+    ///
+    /// `query` must already carry the `overlay.query{overlay}` wrapper
+    /// when the transport expects one.  Sessions without a query
+    /// primitive keep the default rejection.
+    fn send_query(
+        &self,
+        _query: Arc<[u8]>,
+        _timeout: Duration,
+    ) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+        Box::pin(async { Err("session does not support overlay queries".to_owned()) })
+    }
 }
 
 /// A transport-neutral authenticated overlay session.
@@ -237,6 +256,19 @@ pub trait OverlaySession: Send {
     /// [`Self::send`] from silently mis-framing broadcasts.
     fn send_object(&mut self, _object: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
         Box::pin(async { Err("session does not support raw overlay objects".to_owned()) })
+    }
+
+    /// Sends an overlay query and awaits the answer payload.
+    ///
+    /// `query` must already carry the `overlay.query{overlay}` wrapper
+    /// when the transport expects one.  Sessions without a query
+    /// primitive keep the default rejection.
+    fn send_query(
+        &mut self,
+        _query: Arc<[u8]>,
+        _timeout: Duration,
+    ) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+        Box::pin(async { Err("session does not support overlay queries".to_owned()) })
     }
 
     /// Last instant at which the session observed inbound transport traffic.
@@ -549,6 +581,12 @@ pub enum OverlayError {
     MissingLocalKey,
     #[error("overlay broadcast failed: {0}")]
     Broadcast(String),
+    #[error("invalid Plumtree payload: {0}")]
+    InvalidPlumtreePayload(String),
+    #[error("Plumtree broadcast id conflicts with existing state")]
+    PlumtreeBroadcastConflict,
+    #[error("Plumtree transport is unavailable: {0}")]
+    PlumtreeUnavailable(String),
 }
 
 /// Outcome of the bootstrap discovery performed by [`OverlayNodeBuilder`].
