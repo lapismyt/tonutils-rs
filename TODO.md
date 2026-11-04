@@ -19,7 +19,8 @@ evidence.
 
 ## `tonutils::overlay`
 - [x] Use Plumtree as the public-overlay broadcast path; keep signed simple/FEC broadcasting only for external-message compatibility.
-- [x] Gate PRs on real DHT, UDP, QUIC, and public Plumtree receive evidence through exact single-test invocations; zero-test matches and network-unavailable skips are failures.
+- [x] Gate PRs on real mainnet DHT, UDP, QUIC, testnet liteserver, and public overlay receive evidence through exact single-test invocations; zero-test matches and network-unavailable skips are failures.
+- [ ] Restore the strict testnet DHT gate to PRs once the canonical testnet seeds answer; it currently runs in the scheduled/manual `live-testnet-dht` workflow and stays red.
 - [ ] Add upstream Plumtree statistics exchange and private-overlay authorized-key sets after their wire behavior is verified.
 
 ## `tonutils::provider`

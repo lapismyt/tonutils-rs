@@ -61,18 +61,21 @@ configuration explicitly.
 
 ## Plumtree Runtime
 
-Plumtree is the public-overlay broadcast path. `OverlayNodeBuilder::plumtree`
-is the public configuration point; the shared `PlumtreeHandle` and the
-`*_with_plumtree` transport factories stay crate-private. UDP and QUIC sessions
-share one handle per overlay, so `subscribe_packets()` observes only decoded
-application payloads. `IHave`, `Prune`, `Useful`, statistics pushes, and repair
-queries are consumed internally.
+Plumtree is the bulk public-overlay broadcast path for peers that speak it.
+`OverlayNodeBuilder::plumtree` is the public configuration point; the shared
+`PlumtreeHandle` and the `*_with_plumtree` transport factories stay
+crate-private. UDP and QUIC sessions share one handle per overlay, so
+`subscribe_packets()` observes only decoded application payloads. `IHave`,
+`Prune`, `Useful`, statistics pushes, and repair queries are consumed
+internally.
 
 The signed simple/FEC broadcast implementation and
 `MempoolClient::send_external` remain the legacy external-message path. They
 send a single overlay object directly to connected peers and do not participate
-in Plumtree eager feedback, duplicate pruning, or repair. Generic public-overlay
-payloads should use `broadcast_plumtree_simple` or `broadcast_plumtree_fec`.
+in Plumtree eager feedback, duplicate pruning, or repair. The current mainnet
+basechain overlay relays external messages with this legacy framing, while
+generic public-overlay payloads should use `broadcast_plumtree_simple` or
+`broadcast_plumtree_fec`.
 
 Runtime invariants:
 
@@ -284,16 +287,23 @@ fails unless the exact filter executes exactly one test and reports
 
 ```bash
 scripts/run-live-test.sh live_probe mainnet_dht_find_node_returns_valid_nodes
-scripts/run-live-test.sh live_probe testnet_dht_find_node_returns_valid_nodes
 scripts/run-live-test.sh live_probe mainnet_udp_overlay_get_random_peers_returns_valid_nodes
 scripts/run-live-test.sh live_probe mainnet_quic_overlay_get_random_peers_returns_valid_nodes
-scripts/run-live-test.sh live_delivery mainnet_public_plumtree_receives_payload
+scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_get_masterchain_info_smoke
+scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_get_version_and_time_smoke
+TON_GLOBAL_CONFIG_JSON="$TON_TESTNET_GLOBAL_CONFIG_JSON" \
+  scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_testnet_liteserver_smoke
+scripts/run-live-test.sh live_delivery mainnet_public_overlay_delivers_payload
 ```
 
 `TON_GLOBAL_CONFIG_JSON` and `TON_TESTNET_GLOBAL_CONFIG_JSON` are required for
-their respective DHT gates. The overlay gates derive seeds directly from those
-configs. CI runs every live step with `if: ${{ !cancelled() }}` and uploads the
-saved logs, so one failure does not hide evidence from the remaining checks.
+their respective network gates. The overlay gates derive seeds directly from
+those configs. CI runs every live step with `if: ${{ !cancelled() }}` and
+uploads the saved logs, so one failure does not hide evidence from the remaining
+checks. Testnet DHT runs strictly from the scheduled/manual
+`.github/workflows/live-testnet-dht.yml` workflow because the canonical testnet
+seeds are currently unreachable; that workflow stays red until upstream
+recovers.
 
 - DHT evidence: config seed, remote peer, `dht.findNode`, elapsed time, raw and
   valid node counts. A nonempty all-valid answer is required.
@@ -302,10 +312,20 @@ saved logs, so one failure does not hide evidence from the remaining checks.
 - QUIC evidence: UDP-populated `advertised`/`udp+1000` targets, real handshake,
   `overlay.getRandomPeers`, wave, elapsed time, and valid node counts. Up to five
   waves are allowed; none may soft-skip.
-- Delivery evidence: three fresh-key, fresh-connection attempts of 120 seconds.
-  Success requires `plumtree_stats().completed_broadcasts > 0` and a real
-  `subscribe_packets()` payload. `MempoolServer` runs in parallel and logs peer
-  status, routing, validation metrics, and any external-message event.
+- Liteserver evidence: typed `getMasterchainInfo`, `getVersion`, and `getTime`
+  responses. The testnet smoke tries every configured index and reports the
+  first one that answers `getMasterchainInfo`.
+- Delivery evidence: three fresh-key, fresh-connection attempts of 300 seconds
+  with at most 64 peers. Success requires a real `subscribe_packets()` payload,
+  a positive `mempool.overlay_packets` count, and either a legacy/FEC custom
+  message or a completed Plumtree broadcast. `MempoolServer` runs in parallel
+  and logs peer status, routing, validation metrics, ingest drops, FEC decoding,
+  and any external-message event.
+
+Plumtree completion is covered by the deterministic two-node UDP and QUIC
+loopback tests. The public mainnet basechain overlay currently carries legacy
+`overlay.broadcast` / `overlay.broadcastFec` frames, so the live gate accepts
+that framing instead of waiting for public traffic to switch.
 
 There is no network-unavailable bypass. Missing configuration, an unreachable
 network, an empty response, or no public payload is a failure.

@@ -1,6 +1,12 @@
 #![cfg(all(feature = "mempool", feature = "overlay-config"))]
 
-//! Mandatory public-overlay Plumtree delivery gate.
+//! Mandatory public-overlay delivery gate.
+//!
+//! The public mainnet basechain overlay currently carries legacy
+//! `overlay.broadcast` / `overlay.broadcastFec` frames for external messages.
+//! The gate therefore requires a real public payload to reach
+//! `subscribe_packets()` (legacy/FEC accepted) and keeps Plumtree completion
+//! covered by the deterministic two-node integration tests.
 
 mod live_common;
 
@@ -12,7 +18,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use futures::StreamExt;
 use live_common::{configured_overlay_id, elapsed_millis, load_global_config};
 use tonutils::{
@@ -21,12 +27,19 @@ use tonutils::{
     overlay::{
         DiscoveryStats, OverlayConfig, OverlayId, OverlayNodeBuilder, OverlayPacket, OverlayServer,
         PeerStatus, PlumtreeConfig, PlumtreeStats, ProtocolStats,
+        protocol_stats as global_protocol_stats,
     },
 };
 
 const DELIVERY_ATTEMPTS: usize = 3;
-const DELIVERY_WINDOW: Duration = Duration::from_secs(120);
+/// Public external-message traffic was observed about 220 seconds after
+/// bootstrap in the November 2026 CI run, so a 180-second window could miss
+/// the first public payload entirely. Each attempt verifies the same strict
+/// delivery conditions; the wider window only gives public traffic time to
+/// reach the freshly bootstrapped node.
+const DELIVERY_WINDOW: Duration = Duration::from_secs(300);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(5);
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 struct DeliveryEvidence {
@@ -40,18 +53,109 @@ struct DeliveryEvidence {
     all_events: u64,
     discovery: DiscoveryStats,
     protocol: ProtocolStats,
+    custom_messages_delta: u64,
+    framing: &'static str,
+}
+
+#[derive(Clone, Copy, Default)]
+struct PacketsSeen {
+    count: u64,
+    last_bytes: usize,
+}
+
+#[derive(Clone, Copy)]
+struct Observation {
+    stats: PlumtreeStats,
+    protocol: ProtocolStats,
+    mempool: MempoolMetrics,
+    custom_messages_delta: u64,
+}
+
+/// Per-attempt state shared by the wait loop and its evidence helpers.
+struct DeliveryRun<'a> {
+    attempt: usize,
+    started: Instant,
+    server: &'a OverlayServer,
+    mempool: &'a MempoolServer,
+    packets: tokio::sync::broadcast::Receiver<OverlayPacket>,
+    protocol_start: ProtocolStats,
+    external_events: Arc<AtomicU64>,
+    all_events: Arc<AtomicU64>,
+}
+
+impl DeliveryRun<'_> {
+    fn observe(&self) -> Observation {
+        let protocol = self.server.protocol_stats();
+        Observation {
+            stats: self.server.plumtree_stats(),
+            protocol,
+            mempool: self.mempool.metrics(),
+            custom_messages_delta: protocol
+                .custom_messages
+                .saturating_sub(self.protocol_start.custom_messages),
+        }
+    }
+
+    async fn evidence(&self, seen: PacketsSeen, observation: &Observation) -> DeliveryEvidence {
+        let framing = if observation.stats.completed_broadcasts > 0 {
+            "plumtree"
+        } else {
+            "legacy"
+        };
+        DeliveryEvidence {
+            elapsed_ms: elapsed_millis(self.started),
+            packet_bytes: seen.last_bytes,
+            packet_count: seen.count,
+            stats: observation.stats,
+            peers: self.server.peer_count().await,
+            mempool: observation.mempool,
+            external_events: self.external_events.load(Ordering::Relaxed),
+            all_events: self.all_events.load(Ordering::Relaxed),
+            discovery: self.server.discovery_stats(),
+            protocol: observation.protocol,
+            custom_messages_delta: observation.custom_messages_delta,
+            framing,
+        }
+    }
+
+    async fn timeout_error(&self, seen: PacketsSeen, observation: &Observation) -> anyhow::Error {
+        let peers = self.server.peer_count().await;
+        anyhow!(
+            "attempt {} timed out after {}s waiting for a delivered public payload: packets={} peers={peers} custom_messages_delta={} payload_duplicates_delta={} fec_decoded_delta={} parts_received={} completed_broadcasts={} ingest_drops={} mempool={:?} external_events={} all_events={} discovery={:?} protocol={:?}",
+            self.attempt,
+            DELIVERY_WINDOW.as_secs(),
+            seen.count,
+            observation.custom_messages_delta,
+            observation
+                .protocol
+                .payload_duplicates
+                .saturating_sub(self.protocol_start.payload_duplicates),
+            observation
+                .protocol
+                .fec_decoded
+                .saturating_sub(self.protocol_start.fec_decoded),
+            observation.stats.parts_received,
+            observation.stats.completed_broadcasts,
+            self.server.client().ingest_drops(),
+            observation.mempool,
+            self.external_events.load(Ordering::Relaxed),
+            self.all_events.load(Ordering::Relaxed),
+            self.server.discovery_stats(),
+            observation.protocol,
+        )
+    }
 }
 
 #[tokio::test]
 #[ignore = "requires live public mainnet overlay traffic"]
-async fn mainnet_public_plumtree_receives_payload() -> Result<()> {
+async fn mainnet_public_overlay_delivers_payload() -> Result<()> {
     let _ = pretty_env_logger::try_init();
     let config_json = load_global_config("TON_GLOBAL_CONFIG_JSON")?;
     let overlay = configured_overlay_id()?;
     let max_peers = std::env::var("TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(256u32);
+        .unwrap_or(64u32);
     let mut failures = Vec::new();
 
     for attempt in 1..=DELIVERY_ATTEMPTS {
@@ -62,12 +166,14 @@ async fn mainnet_public_plumtree_receives_payload() -> Result<()> {
         match run_attempt(attempt, &config_json, overlay, max_peers).await {
             Ok(evidence) => {
                 eprintln!(
-                    "live delivery attempt={attempt} result=delivered elapsed_ms={} packet_bytes={} packets={} parts_received={} completed_broadcasts={} peers={} mempool={:?} external_events={} all_events={} discovery={:?} protocol={:?}",
+                    "live delivery attempt={attempt} result=delivered elapsed_ms={} framing={} packet_bytes={} packets={} parts_received={} completed_broadcasts={} custom_messages_delta={} peers={} mempool={:?} external_events={} all_events={} discovery={:?} protocol={:?}",
                     evidence.elapsed_ms,
+                    evidence.framing,
                     evidence.packet_bytes,
                     evidence.packet_count,
                     evidence.stats.parts_received,
                     evidence.stats.completed_broadcasts,
+                    evidence.custom_messages_delta,
                     evidence.peers,
                     evidence.mempool,
                     evidence.external_events,
@@ -85,7 +191,7 @@ async fn mainnet_public_plumtree_receives_payload() -> Result<()> {
     }
 
     bail!(
-        "no public Plumtree payload within {DELIVERY_ATTEMPTS} attempts of {}s: {}",
+        "no public overlay payload within {DELIVERY_ATTEMPTS} attempts of {}s: {}",
         DELIVERY_WINDOW.as_secs(),
         failures.join(" | "),
     )
@@ -99,6 +205,9 @@ async fn run_attempt(
 ) -> Result<DeliveryEvidence> {
     let local_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
     let started = Instant::now();
+    // Snapshot the process-wide protocol counters so every attempt reports
+    // only the broadcasts it observed itself.
+    let protocol_start = global_protocol_stats();
     let server = OverlayNodeBuilder::new()
         .testnet(false)
         .global_config_json(config_json)
@@ -123,7 +232,7 @@ async fn run_attempt(
         .with_context(|| format!("attempt {attempt} overlay bootstrap failed"))?;
     let peers = server.peer_count().await;
     if peers == 0 {
-        server.shutdown_wait().await;
+        shutdown_server(attempt, &server).await;
         bail!("attempt {attempt} bootstrap registered no overlay peers");
     }
     eprintln!(
@@ -136,7 +245,7 @@ async fn run_attempt(
     let (mempool, _client) = match MempoolServer::new(server.client(), MempoolConfig::default()) {
         Ok(value) => value,
         Err(error) => {
-            server.shutdown_wait().await;
+            shutdown_server(attempt, &server).await;
             return Err(error).context("MempoolServer construction failed");
         }
     };
@@ -149,21 +258,35 @@ async fn run_attempt(
         attempt,
     );
 
-    let result = wait_for_payload(
+    let mut run = DeliveryRun {
         attempt,
         started,
-        &server,
-        &mempool,
+        server: &server,
+        mempool: &mempool,
         packets,
-        Arc::clone(&external_events),
-        Arc::clone(&all_events),
-    )
-    .await;
+        protocol_start,
+        external_events: Arc::clone(&external_events),
+        all_events: Arc::clone(&all_events),
+    };
+    let result = wait_for_payload(&mut run).await;
     event_task.abort();
     let _ = event_task.await;
     mempool.shutdown_wait().await;
-    server.shutdown_wait().await;
+    shutdown_server(attempt, &server).await;
     result
+}
+
+async fn shutdown_server(attempt: usize, server: &OverlayServer) {
+    server.shutdown();
+    if tokio::time::timeout(SHUTDOWN_GRACE, server.shutdown_wait())
+        .await
+        .is_err()
+    {
+        eprintln!(
+            "live delivery attempt={attempt} phase=shutdown result=timeout grace_s={}",
+            SHUTDOWN_GRACE.as_secs(),
+        );
+    }
 }
 
 fn spawn_event_logger<S>(
@@ -220,90 +343,64 @@ where
     })
 }
 
-async fn wait_for_payload(
-    attempt: usize,
-    started: Instant,
-    server: &OverlayServer,
-    mempool: &MempoolServer,
-    mut packets: tokio::sync::broadcast::Receiver<OverlayPacket>,
-    external_events: Arc<AtomicU64>,
-    all_events: Arc<AtomicU64>,
-) -> Result<DeliveryEvidence> {
+async fn wait_for_payload(run: &mut DeliveryRun<'_>) -> Result<DeliveryEvidence> {
     let deadline = tokio::time::Instant::now() + DELIVERY_WINDOW;
     let mut progress = tokio::time::interval(PROGRESS_INTERVAL);
     progress.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut packet_count = 0u64;
-    let mut packet_bytes = 0usize;
+    let mut seen = PacketsSeen::default();
+
+    // Copies used inside `select!` so the packet future's mutable borrow of
+    // `run.packets` does not overlap borrows of the logging fields.
+    let attempt = run.attempt;
+    let started = run.started;
+    let server = run.server;
+    let mempool = run.mempool;
+    let protocol_start = run.protocol_start;
+    let external_events = Arc::clone(&run.external_events);
+    let all_events = Arc::clone(&run.all_events);
 
     loop {
-        let stats = server.plumtree_stats();
-        if stats.completed_broadcasts > 0 && packet_count > 0 {
-            return Ok(DeliveryEvidence {
-                elapsed_ms: elapsed_millis(started),
-                packet_bytes,
-                packet_count,
-                stats,
-                peers: server.peer_count().await,
-                mempool: mempool.metrics(),
-                external_events: external_events.load(Ordering::Relaxed),
-                all_events: all_events.load(Ordering::Relaxed),
-                discovery: server.discovery_stats(),
-                protocol: server.protocol_stats(),
-            });
+        let observation = run.observe();
+        if seen.count > 0
+            && observation.mempool.overlay_packets > 0
+            && (observation.custom_messages_delta > 0 || observation.stats.completed_broadcasts > 0)
+        {
+            return Ok(run.evidence(seen, &observation).await);
         }
-
-        let now = tokio::time::Instant::now();
-        if now >= deadline {
-            let peers = server.peer_count().await;
-            bail!(
-                "attempt {attempt} timed out after {}s waiting for parts_received>0, completed_broadcasts>0, and a subscribe_packets event: parts_received={} completed_broadcasts={} packets={packet_count} peers={peers} mempool={:?} external_events={} all_events={} discovery={:?} protocol={:?}",
-                DELIVERY_WINDOW.as_secs(),
-                stats.parts_received,
-                stats.completed_broadcasts,
-                mempool.metrics(),
-                external_events.load(Ordering::Relaxed),
-                all_events.load(Ordering::Relaxed),
-                server.discovery_stats(),
-                server.protocol_stats(),
-            );
+        if tokio::time::Instant::now() >= deadline {
+            return Err(run.timeout_error(seen, &observation).await);
         }
 
         tokio::select! {
-            packet = packets.recv() => {
-                match packet {
-                    Ok(packet) => {
-                        packet_count += 1;
-                        packet_bytes = packet.payload.len();
-                        let stats = server.plumtree_stats();
-                        eprintln!(
-                            "live delivery attempt={attempt} phase=packet bytes={} peer={} overlay={} hop={} received_unix_ms={} parts_received={} completed_broadcasts={}",
-                            packet.payload.len(),
-                            hex::encode(packet.routing.peer.as_bytes()),
-                            packet.routing.overlay,
-                            packet.routing.hop,
-                            packet.routing.received_unix_millis(),
-                            stats.parts_received,
-                            stats.completed_broadcasts,
-                        );
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                        eprintln!(
-                            "live delivery attempt={attempt} phase=packet result=lagged skipped={skipped}"
-                        );
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        bail!("attempt {attempt} overlay packet subscription closed");
-                    }
+            packet = run.packets.recv() => match packet {
+                Ok(packet) => {
+                    seen.count += 1;
+                    seen.last_bytes = packet.payload.len();
+                    log_packet(attempt, server, mempool, &protocol_start, &packet).await;
                 }
-            }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    eprintln!(
+                        "live delivery attempt={attempt} phase=packet result=lagged skipped={skipped}"
+                    );
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    bail!("attempt {attempt} overlay packet subscription closed");
+                }
+            },
             _ = progress.tick() => {
+                let peers = server.peer_count().await;
                 eprintln!(
-                    "live delivery attempt={attempt} phase=waiting elapsed_ms={} parts_received={} completed_broadcasts={} packets={packet_count} peers={} mempool={:?} external_events={} all_events={}",
+                    "live delivery attempt={attempt} phase=waiting elapsed_ms={} packets={} peers={peers} custom_messages_delta={} parts_received={} completed_broadcasts={} plumtree_parts_received={} mempool={:?} external_events={} all_events={}",
                     elapsed_millis(started),
-                    stats.parts_received,
-                    stats.completed_broadcasts,
-                    server.peer_count().await,
-                    mempool.metrics(),
+                    seen.count,
+                    observation.custom_messages_delta,
+                    observation.stats.parts_received,
+                    observation.stats.completed_broadcasts,
+                    observation
+                        .protocol
+                        .plumtree_parts_received
+                        .saturating_sub(protocol_start.plumtree_parts_received),
+                    observation.mempool,
                     external_events.load(Ordering::Relaxed),
                     all_events.load(Ordering::Relaxed),
                 );
@@ -311,6 +408,34 @@ async fn wait_for_payload(
             () = tokio::time::sleep_until(deadline) => {}
         }
     }
+}
+
+async fn log_packet(
+    attempt: usize,
+    server: &OverlayServer,
+    mempool: &MempoolServer,
+    protocol_start: &ProtocolStats,
+    packet: &OverlayPacket,
+) {
+    let stats = server.plumtree_stats();
+    let protocol = server.protocol_stats();
+    let custom_messages_delta = protocol
+        .custom_messages
+        .saturating_sub(protocol_start.custom_messages);
+    let routing_peer_registered = server.peers().await.contains(&packet.routing.peer);
+    let prefix_len = packet.payload.len().min(8);
+    eprintln!(
+        "live delivery attempt={attempt} phase=packet bytes={} prefix={} peer={} overlay={} hop={} received_unix_ms={} routing_peer_registered={routing_peer_registered} custom_messages_delta={custom_messages_delta} plumtree_parts_received={} completed_broadcasts={} mempool_overlay_packets={}",
+        packet.payload.len(),
+        hex::encode(&packet.payload[..prefix_len]),
+        hex::encode(packet.routing.peer.as_bytes()),
+        packet.routing.overlay,
+        packet.routing.hop,
+        packet.routing.received_unix_millis(),
+        stats.parts_received,
+        stats.completed_broadcasts,
+        mempool.metrics().overlay_packets,
+    );
 }
 
 fn peer_status_label(status: &PeerStatus) -> String {

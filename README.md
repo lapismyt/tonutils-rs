@@ -114,8 +114,8 @@ signed simple/FEC broadcasts. Build a client with
 `OverlayNodeBuilder::start_client()` or a serving node with
 `start_server()`.
 
-Public-overlay payloads use Plumtree by default. Configure it with
-`OverlayNodeBuilder::plumtree`, then call
+Plumtree is the bulk public-overlay broadcast path for overlays whose peers
+speak it. Configure it with `OverlayNodeBuilder::plumtree`, then call
 `OverlayClient::broadcast_plumtree_simple` or
 `OverlayClient::broadcast_plumtree_fec`; the server variants expose the same
 operations. The returned count is the number of payload frames immediately
@@ -126,9 +126,11 @@ validation counters.
 `OverlayClient::broadcast_signed` is the legacy single-object signed broadcast
 path. It remains the wire path for external-message traffic, including
 `MempoolClient::send_external`, because that payload is a
-`tonNode.externalMessageBroadcast` rather than a generic Plumtree payload. It
-does not use Plumtree eager feedback or repair; new public-overlay bulk traffic
-should use the Plumtree methods.
+`tonNode.externalMessageBroadcast` rather than a generic Plumtree payload. The
+current mainnet basechain overlay relays external messages as legacy
+`overlay.broadcast` / `overlay.broadcastFec` frames, so public receive tests
+must accept that framing. Legacy broadcasts do not use Plumtree eager feedback
+or repair; new public-overlay bulk traffic should use the Plumtree methods.
 
 `start_client` does not publish an ADNL address, so other members cannot select
 the node as a relay. `start_server` enables DHT publication and relay
@@ -174,21 +176,39 @@ export TON_GLOBAL_CONFIG_JSON="$(curl -fsSL https://ton.org/global.config.json)"
 export TON_TESTNET_GLOBAL_CONFIG_JSON="$(curl -fsSL https://ton.org/testnet-global.config.json)"
 
 scripts/run-live-test.sh live_probe mainnet_dht_find_node_returns_valid_nodes
-scripts/run-live-test.sh live_probe testnet_dht_find_node_returns_valid_nodes
 scripts/run-live-test.sh live_probe mainnet_udp_overlay_get_random_peers_returns_valid_nodes
 scripts/run-live-test.sh live_probe mainnet_quic_overlay_get_random_peers_returns_valid_nodes
-scripts/run-live-test.sh live_delivery mainnet_public_plumtree_receives_payload
+scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_get_masterchain_info_smoke
+scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_get_version_and_time_smoke
+TON_GLOBAL_CONFIG_JSON="$TON_TESTNET_GLOBAL_CONFIG_JSON" \
+  scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_testnet_liteserver_smoke
+scripts/run-live-test.sh live_delivery mainnet_public_overlay_delivers_payload
 ```
 
 The DHT gate requires a nonempty `dht.findNode` answer whose nodes all validate.
 The UDP and QUIC gates require discovery plus a valid nonempty
-`overlay.getRandomPeers` response. The delivery gate starts an
-`OverlayNodeBuilder` server and `MempoolServer`, then requires both a completed
-Plumtree broadcast and an application packet from `subscribe_packets()` within
-one of three 120-second attempts. There is no network-unavailable skip:
-unreachable public infrastructure or missing payload traffic keeps the job red.
-Each successful log records target, peer, request, elapsed time, and node or
-payload counts. CI uploads the raw per-test logs as artifacts.
+`overlay.getRandomPeers` response. The liteserver gates require typed
+`getMasterchainInfo`, `getVersion`, and `getTime` responses; the testnet smoke
+tries every configured liteserver because early entries can be closed while
+later ones serve the network. The delivery gate starts an
+`OverlayNodeBuilder` server and `MempoolServer`, then requires a real packet
+from `subscribe_packets()`, a positive `mempool.overlay_packets` count, and
+either a legacy/FEC custom message or a completed Plumtree broadcast within one
+of three 300-second attempts.
+
+The public mainnet basechain overlay currently carries legacy
+`overlay.broadcast` / `overlay.broadcastFec` frames for external messages, so
+the public delivery gate accepts that framing. Plumtree completion remains
+covered by the deterministic two-node UDP and QUIC loopback tests rather than
+by waiting for public traffic to switch framing. There is no network-unavailable
+skip: unreachable public infrastructure or missing payload traffic keeps the
+job red. Each successful log records target, peer, request, elapsed time, and
+node or payload counts. CI uploads the raw per-test logs as artifacts.
+
+Testnet DHT is not part of the PR gate while the canonical testnet seeds are
+unreachable. It runs strictly in the scheduled/manual
+`.github/workflows/live-testnet-dht.yml` workflow and stays red until upstream
+testnet DHT recovers.
 
 ## Workspace
 

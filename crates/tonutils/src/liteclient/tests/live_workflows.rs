@@ -50,3 +50,36 @@ async fn live_get_version_and_time_smoke() {
     assert!(version.version > 0);
     assert!(now > 0);
 }
+
+/// Testnet replacement for the PR-blocking DHT gate.
+///
+/// The canonical testnet DHT seeds are currently unreachable, but the testnet
+/// liteservers answer normally. Every configured index is tried because the
+/// first entries in the published configuration can be closed while later
+/// ones serve the same network.
+#[tokio::test]
+#[ignore = "requires testnet liteserver configuration and network access"]
+async fn live_testnet_liteserver_smoke() {
+    let config = load_config();
+    let mut failures = Vec::new();
+    for index in 0..config.liteservers.len() {
+        match LiteClient::connect_config(&config, index).await {
+            Ok(mut client) => match client.get_masterchain_info().await {
+                Ok(info) => {
+                    assert!(info.last.seqno > 0);
+                    eprintln!(
+                        "testnet liteserver index={index} seqno={} workchain={} shard={}",
+                        info.last.seqno, info.last.workchain, info.last.shard
+                    );
+                    return;
+                }
+                Err(error) => failures.push(format!("index {index}: {error}")),
+            },
+            Err(error) => failures.push(format!("index {index}: {error}")),
+        }
+    }
+    panic!(
+        "no testnet liteserver answered getMasterchainInfo: {}",
+        failures.join(" | ")
+    );
+}
