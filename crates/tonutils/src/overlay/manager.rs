@@ -17,7 +17,7 @@ use std::{
 use crate::overlay::{
     INGEST_WAIT_TIMEOUT, OverlayConfig, OverlayError, OverlayId, OverlayPacket, OverlayPeerPool,
     OverlaySession, OverlaySessionSender, PeerId, PeerManager, PeerStatus, ReconnectFactory,
-    RoutingMetadata,
+    RoutingMetadata, SHUTDOWN_GRACE,
 };
 
 use tokio::sync::{Mutex, RwLock, broadcast, oneshot, watch};
@@ -574,7 +574,23 @@ impl PeerManager {
     pub async fn shutdown_wait(&self) {
         self.shutdown();
         let tasks = std::mem::take(&mut *self.tasks.lock().await);
-        for task in tasks {
+        await_tasks_with_grace(tasks).await;
+    }
+}
+
+/// Waits for `tasks`, aborting whatever is still running once
+/// [`SHUTDOWN_GRACE`] expires.
+///
+/// Shutdown must stay bounded: a transport or dial can sit in a
+/// multi-second timeout that ignores the shutdown signal, and awaiting
+/// those unbounded made `shutdown_wait` take minutes on a busy public
+/// node. The grace is shared across the whole batch so a long first
+/// task cannot extend the wait for the rest.
+pub(crate) async fn await_tasks_with_grace(tasks: Vec<tokio::task::JoinHandle<()>>) {
+    let deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
+    for mut task in tasks {
+        if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
+            task.abort();
             let _ = task.await;
         }
     }

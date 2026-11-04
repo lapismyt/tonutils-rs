@@ -239,15 +239,18 @@ impl OverlayClient {
         self.inner.manager.shutdown();
     }
 
-    /// Stops the manager and packet pump, then waits for their tasks.
+    /// Stops the manager and packet pump, then waits for their tasks with a
+    /// bounded grace period.
     pub async fn shutdown_wait(&self) {
         self.inner.manager.shutdown_wait().await;
+        let mut tasks = Vec::new();
         if let Some(task) = self.inner.packet_task.lock().await.take() {
-            let _ = task.await;
+            tasks.push(task);
         }
         if let Some(task) = self.inner.plumtree_task.lock().await.take() {
-            let _ = task.await;
+            tasks.push(task);
         }
+        super::manager::await_tasks_with_grace(tasks).await;
     }
 }
 

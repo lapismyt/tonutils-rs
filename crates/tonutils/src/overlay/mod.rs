@@ -614,6 +614,15 @@ pub struct DiscoveryStats {
 /// back to polling `receive()`.
 const INGEST_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(200);
 
+/// Grace period before shutdown aborts background tasks that ignored the
+/// shutdown signal.
+///
+/// Transports and dials can hold a task in a multi-second timeout; waiting
+/// for them without a bound made `shutdown_wait` take minutes on a busy
+/// public node.  The grace is long enough to let a healthy loop observe the
+/// signal and short enough to keep test and application shutdown bounded.
+pub(crate) const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Bounded peer pool used by scanners and broadcasters.
 pub struct OverlayPeerPool {
     config: OverlayConfig,

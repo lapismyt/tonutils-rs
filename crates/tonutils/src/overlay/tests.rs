@@ -1,8 +1,10 @@
 use super::{
-    Address, Arc, DhtNode, DiscoveryConfig, DiscoveryRecord, Duration, Int256, OverlayConfig,
-    OverlayError, OverlayId, OverlayPacket, OverlayPeerPool, OverlaySession, OverlaySessionSender,
-    PeerId, PeerManager, PeerStatus, ReconnectFactory, RoutingMetadata, SeedPeer, TlPublicKey,
-    select_discovery_peers, select_typed_dht_peers,
+    Address, Arc, DhtNode, DiscoveryConfig, DiscoveryRecord, DiscoveryStats, Duration, Int256,
+    OverlayClient, OverlayClientInit, OverlayConfig, OverlayError, OverlayId,
+    OverlayMemberEndpoints, OverlayPacket, OverlayPeerPool, OverlaySession, OverlaySessionSender,
+    PeerId, PeerManager, PeerQualityConfig, PeerQualityRegistry, PeerStatus, ReconnectFactory,
+    RoutingMetadata, SHUTDOWN_GRACE, SeedPeer, TlPublicKey, select_discovery_peers,
+    select_typed_dht_peers,
 };
 
 use crate::adnl::tl::{AddressList, DhtNodeBoxed};
@@ -563,4 +565,77 @@ async fn cancelled_task_keeps_reregistered_session() {
     );
     manager.shutdown_wait().await;
     assert_eq!(manager.peer_count().await, 0);
+}
+
+/// Builds a client around `manager` with the defaults the live delivery gate
+/// uses when Plumtree is not enabled.
+fn test_client(manager: PeerManager) -> OverlayClient {
+    OverlayClient::new(OverlayClientInit {
+        manager,
+        broadcast: None,
+        quality: Arc::new(PeerQualityRegistry::new(PeerQualityConfig::default())),
+        member_endpoints: OverlayMemberEndpoints::default(),
+        known_peers: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+        discovery: DiscoveryStats::default(),
+        packet_capacity: 256,
+        plumtree: None,
+    })
+}
+
+/// Legacy public-overlay traffic reaches the application path end to end:
+/// a registered session hands a packet to the pool, the packet pump forwards
+/// it, and `subscribe_packets()` observes it.
+#[tokio::test]
+async fn registered_session_packet_reaches_subscribe_packets() {
+    let overlay = OverlayId::from_name(b"legacy-loopback");
+    let manager = PeerManager::with_overlay(OverlayConfig::default(), overlay).unwrap();
+    let peer = PeerId::from_bytes([21; 32]);
+    manager
+        .add_session(Box::new(FlakySession { peer, fail: false }))
+        .await;
+    let client = test_client(manager.clone());
+    let mut packets = client.subscribe_packets();
+    let payload: Arc<[u8]> = Arc::from([0x11u8, 0x22, 0x33].as_slice());
+
+    manager
+        .pool()
+        .ingest(OverlayPacket {
+            payload: Arc::clone(&payload),
+            routing: RoutingMetadata::new(overlay, peer),
+        })
+        .await
+        .expect("a registered session's packet must be accepted");
+
+    let packet = tokio::time::timeout(Duration::from_secs(2), packets.recv())
+        .await
+        .expect("the packet pump must forward the packet")
+        .expect("the packet subscription must stay open");
+    assert_eq!(packet.payload.as_ref(), payload.as_ref());
+    assert_eq!(packet.routing.overlay, overlay);
+    assert_eq!(packet.routing.peer, peer);
+    client.shutdown_wait().await;
+}
+
+/// Shutdown must not wait forever on a background task that ignores the
+/// shutdown signal.
+#[tokio::test]
+async fn shutdown_wait_aborts_tasks_that_ignore_the_signal() {
+    let manager = PeerManager::new(OverlayConfig::default()).unwrap();
+    manager
+        .tasks
+        .lock()
+        .await
+        .push(tokio::spawn(std::future::pending::<()>()));
+
+    tokio::time::timeout(Duration::from_secs(10), manager.shutdown_wait())
+        .await
+        .expect("shutdown_wait must stay bounded");
+    assert!(
+        manager.tasks.lock().await.is_empty(),
+        "the task list must be drained after shutdown"
+    );
+    assert!(
+        SHUTDOWN_GRACE < Duration::from_secs(10),
+        "the grace period must stay below the test bound"
+    );
 }

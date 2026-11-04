@@ -121,8 +121,6 @@ impl OverlayServer {
     pub async fn shutdown_wait(&self) {
         self.client.shutdown_wait().await;
         let tasks = std::mem::take(&mut *self.tasks.lock().await);
-        for task in tasks {
-            let _ = task.await;
-        }
+        super::manager::await_tasks_with_grace(tasks).await;
     }
 }
