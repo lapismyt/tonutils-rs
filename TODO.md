@@ -20,6 +20,8 @@ evidence.
 ## `tonutils::overlay`
 - [x] Use Plumtree as the public-overlay broadcast path; keep signed simple/FEC broadcasting only for external-message compatibility.
 - [x] Gate PRs on real mainnet DHT, UDP, QUIC, testnet liteserver, and public overlay receive evidence through exact single-test invocations; zero-test matches and network-unavailable skips are failures.
+- [x] Keep DHT address publication on the bootstrap DHT resolver seeds (explicit seeds and config `dht.static_nodes`); discovered overlay members are dial targets, never DHT store or verification candidates.
+- [x] Keep the public delivery gate at three 300-second attempts with at most 256 peers and no soft-skip. It accepts legacy/FEC or Plumtree completion but still requires a real `subscribe_packets()` payload; runtime delivery remains best effort, not a library guarantee.
 - [ ] Restore the strict testnet DHT gate to PRs once the canonical testnet seeds answer; it currently runs in the scheduled/manual `live-testnet-dht` workflow and stays red.
 - [ ] Add upstream Plumtree statistics exchange and private-overlay authorized-key sets after their wire behavior is verified.
 

@@ -65,13 +65,16 @@ pub struct OverlayNodeBuilder {
     reconnect_attempts: u32,
     reconnect_backoff: Duration,
     peer_growth_lookup: Option<SeedDiscoveryLookup>,
-    /// DHT resolver seeds shared with the peer-growth lookup.
+    /// DHT resolver seeds shared with the peer-growth lookup and the DHT
+    /// address publisher.
     ///
     /// `start` fills this with the bootstrap seed set - explicit seeds and the
     /// global config's DHT static nodes - so growth can resolve member
-    /// `address` values through nodes guaranteed to answer `dht.findValue`.
-    /// See [`udp_peer_growth_with_resolvers`].
-    growth_resolvers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>>,
+    /// `address` values and the publisher can store this node's `address`
+    /// through nodes guaranteed to answer DHT queries.  Discovered overlay
+    /// members are deliberately excluded from this set: they are dial targets,
+    /// not DHT resolvers.
+    dht_resolvers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>>,
     /// Overlay member endpoints shared with the UDP lookups and the QUIC
     /// discovery path.
     ///
@@ -83,6 +86,12 @@ pub struct OverlayNodeBuilder {
     overlay_max_peers: u32,
     external_address: Option<std::net::SocketAddr>,
     address_publisher: Option<DhtAddressPublisher>,
+    /// Maximum random delay before the first DHT publish round.
+    ///
+    /// Production uses [`PUBLISH_FIRST_ROUND_STAGGER_MAX`]; the wiring test
+    /// sets this to zero so it does not wait on the wall clock.
+    #[cfg(test)]
+    publish_first_round_stagger_max: Duration,
     /// Local ADNL key, remembered by the transport configurators
     /// so `start` can sign overlay broadcasts with it.
     local_keypair: Option<AdnlKeyPair>,
@@ -138,7 +147,7 @@ impl fmt::Debug for OverlayNodeBuilder {
             .field("reconnect_attempts", &self.reconnect_attempts)
             .field("reconnect_backoff", &self.reconnect_backoff)
             .field("peer_growth_lookup", &self.peer_growth_lookup.is_some())
-            .field("growth_resolvers", &self.growth_resolvers)
+            .field("dht_resolvers", &self.dht_resolvers)
             .field(
                 "member_endpoints",
                 &registered_member_count(&self.member_endpoints),
@@ -185,11 +194,13 @@ impl Default for OverlayNodeBuilder {
             reconnect_attempts: 5,
             reconnect_backoff: Duration::from_secs(1),
             peer_growth_lookup: None,
-            growth_resolvers: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            dht_resolvers: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             member_endpoints: OverlayMemberEndpoints::default(),
             overlay_max_peers: 30,
             external_address: None,
             address_publisher: None,
+            #[cfg(test)]
+            publish_first_round_stagger_max: PUBLISH_FIRST_ROUND_STAGGER_MAX,
             local_keypair: None,
             plumtree: PlumtreeConfig::default(),
             plumtree_handle: PlumtreeHandle::new(PlumtreeConfig::default()),
@@ -338,7 +349,7 @@ impl OverlayNodeBuilder {
             local_keypair,
             overlay,
             discovery_timeout,
-            Arc::clone(&builder.growth_resolvers),
+            Arc::clone(&builder.dht_resolvers),
             builder.member_endpoints.clone(),
         ));
         builder.address_publisher = Some(address_publisher(
@@ -658,11 +669,17 @@ impl OverlayNodeBuilder {
             }
         }
         let pinned_ids = pinned.iter().map(|peer| peer.peer).collect::<HashSet<_>>();
-        // Hand the bootstrap seed set to the peer-growth lookup: explicit
-        // seeds and the config's DHT static nodes are DHT nodes, so growth
-        // resolves member `address` values through nodes that answer
-        // `dht.findValue`, the same role pytoniq's DhtClient node set plays.
-        *self.growth_resolvers.write().await = seeds.clone();
+        // Hand the bootstrap seed set to peer growth and address publication:
+        // explicit seeds and the config's DHT static nodes are DHT nodes, so
+        // growth resolves member `address` values and the publisher stores this
+        // node's address through nodes that answer DHT queries, the same role
+        // pytoniq's DhtClient node set plays.  Overlay membership is never
+        // substituted here.
+        *self.dht_resolvers.write().await = seeds.clone();
+        log::debug!(
+            "overlay::start: dht_resolvers={} source=bootstrap_seeds (explicit seeds and config DHT static nodes); overlay membership excluded",
+            seeds.len()
+        );
         let discovery = DiscoveryConfig {
             overlay: self.overlay_id,
             seeds: seeds.clone(),
@@ -876,7 +893,11 @@ impl OverlayNodeBuilder {
             }
             if server && let Some(publish) = self.address_publisher.clone() {
                 let manager = manager.clone();
-                let known = known_peers.clone();
+                let resolvers = Arc::clone(&self.dht_resolvers);
+                #[cfg(test)]
+                let first_round_stagger_max = self.publish_first_round_stagger_max;
+                #[cfg(not(test))]
+                let first_round_stagger_max = PUBLISH_FIRST_ROUND_STAGGER_MAX;
                 let mut shutdown = manager.subscribe_shutdown();
                 server_tasks.push(tokio::spawn(async move {
                     // Publish before the first growth round so
@@ -891,7 +912,7 @@ impl OverlayNodeBuilder {
                     // 447).
                     let stagger_ms = (rand::random::<f64>()
                         * f64::from(
-                            u32::try_from(PUBLISH_FIRST_ROUND_STAGGER_MAX.as_millis())
+                            u32::try_from(first_round_stagger_max.as_millis())
                                 .unwrap_or(u32::MAX),
                         )) as u64;
                     tokio::select! {
@@ -899,8 +920,16 @@ impl OverlayNodeBuilder {
                         () = tokio::time::sleep(Duration::from_millis(stagger_ms)) => {}
                     }
                     loop {
-                        let nodes = known.read().await.clone();
-                        if !nodes.is_empty() {
+                        let nodes = resolvers.read().await.clone();
+                        if nodes.is_empty() {
+                            log::debug!(
+                                "dht address publish: no bootstrap DHT resolver seeds; skipping round"
+                            );
+                        } else {
+                            log::debug!(
+                                "dht address publish: resolver_seeds={} source=bootstrap_seeds",
+                                nodes.len()
+                            );
                             publish(nodes).await;
                         }
                         tokio::select! {
@@ -1003,5 +1032,99 @@ impl OverlayNodeBuilder {
                 .then_with(|| left.address.cmp(&right.address))
         });
         Ok(peers)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{future, sync::Arc, time::Duration};
+
+    use futures::future::BoxFuture;
+
+    use super::OverlayNodeBuilder;
+    use crate::overlay::{
+        DhtAddressPublisher, OverlaySession, OverlaySessionFactory, PeerId, SeedDiscoveryLookup,
+        SeedPeer,
+    };
+
+    struct TestSession {
+        peer: PeerId,
+    }
+
+    impl OverlaySession for TestSession {
+        fn peer_id(&self) -> PeerId {
+            self.peer
+        }
+
+        fn receive(&mut self) -> BoxFuture<'_, Result<Arc<[u8]>, String>> {
+            Box::pin(future::pending())
+        }
+
+        fn send(&mut self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn address_publisher_uses_bootstrap_dht_seeds_not_overlay_members() {
+        let dht_seed = SeedPeer::from_public_key([1; 32], "127.0.0.1:30303");
+        let overlay_member = SeedPeer::from_public_key([2; 32], "127.0.0.1:30304");
+
+        let expected_seed = dht_seed.clone();
+        let discovered_member = overlay_member.clone();
+        let discovery: SeedDiscoveryLookup = Arc::new(move |seeds| {
+            let expected_seed = expected_seed.clone();
+            let discovered_member = discovered_member.clone();
+            Box::pin(async move {
+                assert_eq!(seeds, vec![expected_seed]);
+                vec![discovered_member]
+            })
+        });
+        let factory: OverlaySessionFactory = Arc::new(|seed| {
+            Box::pin(async move {
+                Ok(Box::new(TestSession { peer: seed.peer }) as Box<dyn OverlaySession>)
+            })
+        });
+        let (publish_tx, mut publish_rx) = tokio::sync::mpsc::unbounded_channel();
+        let publisher: DhtAddressPublisher = Arc::new(move |nodes| {
+            let publish_tx = publish_tx.clone();
+            Box::pin(async move {
+                let _ = publish_tx.send(nodes);
+                1
+            })
+        });
+
+        let mut builder = OverlayNodeBuilder::new()
+            .seed(dht_seed.clone())
+            .session_factory(factory)
+            .seed_discovery_lookup(discovery)
+            .bootstrap_timeout(Duration::from_secs(1))
+            .overlay_max_peers(8);
+        #[cfg(feature = "overlay-config")]
+        {
+            builder = builder.download_config(false);
+        }
+        builder.address_publisher = Some(publisher);
+        builder.publish_first_round_stagger_max = Duration::ZERO;
+
+        let server = builder
+            .start_server()
+            .await
+            .expect("the fake session must register and the fake publisher must start");
+        let published = tokio::time::timeout(Duration::from_secs(5), publish_rx.recv())
+            .await
+            .expect("the publisher must run once startup completes")
+            .expect("the publisher observation channel must stay open");
+
+        assert_eq!(
+            published,
+            vec![dht_seed],
+            "publication must use only the configured bootstrap DHT seeds"
+        );
+        assert!(
+            !published.contains(&overlay_member),
+            "a discovered overlay member must never be used as a DHT resolver"
+        );
+        server.shutdown_wait().await;
     }
 }

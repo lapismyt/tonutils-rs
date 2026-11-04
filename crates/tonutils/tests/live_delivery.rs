@@ -155,7 +155,7 @@ async fn mainnet_public_overlay_delivers_payload() -> Result<()> {
     let max_peers = std::env::var("TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(64u32);
+        .unwrap_or(256u32);
     let mut failures = Vec::new();
 
     for attempt in 1..=DELIVERY_ATTEMPTS {

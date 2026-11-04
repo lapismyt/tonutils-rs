@@ -169,7 +169,7 @@ jobs:
       RUST_LOG: tonutils=debug
       TON_LIVE_FEATURES: mempool,overlay-config
       TON_LIVE_LOG_DIR: ${{ github.workspace }}/live-logs
-      TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS: '64'
+      TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS: '256'
     steps:
       - name: Checkout
         uses: actions/checkout@v7

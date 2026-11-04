@@ -59,6 +59,14 @@ network configuration. `mempool` depends on `overlay` for transport traits but
 does not imply `network-config` or `overlay-config`; callers select bootstrap
 configuration explicitly.
 
+DHT publication and peer-growth address resolution share the bootstrap DHT
+resolver set: explicit seeds plus the global config's `dht.static_nodes`.
+`OverlayNodeBuilder::start` populates that set once; the publisher reads it on
+every round. Overlay members returned by `overlay.getRandomPeers` are dial
+targets and must never be passed to `dht.store` or `dht.findValue` verification
+as resolvers. The bootstrap `dht-server` nodes answer DHT queries; overlay
+members such as pytoniq clients do not.
+
 ## Plumtree Runtime
 
 Plumtree is the bulk public-overlay broadcast path for peers that speak it.
@@ -316,11 +324,13 @@ recovers.
   responses. The testnet smoke tries every configured index and reports the
   first one that answers `getMasterchainInfo`.
 - Delivery evidence: three fresh-key, fresh-connection attempts of 300 seconds
-  with at most 64 peers. Success requires a real `subscribe_packets()` payload,
+  with at most 256 peers. Success requires a real `subscribe_packets()` payload,
   a positive `mempool.overlay_packets` count, and either a legacy/FEC custom
   message or a completed Plumtree broadcast. `MempoolServer` runs in parallel
   and logs peer status, routing, validation metrics, ingest drops, FEC decoding,
-  and any external-message event.
+  and any external-message event. Runtime delivery is best effort; the gate
+  proves observed payload traffic during the run, not a library delivery
+  guarantee.
 
 Plumtree completion is covered by the deterministic two-node UDP and QUIC
 loopback tests. The public mainnet basechain overlay currently carries legacy

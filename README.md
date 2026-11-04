@@ -138,6 +138,13 @@ participation, but reachability, overlay membership rules, and peer selection
 still determine whether mainnet peers route a particular broadcast through the
 node. Neither mode guarantees application delivery.
 
+DHT publication and peer-growth address resolution use the builder's bootstrap
+DHT resolver set: explicit seeds plus the global config's `dht.static_nodes`.
+Overlay members discovered through `overlay.getRandomPeers` are dial targets,
+not DHT resolvers, and are never substituted for that set. This keeps the
+publisher's `dht.store` and verification rounds on nodes that actually answer
+DHT queries.
+
 `mempool` owns only external-message semantics. `MempoolServer::new` takes an
 already-built `OverlayClient` and a `MempoolConfig`, subscribes to verified
 overlay packets and peer statuses, validates and deduplicates external-message
@@ -194,7 +201,7 @@ later ones serve the network. The delivery gate starts an
 `OverlayNodeBuilder` server and `MempoolServer`, then requires a real packet
 from `subscribe_packets()`, a positive `mempool.overlay_packets` count, and
 either a legacy/FEC custom message or a completed Plumtree broadcast within one
-of three 300-second attempts.
+of three 300-second attempts with at most 256 peers.
 
 The public mainnet basechain overlay currently carries legacy
 `overlay.broadcast` / `overlay.broadcastFec` frames for external messages, so
@@ -204,6 +211,9 @@ by waiting for public traffic to switch framing. There is no network-unavailable
 skip: unreachable public infrastructure or missing payload traffic keeps the
 job red. Each successful log records target, peer, request, elapsed time, and
 node or payload counts. CI uploads the raw per-test logs as artifacts.
+Runtime delivery remains best effort: the gate proves that observable public
+payload traffic reached the node during the run, not that the library can
+guarantee routing or delivery for every payload.
 
 Testnet DHT is not part of the PR gate while the canonical testnet seeds are
 unreachable. It runs strictly in the scheduled/manual
