@@ -46,6 +46,16 @@ use futures::future::BoxFuture;
 /// within five seconds is not useful verification evidence.
 const MEMBERSHIP_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Overall per-query deadline for a membership store or enrichment round.
+///
+/// Upstream's DHT store query gives each responsible node a 2-4 second
+/// response window. Using the caller's 30-second publish deadline stretches
+/// one failed round across most of the 300-second admission window, leaving
+/// only two or three chances for the rotating 768-byte membership sample.
+/// A healthy DHT node answers a 256-byte store or `findNode` well inside this
+/// bound; silent nodes are better retried on the next fixed cadence.
+const MEMBERSHIP_DHT_TIMEOUT: Duration = Duration::from_secs(8);
+
 /// Builds a membership publisher bound to this node's identity and overlay.
 pub(super) fn membership_publisher(
     local_addr: SocketAddr,
@@ -81,6 +91,7 @@ pub(super) async fn publish_overlay_membership(
     dht_nodes: Vec<SeedPeer>,
     timeout: Duration,
 ) -> usize {
+    let timeout = timeout.min(MEMBERSHIP_DHT_TIMEOUT);
     let first = publish_membership_attempt(
         local_addr,
         local_keypair,

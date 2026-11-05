@@ -149,11 +149,13 @@ Overlay members discovered through `overlay.getRandomPeers` are dial targets,
 not DHT resolvers, and are never substituted for that set. This keeps the
 publisher's `dht.store` and verification rounds for both DHT records on nodes
 that actually answer DHT queries. Membership is republished on a fixed
-one-minute cadence, with rounds starting immediately when a slow store round
+30-second cadence, with rounds starting immediately when a slow store round
 overruns, because the 768-byte overlay membership record is a rotating sample.
-Each round stores on the eight nearest enriched DHT candidates and verifies
-against the whole candidate set, not only the nodes that acknowledged the
-store. The address record is republished every ten minutes.
+Membership DHT queries have an eight-second deadline, so a silent resolver
+cannot consume the next round. Each round stores on the eight nearest enriched
+DHT candidates and verifies against the whole candidate set, not only the
+nodes that acknowledged the store. The address record is republished every ten
+minutes.
 
 `mempool` owns only external-message semantics. `MempoolServer::new` takes an
 already-built `OverlayClient` and a `MempoolConfig`, subscribes to verified

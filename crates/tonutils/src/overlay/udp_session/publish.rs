@@ -91,12 +91,13 @@ pub const PUBLISH_INTERVAL: Duration = Duration::from_mins(10);
 ///
 /// The public-overlay membership value is capped at 768 bytes and the DHT
 /// update rule randomly evicts existing nodes when a new node no longer fits.
-/// Upstream republishes that value every 60-100 seconds, so a ten-minute
-/// cadence loses the membership race against the rest of the overlay. The
-/// task wakes on this interval and publishes the membership record every
-/// round; the address record keeps the ten-minute [`PUBLISH_INTERVAL`] cadence
+/// Upstream republishes that value every 60-100 seconds. A fresh node loses
+/// the admission race against the rest of the overlay at that rate, so this
+/// crate publishes twice as often while keeping each round bounded. The task
+/// wakes on this interval and publishes the membership record every round;
+/// the address record keeps the ten-minute [`PUBLISH_INTERVAL`] cadence
 /// through the combined publisher.
-pub(crate) const MEMBERSHIP_PUBLISH_INTERVAL: Duration = Duration::from_secs(60);
+pub(crate) const MEMBERSHIP_PUBLISH_INTERVAL: Duration = Duration::from_secs(30);
 
 /// How many publish-task rounds share one `address` publication.
 const ADDRESS_PUBLISH_EVERY: u64 =
@@ -945,10 +946,10 @@ mod tests {
     };
 
     use super::{
-        Address, AddressListBoxed, AdnlKeyPair, DhtAddressPublisher, DhtCandidate, DhtUpdateRule,
-        ENRICH_ATTEMPTS, Int256, IpAddr, SeedPeer, SocketAddr, VALUE_TTL_SECS, address_dht_value,
-        combine_publishers, enrichment_order, is_globally_routable, known_candidates, now_i32,
-        short_id, value_matches, xor_distance,
+        ADDRESS_PUBLISH_EVERY, Address, AddressListBoxed, AdnlKeyPair, DhtAddressPublisher,
+        DhtCandidate, DhtUpdateRule, ENRICH_ATTEMPTS, Int256, IpAddr, SeedPeer, SocketAddr,
+        VALUE_TTL_SECS, address_dht_value, combine_publishers, enrichment_order,
+        is_globally_routable, known_candidates, now_i32, short_id, value_matches, xor_distance,
     };
 
     #[tokio::test]
@@ -999,15 +1000,21 @@ mod tests {
         let publish = combine_publishers(address, Some(membership));
         let seeds = vec![SeedPeer::from_public_key([7; 32], "8.8.8.8:5000")];
 
-        for _ in 0..10 {
+        for _ in 0..ADDRESS_PUBLISH_EVERY {
             publish(seeds.clone()).await;
         }
         assert_eq!(address_calls.load(Ordering::Relaxed), 2);
-        assert_eq!(membership_calls.load(Ordering::Relaxed), 10);
+        assert_eq!(
+            membership_calls.load(Ordering::Relaxed),
+            usize::try_from(ADDRESS_PUBLISH_EVERY).unwrap()
+        );
 
         publish(seeds).await;
         assert_eq!(address_calls.load(Ordering::Relaxed), 2);
-        assert_eq!(membership_calls.load(Ordering::Relaxed), 11);
+        assert_eq!(
+            membership_calls.load(Ordering::Relaxed),
+            usize::try_from(ADDRESS_PUBLISH_EVERY).unwrap() + 1
+        );
     }
 
     #[test]
