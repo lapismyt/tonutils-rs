@@ -943,6 +943,13 @@ impl OverlayNodeBuilder {
                         _ = shutdown.changed() => return,
                         () = tokio::time::sleep(Duration::from_millis(stagger_ms)) => {}
                     }
+                    // Keep the membership cadence anchored to the start of the
+                    // previous round.  Sleeping a full interval after a slow
+                    // store/verify round stretches the period to 105-140s,
+                    // outside the upstream 60-100s republish window.  When a
+                    // round overruns, start the next one immediately instead
+                    // of adding another minute.
+                    let mut next_round = tokio::time::Instant::now();
                     loop {
                         let nodes = resolvers.read().await.clone();
                         if nodes.is_empty() {
@@ -956,9 +963,14 @@ impl OverlayNodeBuilder {
                             );
                             publish(nodes).await;
                         }
+                        next_round += MEMBERSHIP_PUBLISH_INTERVAL;
+                        let now = tokio::time::Instant::now();
+                        if next_round <= now {
+                            next_round = now;
+                        }
                         tokio::select! {
                             _ = shutdown.changed() => return,
-                            () = tokio::time::sleep(MEMBERSHIP_PUBLISH_INTERVAL) => {}
+                            () = tokio::time::sleep_until(next_round) => {}
                         }
                     }
                 }));

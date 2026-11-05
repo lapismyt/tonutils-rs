@@ -89,11 +89,15 @@ The `nodes` value is a rotating sample, not a stable member list. The DHT
 `dht.updateRule.overlayNodes` merge keeps the serialized list within 768 bytes
 and randomly evicts entries when a new record does not fit. Upstream public
 overlay nodes therefore re-store their own record every 60-100 seconds. This
-crate's publish task wakes every 60 seconds and publishes membership on every
-round, while the `address` record keeps its ten-minute cadence because its TTL
-is one hour. A successful `dht.store` means the node was accepted, not that it
-survived the subsequent random eviction; `membership_listed` is a discovery
-metric and must not be used as a store-success signal.
+crate anchors publish rounds to a fixed 60-second cadence and starts the next
+round immediately when a slow store or verification overruns, publishing
+membership on every round. Each round targets the eight nearest enriched DHT
+candidates; verification asks the whole enriched candidate set because a node
+that acknowledged `dht.store` can still serve an older record. The `address`
+record keeps its ten-minute cadence because its TTL is one hour. A successful
+`dht.store` means the node was accepted, not that it survived the subsequent
+random eviction; `membership_listed` is a discovery metric and must not be used
+as a store-success signal.
 
 ## Plumtree Runtime
 

@@ -64,9 +64,10 @@ mod membership;
 ///
 /// The nodes responsible for a key are the ones closest to it in
 /// the DHT keyspace, and a store on a node that is not responsible
-/// is dropped silently, so a handful of the closest known nodes is
-/// enough - and keeps one round cheap.
-const PUBLISH_TARGETS: usize = 4;
+/// is dropped silently.  Use the full DHT replication factor so a
+/// rotating `overlayNodes` sample is evicted and reinserted across
+/// every responsible node, not just the closest quarter of them.
+const PUBLISH_TARGETS: usize = 8;
 
 /// How many nodes one `dht.findNode` round asks for.
 const FIND_NODE_K: i32 = 8;
@@ -130,6 +131,19 @@ pub(super) struct DhtCandidate {
     id: [u8; 32],
     public_key: AdnlPublicKey,
     address: SocketAddr,
+}
+
+/// Outcome of one DHT store round.
+///
+/// `stored` contains only nodes that acknowledged `dht.stored`; `candidates`
+/// is the enriched, distance-sorted placement set used for those stores.
+/// Membership verification needs the latter because a responsible node may
+/// hold a stale value while a peer it forwarded the store to already holds
+/// the fresh one.
+#[derive(Debug)]
+pub(super) struct PublishAttempt {
+    pub(super) stored: Vec<DhtCandidate>,
+    pub(super) candidates: Vec<DhtCandidate>,
 }
 
 /// The ADNL short id of a public key: the node's position in the
@@ -333,6 +347,7 @@ async fn publish_dht_address_value_attempt(
         "dht address publish",
     )
     .await
+    .stored
 }
 
 /// Stores one signed DHT value on the nodes closest to `key_id`.
@@ -353,7 +368,7 @@ pub(super) async fn publish_dht_value_attempt(
     timeout: Duration,
     attempt: usize,
     operation: &str,
-) -> Vec<DhtCandidate> {
+) -> PublishAttempt {
     let store_query = tl_proto::serialize(DhtMessage::Store {
         value: DhtValueBare::from(&value),
     });
@@ -421,7 +436,7 @@ pub(super) async fn publish_dht_value_attempt(
         "{operation}: stored on {} of {target_count} candidate node(s)",
         stored.len()
     );
-    stored
+    PublishAttempt { stored, candidates }
 }
 
 /// The publish round's starting candidate set: the known DHT
