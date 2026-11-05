@@ -46,8 +46,8 @@ use crate::{
         AdnlAddress, AdnlKeyPair, AdnlPublicKey, AdnlUdpTransport, now_i32,
         tl::{
             AddressListBoxed, AdnlNetAddress as Address, AdnlTlPublicKey as TlPublicKey, DhtKey,
-            DhtKeyDescription, DhtMessage, DhtNode, DhtNodesBoxed, DhtUpdateRule, DhtValue,
-            DhtValueBare, DhtValueResult, Int128,
+            DhtKeyDescription, DhtMessage, DhtNode, DhtUpdateRule, DhtValue, DhtValueBare,
+            DhtValueResult, Int128,
         },
         udp::local_reinit_date,
     },
@@ -461,14 +461,21 @@ fn known_candidates(dht_nodes: &[SeedPeer]) -> Vec<DhtCandidate> {
     candidates
 }
 
-/// How many known nodes one enrichment step asks before giving up.
+/// How many rounds one enrichment walk performs.
 ///
-/// The closest known seed is not guaranteed to answer: live runs lost
-/// the enrichment round on a silent closest seed seven times out of
-/// eight, which degraded the store placement to the unenriched seed
-/// list.  Retrying the next-closest seeds recovers the placement at
-/// the cost of one bounded round each.
-const ENRICH_ATTEMPTS: usize = 3;
+/// Upstream's store query first runs an iterative `dht.findNode` lookup for
+/// the target key, then stores on the resulting k closest nodes. A single
+/// `findNode` answer from one seed can miss nodes that are closer to the key,
+/// so the walk follows newly returned nodes for a bounded number of rounds.
+const ENRICH_ROUNDS: usize = 3;
+
+/// How many candidates one enrichment round asks concurrently.
+///
+/// The closest known seed is not guaranteed to answer, and querying one node
+/// per round spends the whole membership window on silent seeds. Four
+/// concurrent probes keep the walk bounded while still recovering promptly
+/// from a silent resolver.
+const ENRICH_BATCH: usize = 4;
 
 /// Per-query deadline for one `findNode` enrichment walk.
 ///
@@ -479,15 +486,14 @@ const ENRICH_ATTEMPTS: usize = 3;
 /// silent seeds and delays the store round.
 const ENRICH_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Asks the closest known nodes for the DHT nodes closest to the
+/// Asks successive closest known nodes for the DHT nodes closest to the
 /// `address` key and merges them into `candidates`.
 ///
-/// The known set is usually the static seed list, which is rarely
-/// the part of the keyspace a fresh node id lands in; one
-/// `findNode` round is what reaches the nodes that are actually
-/// responsible for the key.  The closest seed is asked first; when
-/// it stays silent or errors out, the next-closest seeds are tried
-/// the same way, and the first round that answers ends the step.
+/// The known set is usually the static seed list, which is rarely the part of
+/// the keyspace a fresh node id lands in. Each round asks the closest
+/// not-yet-tried candidates concurrently; nodes returned by those answers are
+/// merged and become eligible for the next round, mirroring upstream's
+/// iterative `dht.findNode` walk before `dht.store`.
 #[expect(
     clippy::large_types_passed_by_value,
     reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
@@ -502,77 +508,81 @@ async fn enrich_with_find_node(
     operation: &str,
 ) {
     let find_node_timeout = timeout.min(ENRICH_TIMEOUT);
-    for &index in enrichment_order(candidates, key_id, attempt)
-        .iter()
-        .take(ENRICH_ATTEMPTS)
-    {
-        let Some(closest) = candidates.get(index).cloned() else {
-            return;
-        };
-        let Ok(session) = shared_session(
-            local_addr,
-            &local_keypair,
-            closest.public_key,
-            closest.address,
-        )
-        .await
-        else {
-            log::debug!(
-                "{operation}: findNode session to {} failed, trying the next seed",
-                closest.address
-            );
-            continue;
-        };
-        let nodes = match session
-            .dht_find_node(Int256(*key_id), FIND_NODE_K, find_node_timeout)
-            .await
-        {
-            Ok(DhtNodesBoxed { nodes }) => nodes,
-            Err(error) => {
-                log::debug!(
-                    "{operation}: findNode via {} failed: {error}",
-                    closest.address
-                );
-                continue;
+    let mut tried = HashSet::new();
+    for round in 1..=ENRICH_ROUNDS {
+        let batch = next_enrichment_batch(candidates, key_id, &tried);
+        if batch.is_empty() {
+            break;
+        }
+        for candidate in &batch {
+            tried.insert(candidate.address);
+        }
+        let results = futures::future::join_all(batch.into_iter().map(|candidate| {
+            let key_id = *key_id;
+            async move {
+                let session = shared_session(
+                    local_addr,
+                    &local_keypair,
+                    candidate.public_key,
+                    candidate.address,
+                )
+                .await
+                .ok()?;
+                let nodes = session
+                    .dht_find_node(Int256(key_id), FIND_NODE_K, find_node_timeout)
+                    .await
+                    .ok()?
+                    .nodes;
+                Some((candidate.address, nodes))
             }
-        };
-        let now = now_i32();
+        }))
+        .await;
+
+        let mut answered = 0usize;
         let mut found = 0usize;
-        for node in nodes {
-            if !node.is_valid(now) {
-                continue;
+        let now = now_i32();
+        for (address, nodes) in results.into_iter().flatten() {
+            answered += 1;
+            for node in nodes {
+                if !node.is_valid(now) {
+                    continue;
+                }
+                if let Some(candidate) = candidate_from_dht_node(&node)
+                    && !candidates
+                        .iter()
+                        .any(|existing| existing.id == candidate.id)
+                {
+                    found += 1;
+                    candidates.push(candidate);
+                }
             }
-            if let Some(candidate) = candidate_from_dht_node(&node)
-                && !candidates
-                    .iter()
-                    .any(|existing| existing.id == candidate.id)
-            {
-                found += 1;
-                candidates.push(candidate);
-            }
+            log::debug!("{operation}: findNode round {round} via {address} answered");
         }
         log::debug!(
-            "{operation}: findNode via {} returned {found} closer node(s)",
-            closest.address
+            "{operation}: findNode enrichment attempt={attempt} round={round} asked={} answered={answered} new_candidates={found}",
+            tried.len()
         );
-        return;
+        if answered == 0 && candidates.len() <= tried.len() {
+            break;
+        }
     }
-    log::debug!("{operation}: findNode enrichment exhausted {ENRICH_ATTEMPTS} attempt(s)");
 }
 
-/// The candidate indexes one enrichment walk asks, in distance order,
-/// rotated by `attempt`: every retry shifts the window by
-/// [`ENRICH_ATTEMPTS`] nodes (wrapping around), so a retry after
-/// round-wide silence reaches seeds the silent round never asked
-/// instead of re-asking the same closest ones.
-fn enrichment_order(candidates: &[DhtCandidate], key_id: &[u8; 32], attempt: usize) -> Vec<usize> {
-    let mut order: Vec<usize> = (0..candidates.len()).collect();
+/// Returns the closest not-yet-tried candidates for one enrichment round.
+fn next_enrichment_batch(
+    candidates: &[DhtCandidate],
+    key_id: &[u8; 32],
+    tried: &HashSet<SocketAddr>,
+) -> Vec<DhtCandidate> {
+    let mut order: Vec<usize> = (0..candidates.len())
+        .filter(|&index| !tried.contains(&candidates[index].address))
+        .collect();
     order.sort_by_key(|&index| xor_distance(&candidates[index].id, key_id));
-    if !order.is_empty() {
-        let start = (attempt * ENRICH_ATTEMPTS) % order.len();
-        order.rotate_left(start);
-    }
     order
+        .into_iter()
+        .take(ENRICH_BATCH)
+        .map(|index| candidates[index].clone())
+        .collect()
 }
 
 /// Extracts a publish candidate from a `dht.node` record.
@@ -940,16 +950,19 @@ async fn resolve_external_udp_address(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        collections::HashSet,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     use super::{
         ADDRESS_PUBLISH_EVERY, Address, AddressListBoxed, AdnlKeyPair, DhtAddressPublisher,
-        DhtCandidate, DhtUpdateRule, ENRICH_ATTEMPTS, Int256, IpAddr, SeedPeer, SocketAddr,
-        VALUE_TTL_SECS, address_dht_value, combine_publishers, enrichment_order,
-        is_globally_routable, known_candidates, now_i32, short_id, value_matches, xor_distance,
+        DhtCandidate, DhtUpdateRule, ENRICH_BATCH, Int256, IpAddr, SeedPeer, SocketAddr,
+        VALUE_TTL_SECS, address_dht_value, combine_publishers, is_globally_routable,
+        known_candidates, next_enrichment_batch, now_i32, short_id, value_matches, xor_distance,
     };
 
     #[tokio::test]
@@ -1082,40 +1095,48 @@ mod tests {
     }
 
     #[test]
-    fn enrichment_order_rotates_the_resolver_window_per_attempt() {
+    fn enrichment_batch_prefers_closest_untried_candidates() {
         let key_id = [7u8; 32];
         let candidates: Vec<DhtCandidate> = (0..9)
-            .map(|_| {
+            .map(|index| {
                 let keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
                 DhtCandidate {
                     id: short_id(&keypair.public_key),
                     public_key: keypair.public_key,
-                    address: "127.0.0.1:30303".parse().unwrap(),
+                    address: format!("127.0.0.1:{}", 30_303 + index).parse().unwrap(),
                 }
             })
             .collect();
         let mut sorted = (0..candidates.len()).collect::<Vec<_>>();
         sorted.sort_by_key(|&index| xor_distance(&candidates[index].id, &key_id));
 
-        // Attempt 0 keeps the plain closest-first order.
-        assert_eq!(enrichment_order(&candidates, &key_id, 0), sorted);
-        // Every further attempt shifts the window by ENRICH_ATTEMPTS,
-        // so a retry after round-wide silence never re-asks the same
-        // closest nodes first.
-        let window = |attempt: usize| -> Vec<usize> {
-            enrichment_order(&candidates, &key_id, attempt)
-                .into_iter()
-                .take(ENRICH_ATTEMPTS)
-                .collect()
-        };
-        assert_eq!(window(1), sorted[ENRICH_ATTEMPTS..2 * ENRICH_ATTEMPTS]);
-        assert_ne!(window(0), window(1));
-        // A wrap-around attempt stays a permutation of the whole set.
-        let wrapped = enrichment_order(&candidates, &key_id, 4);
-        let mut dedup = wrapped.clone();
-        dedup.sort_unstable();
-        dedup.dedup();
-        assert_eq!(dedup.len(), candidates.len());
+        let first = next_enrichment_batch(&candidates, &key_id, &HashSet::default());
+        assert_eq!(
+            first
+                .iter()
+                .map(|candidate| candidate.address)
+                .collect::<Vec<_>>(),
+            sorted
+                .iter()
+                .take(ENRICH_BATCH)
+                .map(|&index| candidates[index].address)
+                .collect::<Vec<_>>()
+        );
+
+        let tried = HashSet::from([candidates[sorted[0]].address]);
+        let second = next_enrichment_batch(&candidates, &key_id, &tried);
+        assert_eq!(
+            second
+                .iter()
+                .map(|candidate| candidate.address)
+                .collect::<Vec<_>>(),
+            sorted
+                .iter()
+                .skip(1)
+                .take(ENRICH_BATCH)
+                .map(|&index| candidates[index].address)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]

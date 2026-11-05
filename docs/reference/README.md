@@ -94,13 +94,17 @@ round immediately when a slow store or verification overruns, publishing
 membership on every round. Membership store and `findNode` queries use an
 eight-second deadline, and each `findValue` verification probe uses five
 seconds, so a silent DHT node cannot stretch a round past the admission
-window. Each round targets the eight nearest enriched DHT candidates;
-verification asks the whole enriched candidate set because a node that
-acknowledged `dht.store` can still serve an older record. The `address` record
-keeps its ten-minute cadence because its TTL is one hour. A successful
-`dht.store` means the node was accepted, not that it survived the subsequent
-random eviction; `membership_listed` is a discovery metric and must not be used
-as a store-success signal.
+window. Placement follows an iterative `findNode` walk, querying successive
+nearest candidates four at a time for up to three rounds and merging the nodes
+they return, then storing on the eight nearest candidates. Verification asks
+the whole enriched candidate set because a node that acknowledged `dht.store`
+can still serve an older record. A store round is retried when verification
+cannot serve this node's record even if some nodes acknowledged `dht.store`;
+the retry delays are five and fifteen seconds and reset only after a served
+record. The `address` record keeps its ten-minute cadence because its TTL is
+one hour. A successful `dht.store` means the store was accepted, not that the
+record survived random eviction; `membership_listed` is a discovery metric and
+must not be used as a store-success signal.
 
 ## Plumtree Runtime
 

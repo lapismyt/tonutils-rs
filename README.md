@@ -152,10 +152,12 @@ that actually answer DHT queries. Membership is republished on a fixed
 30-second cadence, with rounds starting immediately when a slow store round
 overruns, because the 768-byte overlay membership record is a rotating sample.
 Membership DHT queries have an eight-second deadline, so a silent resolver
-cannot consume the next round. Each round stores on the eight nearest enriched
-DHT candidates and verifies against the whole candidate set, not only the
-nodes that acknowledged the store. The address record is republished every ten
-minutes.
+cannot consume the next round. Placement iteratively follows `findNode`
+toward the membership key, asking successive nearest candidates four at a time
+for up to three rounds, then stores on the eight nearest candidates and
+verifies against the whole candidate set, not only the nodes that acknowledged
+the store. A round that is stored but not served is retried before the next
+cadence. The address record is republished every ten minutes.
 
 `mempool` owns only external-message semantics. `MempoolServer::new` takes an
 already-built `OverlayClient` and a `MempoolConfig`, subscribes to verified

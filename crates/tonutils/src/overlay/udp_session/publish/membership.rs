@@ -92,33 +92,21 @@ pub(super) async fn publish_overlay_membership(
     timeout: Duration,
 ) -> usize {
     let timeout = timeout.min(MEMBERSHIP_DHT_TIMEOUT);
-    let first = publish_membership_attempt(
-        local_addr,
-        local_keypair,
-        overlay,
-        &overlay_name,
-        &dht_nodes,
-        timeout,
-        0,
-    )
-    .await;
-    let PublishAttempt {
-        mut stored,
-        mut candidates,
-    } = first;
-    for (index, delay) in [PUBLISH_STORE_RETRY_DELAY, PUBLISH_STORE_RETRY_LONG_DELAY]
-        .into_iter()
-        .enumerate()
+    let mut stored = Vec::new();
+    let mut candidates = Vec::new();
+    let mut served = false;
+    for (attempt, delay) in [
+        None,
+        Some(PUBLISH_STORE_RETRY_DELAY),
+        Some(PUBLISH_STORE_RETRY_LONG_DELAY),
+    ]
+    .into_iter()
+    .enumerate()
     {
-        if !stored.is_empty() {
-            break;
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
         }
-        let attempt = index + 1;
-        log::debug!(
-            "dht membership publish: attempt {attempt} stored nothing, retrying after {delay:?} with rotated resolvers"
-        );
-        tokio::time::sleep(delay).await;
-        let retry = publish_membership_attempt(
+        let publish = publish_membership_attempt(
             local_addr,
             local_keypair,
             overlay,
@@ -128,19 +116,26 @@ pub(super) async fn publish_overlay_membership(
             attempt,
         )
         .await;
-        merge_attempt(&mut stored, &mut candidates, retry);
+        merge_attempt(&mut stored, &mut candidates, publish);
+        served = verify_overlay_membership(
+            local_addr,
+            local_keypair,
+            overlay,
+            &overlay_name,
+            &dht_nodes,
+            &candidates,
+            &stored,
+            timeout,
+        )
+        .await;
+        if served {
+            break;
+        }
+        log::debug!(
+            "dht membership publish: attempt {attempt} stored on {} node(s) but served_by_dht=false",
+            stored.len()
+        );
     }
-    let served = verify_overlay_membership(
-        local_addr,
-        local_keypair,
-        overlay,
-        &overlay_name,
-        &dht_nodes,
-        &candidates,
-        &stored,
-        timeout,
-    )
-    .await;
     log::info!(
         "dht membership publish: overlay={overlay} stored on {} node(s), served_by_dht={served}",
         stored.len()
