@@ -43,14 +43,15 @@ The transport/application split is explicit and has no compatibility aliases:
 
 | Location | Owns | Does not own |
 | --- | --- | --- |
-| `crate::overlay` | ADNL UDP and QUIC overlay sessions, session factories and lookups, bootstrap and discovery, peer growth, `PeerManager`, `OverlayPeerPool`, peer quality, `PeerStore`, inbound query answering, membership gossip, capabilities, DHT address publication, STUN, endpoint registries, packet pre-deduplication, protocol statistics, and signed simple/FEC broadcast encoding | External-message validation, envelopes, or application events |
+| `crate::overlay` | ADNL UDP and QUIC overlay sessions, session factories and lookups, bootstrap and discovery, peer growth, `PeerManager`, `OverlayPeerPool`, peer quality, `PeerStore`, inbound query answering, membership gossip, capabilities, DHT address and public-overlay membership publication, STUN, endpoint registries, packet pre-deduplication, protocol statistics, and signed simple/FEC broadcast encoding | External-message validation, envelopes, or application events |
 | `crate::overlay::OverlayNodeBuilder` | Transport/discovery/peer-store configuration and construction of `OverlayClient` or `OverlayServer` | External-message configuration or handlers |
 | `crate::mempool` | External-message BoC envelope checks, TL-B validation, age-aware deduplication, lazy events, local echo, and submission/receipt through an already-built `OverlayClient` | Starting transport, discovery, peer management, broadcasts without a client, DHT publication, or overlay configuration |
 
 `OverlayClient` exposes packet and peer-status subscriptions, the peer manager,
 generic signed and raw broadcasts, discovery/protocol statistics, peer counts,
 and shutdown. `OverlayServer` owns server-only maintenance tasks such as DHT
-address publication and exposes its underlying client. `MempoolServer::new`
+address and public-overlay membership publication and exposes its underlying
+client. `MempoolServer::new`
 subscribes to the supplied client before spawning its receiver tasks and
 returns a shared `MempoolClient` for submissions.
 
@@ -66,6 +67,23 @@ every round. Overlay members returned by `overlay.getRandomPeers` are dial
 targets and must never be passed to `dht.store` or `dht.findValue` verification
 as resolvers. The bootstrap `dht-server` nodes answer DHT queries; overlay
 members such as pytoniq clients do not.
+
+A public overlay full node owns two DHT records:
+
+- `DhtKey { id: adnl_short_id, name: "address", idx: 0 }` stores the signed
+  `adnl.addressList` under `dht.updateRule.signature`.
+- `DhtKey { id: overlay_id, name: "nodes", idx: 0 }` stores a boxed
+  `overlay.nodes` list under `dht.updateRule.overlayNodes`. The key description
+  uses `pub.overlay { name }`, whose hash is the overlay id. The value carries
+  this node's signed `overlay.node`; the DHT value and key-description signature
+  fields are empty, while each node signature covers
+  `overlay.node.toSign { adnl_short_id, overlay, version }`.
+
+Publishing only the `address` record is insufficient: other full nodes discover
+members through the `nodes` record. Both records are stored through the same
+bootstrap resolver set and verified with `dht.findValue`; a public overlay
+membership round succeeds only when the returned value contains this node's
+valid signed record and its payload stays within the DHT's 768-byte value limit.
 
 ## Plumtree Runtime
 
@@ -123,8 +141,9 @@ queries are answered by the shared inbound dispatcher for both UDP and QUIC.
 
 The loopback tests cover eager relay, control-frame hiding, and lost-FEC-part
 repair over both transports. A client-only node cannot be discovered as a live
-relay because it does not publish an address. Use `start_server` and a reachable
-UDP endpoint for relay work; public-overlay delivery remains best effort.
+relay because it publishes neither an address nor a public-overlay membership
+record. Use `start_server` and a reachable UDP endpoint for relay work;
+public-overlay delivery remains best effort.
 
 ## Wire Invariants
 

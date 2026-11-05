@@ -301,6 +301,26 @@ fn overlay_id_uses_boxed_public_overlay_key() {
     );
 }
 
+#[test]
+fn mainnet_basechain_name_derives_the_canonical_overlay_id() {
+    let name = OverlayId::mainnet_basechain_name();
+    assert_eq!(
+        OverlayId::from_name(&name),
+        OverlayId::MAINNET_BASECHAIN_OVERLAY_ID
+    );
+    assert_eq!(
+        OverlayId::shard_public_name(
+            0,
+            i64::MIN,
+            hex::decode("5e994fcf4d425c0a6ce6a792594b7173205f740a39cd56f537defd28b48a0f6e")
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        ),
+        name
+    );
+}
+
 /// Session whose `receive()` never completes, used to exercise the pool's idle
 /// deadline.
 struct PendingSession {

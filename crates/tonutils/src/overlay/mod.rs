@@ -96,6 +96,11 @@ pub type OverlaySessionFactory = Arc<
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct OverlayId([u8; 32]);
 
+const MAINNET_BASECHAIN_ZERO_STATE_FILE_HASH: [u8; 32] = [
+    0x5e, 0x99, 0x4f, 0xcf, 0x4d, 0x42, 0x5c, 0x0a, 0x6c, 0xe6, 0xa7, 0x92, 0x59, 0x4b, 0x71, 0x73,
+    0x20, 0x5f, 0x74, 0x0a, 0x39, 0xcd, 0x56, 0xf5, 0x37, 0xde, 0xfd, 0x28, 0xb4, 0x8a, 0x0f, 0x6e,
+];
+
 pub mod tl;
 
 impl OverlayId {
@@ -119,12 +124,31 @@ impl OverlayId {
 
     #[must_use]
     pub fn from_shard_public(workchain: i32, shard: i64, zero_state_file_hash: [u8; 32]) -> Self {
-        let shard_id = Sha256::digest(tl_proto::serialize(TonNodeShardPublicOverlayId {
+        let name = Self::shard_public_name(workchain, shard, zero_state_file_hash);
+        Self::from_name(&name)
+    }
+
+    /// Returns the `pub.overlay` name a shard-public overlay ID is derived from.
+    ///
+    /// The name is the preimage of the overlay ID, so the DHT membership key
+    /// description can carry `pub.overlay { name }` with an ID that hashes back
+    /// to this overlay.
+    pub(crate) fn shard_public_name(
+        workchain: i32,
+        shard: i64,
+        zero_state_file_hash: [u8; 32],
+    ) -> Vec<u8> {
+        Sha256::digest(tl_proto::serialize(TonNodeShardPublicOverlayId {
             workchain,
             shard,
             zero_state_file_hash: Int256(zero_state_file_hash),
-        }));
-        Self::from_name(&shard_id)
+        }))
+        .to_vec()
+    }
+
+    /// Returns the canonical mainnet basechain public-overlay name.
+    pub(crate) fn mainnet_basechain_name() -> Vec<u8> {
+        Self::shard_public_name(0, i64::MIN, MAINNET_BASECHAIN_ZERO_STATE_FILE_HASH)
     }
 
     /// Mainnet basechain (workchain 0) overlay ID.

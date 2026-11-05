@@ -23,7 +23,7 @@ use crate::{
         OverlayError, OverlayId, OverlayMemberEndpoints, OverlayServer, OverlaySessionFactory,
         PUBLISH_FIRST_ROUND_STAGGER_MAX, PUBLISH_INTERVAL, PeerId, PeerManager, PeerQualityConfig,
         PeerQualityRegistry, PlumtreeConfig, PlumtreeHandle, ReconnectFactory, SeedDiscoveryLookup,
-        SeedPeer, TypedDiscoveryLookup, address_publisher,
+        SeedPeer, TypedDiscoveryLookup,
         bootstrap::{BootstrapDial, await_registered, merge_peer_sets, warm_store_fallback},
         discovery_task::{
             DEFAULT_PEER_STORE_DISCOVERY_INTERVAL, PeerDiscoveryTask, discovery_runner,
@@ -34,6 +34,7 @@ use crate::{
         peer_store::{PeerStore, PeerStoreWriter},
         quic_overlay_factory_with_endpoints_and_plumtree, quic_overlay_lookup_with_endpoints,
         registered_member_count, udp_overlay_lookup_with_endpoints, udp_peer_growth_with_resolvers,
+        udp_session::overlay_publisher,
     },
 };
 
@@ -53,6 +54,14 @@ pub struct OverlayNodeBuilder {
     global_config_json: Option<String>,
     overlay: OverlayConfig,
     overlay_id: OverlayId,
+    /// The `pub.overlay` preimage of `overlay_id`, when it is known.
+    ///
+    /// Public-overlay DHT membership is keyed by the overlay name's hash and
+    /// every stored node record is checked against that same overlay ID.  An
+    /// arbitrary `OverlayId` does not reveal its preimage, so membership
+    /// publication is disabled for such IDs while address publication remains
+    /// available.
+    overlay_name: Option<Vec<u8>>,
     bootstrap_timeout: Duration,
     discovery_timeout: Duration,
     #[cfg(feature = "overlay-config")]
@@ -66,14 +75,14 @@ pub struct OverlayNodeBuilder {
     reconnect_backoff: Duration,
     peer_growth_lookup: Option<SeedDiscoveryLookup>,
     /// DHT resolver seeds shared with the peer-growth lookup and the DHT
-    /// address publisher.
+    /// publisher.
     ///
     /// `start` fills this with the bootstrap seed set - explicit seeds and the
     /// global config's DHT static nodes - so growth can resolve member
-    /// `address` values and the publisher can store this node's `address`
-    /// through nodes guaranteed to answer DHT queries.  Discovered overlay
-    /// members are deliberately excluded from this set: they are dial targets,
-    /// not DHT resolvers.
+    /// `address` values and the publisher can store this node's `address` and
+    /// public-overlay membership record through nodes guaranteed to answer DHT
+    /// queries. Discovered overlay members are deliberately excluded from this
+    /// set: they are dial targets, not DHT resolvers.
     dht_resolvers: Arc<tokio::sync::RwLock<Vec<SeedPeer>>>,
     /// Overlay member endpoints shared with the UDP lookups and the QUIC
     /// discovery path.
@@ -131,6 +140,7 @@ impl fmt::Debug for OverlayNodeBuilder {
             .field("explicit_seeds", &self.explicit_seeds)
             .field("overlay", &self.overlay)
             .field("overlay_id", &self.overlay_id)
+            .field("overlay_name", &self.overlay_name)
             .field("bootstrap_timeout", &self.bootstrap_timeout)
             .field("discovery_timeout", &self.discovery_timeout)
             .field("session_factory", &self.session_factory.is_some())
@@ -182,6 +192,7 @@ impl Default for OverlayNodeBuilder {
             global_config_json: None,
             overlay: OverlayConfig::default(),
             overlay_id: OverlayId::MAINNET_BASECHAIN_OVERLAY_ID,
+            overlay_name: Some(OverlayId::mainnet_basechain_name()),
             bootstrap_timeout: Duration::from_secs(10),
             discovery_timeout: Duration::from_secs(5),
             #[cfg(feature = "overlay-config")]
@@ -213,6 +224,11 @@ impl Default for OverlayNodeBuilder {
             peer_store_discovery_interval: DEFAULT_PEER_STORE_DISCOVERY_INTERVAL,
         }
     }
+}
+
+/// Returns the `pub.overlay` preimage for overlay IDs with a canonical name.
+fn known_overlay_name(overlay_id: OverlayId) -> Option<Vec<u8>> {
+    (overlay_id == OverlayId::MAINNET_BASECHAIN_OVERLAY_ID).then(OverlayId::mainnet_basechain_name)
 }
 
 impl OverlayNodeBuilder {
@@ -264,6 +280,9 @@ impl OverlayNodeBuilder {
     }
 
     pub fn overlay_id(mut self, overlay_id: OverlayId) -> Self {
+        if overlay_id != self.overlay_id {
+            self.overlay_name = known_overlay_name(overlay_id);
+        }
         self.overlay_id = overlay_id;
         self
     }
@@ -311,6 +330,7 @@ impl OverlayNodeBuilder {
     ) -> Self {
         let discovery_timeout = self.discovery_timeout;
         let overlay = self.overlay_id;
+        let overlay_name = self.overlay_name.clone();
         let external_address = self.external_address;
         // The overlay-node DHT value is this overlay's full-node
         // phonebook: every entry can verify this node and then broadcast
@@ -352,11 +372,13 @@ impl OverlayNodeBuilder {
             Arc::clone(&builder.dht_resolvers),
             builder.member_endpoints.clone(),
         ));
-        builder.address_publisher = Some(address_publisher(
+        builder.address_publisher = Some(overlay_publisher(
             local_addr,
-            local_keypair,
+            &local_keypair,
             external_address,
             discovery_timeout,
+            overlay,
+            overlay_name,
         ));
         builder
     }
@@ -370,12 +392,11 @@ impl OverlayNodeBuilder {
         zero_state_file_hash: [u8; 32],
         channel_timeout: Option<Duration>,
     ) -> Self {
-        let overlay_id = OverlayId::from_shard_public(workchain, shard, zero_state_file_hash);
-        self.dht_overlay_key(overlay_id.as_bytes()).native_udp(
-            local_addr,
-            local_keypair,
-            channel_timeout,
-        )
+        let overlay_name = OverlayId::shard_public_name(workchain, shard, zero_state_file_hash);
+        let overlay_id = OverlayId::from_name(&overlay_name);
+        let mut builder = self.dht_overlay_key(overlay_id.as_bytes());
+        builder.overlay_name = Some(overlay_name);
+        builder.native_udp(local_addr, local_keypair, channel_timeout)
     }
 
     /// Configures QUIC-based overlay sessions for peer connections.
@@ -431,6 +452,8 @@ impl OverlayNodeBuilder {
         self.typed_discovery_lookup = None;
         self.seed_discovery_lookup = None;
         let discovery_timeout = self.discovery_timeout;
+        let overlay = self.overlay_id;
+        let overlay_name = self.overlay_name.clone();
         let external_address = self.external_address;
         let session_factory = overlay_factory_with_endpoints_and_plumtree(
             local_addr,
@@ -445,11 +468,13 @@ impl OverlayNodeBuilder {
         // Explicit seeds are still DHT nodes, so publishing here lets the
         // seeds resolve this node's address back, same as on the full
         // native UDP path.
-        builder.address_publisher = Some(address_publisher(
+        builder.address_publisher = Some(overlay_publisher(
             local_addr,
-            local_keypair,
+            &local_keypair,
             external_address,
             discovery_timeout,
+            overlay,
+            overlay_name,
         ));
         builder
     }
@@ -923,11 +948,11 @@ impl OverlayNodeBuilder {
                         let nodes = resolvers.read().await.clone();
                         if nodes.is_empty() {
                             log::debug!(
-                                "dht address publish: no bootstrap DHT resolver seeds; skipping round"
+                                "dht publish: no bootstrap DHT resolver seeds; skipping address and membership rounds"
                             );
                         } else {
                             log::debug!(
-                                "dht address publish: resolver_seeds={} source=bootstrap_seeds",
+                                "dht publish: resolver_seeds={} source=bootstrap_seeds records=address,overlay_nodes",
                                 nodes.len()
                             );
                             publish(nodes).await;
@@ -1043,8 +1068,8 @@ mod tests {
 
     use super::OverlayNodeBuilder;
     use crate::overlay::{
-        DhtAddressPublisher, OverlaySession, OverlaySessionFactory, PeerId, SeedDiscoveryLookup,
-        SeedPeer,
+        DhtAddressPublisher, OverlayId, OverlaySession, OverlaySessionFactory, PeerId,
+        SeedDiscoveryLookup, SeedPeer,
     };
 
     struct TestSession {
@@ -1063,6 +1088,25 @@ mod tests {
         fn send(&mut self, _payload: Arc<[u8]>) -> BoxFuture<'_, Result<(), String>> {
             Box::pin(async { Ok(()) })
         }
+    }
+
+    #[test]
+    fn overlay_name_is_preserved_for_mainnet_and_cleared_for_unknown_ids() {
+        let builder = OverlayNodeBuilder::new();
+        assert_eq!(
+            builder.overlay_name,
+            Some(OverlayId::mainnet_basechain_name())
+        );
+
+        let custom = OverlayId::from_bytes([9; 32]);
+        let builder = builder.overlay_id(custom);
+        assert_eq!(builder.overlay_name, None);
+
+        let builder = builder.overlay_id(OverlayId::MAINNET_BASECHAIN_OVERLAY_ID);
+        assert_eq!(
+            builder.overlay_name,
+            Some(OverlayId::mainnet_basechain_name())
+        );
     }
 
     #[tokio::test]

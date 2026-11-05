@@ -96,6 +96,7 @@ pub(crate) use lookup::{
     dht_key_id, overlay_factory_with_endpoints_and_plumtree, parse_address_record,
     resolve_address_on_session, shared_session,
 };
+pub(crate) use publish::overlay_publisher;
 pub use publish::{
     DhtAddressPublisher, PUBLISH_FIRST_ROUND_STAGGER_MAX, PUBLISH_INTERVAL, address_publisher,
 };

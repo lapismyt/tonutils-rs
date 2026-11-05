@@ -2,7 +2,7 @@
     clippy::cast_possible_wrap,
     reason = "ADNL and overlay wire fields and bounded counters intentionally use protocol widths"
 )]
-//! DHT `address` value publishing for the native UDP path.
+//! DHT publication for the native UDP path.
 //!
 //! Overlay peers resolve a node's ADNL address through the DHT
 //! `address` value keyed by the node's ADNL id
@@ -26,6 +26,10 @@
 //! store only when they are responsible for the key and drop it
 //! otherwise, so storing on the closest known nodes is what makes
 //! the value retrievable.
+//!
+//! A public overlay full node also publishes its membership record through
+//! [`membership`], because the address record alone does not make it
+//! discoverable as an overlay member.
 
 use std::{
     collections::HashSet,
@@ -44,12 +48,14 @@ use crate::{
         },
         udp::local_reinit_date,
     },
-    overlay::SeedPeer,
     overlay::udp_session::{dht_key_id, shared_session, stun::discover_mapped_address},
+    overlay::{OverlayId, SeedPeer},
     tl::TlInt256 as Int256,
 };
 
 use futures::future::BoxFuture;
+
+mod membership;
 
 /// How many `dht.store` targets one publish round tries.
 ///
@@ -297,6 +303,39 @@ async fn publish_dht_address_value_attempt(
     attempt: usize,
 ) -> Vec<DhtCandidate> {
     let value = address_dht_value(&local_keypair, external);
+    let key_id = dht_key_id(short_id(&local_keypair.public_key), b"address").0;
+    publish_dht_value_attempt(
+        local_addr,
+        local_keypair,
+        dht_nodes,
+        key_id,
+        value,
+        timeout,
+        attempt,
+        "dht address publish",
+    )
+    .await
+}
+
+/// Stores one signed DHT value on the nodes closest to `key_id`.
+///
+/// The address publisher and the overlay-membership publisher share this
+/// placement and enrichment logic; only the value and key differ.
+#[expect(
+    clippy::large_types_passed_by_value,
+    clippy::too_many_arguments,
+    reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+)]
+pub(super) async fn publish_dht_value_attempt(
+    local_addr: SocketAddr,
+    local_keypair: AdnlKeyPair,
+    dht_nodes: &[SeedPeer],
+    key_id: [u8; 32],
+    value: DhtValue,
+    timeout: Duration,
+    attempt: usize,
+    operation: &str,
+) -> Vec<DhtCandidate> {
     let store_query = tl_proto::serialize(DhtMessage::Store {
         value: DhtValueBare::from(&value),
     });
@@ -304,11 +343,10 @@ async fn publish_dht_address_value_attempt(
     // all - the client only sees a timeout - so the exact payload is
     // the primary evidence when a store round fails.
     log::debug!(
-        "dht address publish: dht.store payload ({} bytes): {}",
+        "{operation}: dht.store payload ({} bytes): {}",
         store_query.len(),
         hex::encode(&store_query)
     );
-    let key_id = dht_key_id(short_id(&local_keypair.public_key), b"address").0;
     let mut candidates = known_candidates(dht_nodes);
     enrich_with_find_node(
         local_addr,
@@ -317,6 +355,7 @@ async fn publish_dht_address_value_attempt(
         &mut candidates,
         timeout,
         attempt,
+        operation,
     )
     .await;
     candidates.sort_by_key(|candidate| xor_distance(&candidate.id, &key_id));
@@ -339,7 +378,7 @@ async fn publish_dht_address_value_attempt(
                 Ok(session) => session,
                 Err(error) => {
                     log::debug!(
-                        "dht address publish: session to {} failed: {error}",
+                        "{operation}: session to {} failed: {error}",
                         candidate.address
                     );
                     return None;
@@ -347,7 +386,7 @@ async fn publish_dht_address_value_attempt(
             };
             if let Err(error) = session.dht_store(value, timeout).await {
                 log::debug!(
-                    "dht address publish: store on {} failed: {error}",
+                    "{operation}: store on {} failed: {error}",
                     candidate.address
                 );
                 return None;
@@ -361,7 +400,7 @@ async fn publish_dht_address_value_attempt(
         .flatten()
         .collect();
     log::debug!(
-        "dht address publish: stored on {} of {target_count} candidate node(s)",
+        "{operation}: stored on {} of {target_count} candidate node(s)",
         stored.len()
     );
     stored
@@ -417,6 +456,7 @@ async fn enrich_with_find_node(
     candidates: &mut Vec<DhtCandidate>,
     timeout: Duration,
     attempt: usize,
+    operation: &str,
 ) {
     for &index in enrichment_order(candidates, key_id, attempt)
         .iter()
@@ -434,7 +474,7 @@ async fn enrich_with_find_node(
         .await
         else {
             log::debug!(
-                "dht address publish: findNode session to {} failed, trying the next seed",
+                "{operation}: findNode session to {} failed, trying the next seed",
                 closest.address
             );
             continue;
@@ -446,7 +486,7 @@ async fn enrich_with_find_node(
             Ok(DhtNodesBoxed { nodes }) => nodes,
             Err(error) => {
                 log::debug!(
-                    "dht address publish: findNode via {} failed: {error}",
+                    "{operation}: findNode via {} failed: {error}",
                     closest.address
                 );
                 continue;
@@ -468,12 +508,12 @@ async fn enrich_with_find_node(
             }
         }
         log::debug!(
-            "dht address publish: findNode via {} returned {found} closer node(s)",
+            "{operation}: findNode via {} returned {found} closer node(s)",
             closest.address
         );
         return;
     }
-    log::debug!("dht address publish: findNode enrichment exhausted {ENRICH_ATTEMPTS} attempt(s)");
+    log::debug!("{operation}: findNode enrichment exhausted {ENRICH_ATTEMPTS} attempt(s)");
 }
 
 /// The candidate indexes one enrichment walk asks, in distance order,
@@ -671,13 +711,13 @@ pub async fn verify_dht_address_value(
     false
 }
 
-/// Publisher of this node's DHT `address` value for the native
-/// UDP path.
+/// Publisher of this node's DHT records for the native UDP path.
 ///
 /// One call runs a full publish round: it resolves the externally
-/// reachable address, stores the signed value on the DHT nodes
-/// closest to the key, verifies the value is served, and returns
-/// how many nodes answered `dht.stored`.
+/// reachable address, stores the signed `address` value and, for a public
+/// overlay, the `overlay.<id>.nodes` membership value on the DHT nodes
+/// closest to their keys, verifies the values are served, and returns how
+/// many nodes answered `dht.stored` for the address record.
 pub type DhtAddressPublisher =
     Arc<dyn Fn(Vec<SeedPeer>) -> BoxFuture<'static, usize> + Send + Sync>;
 
@@ -763,6 +803,48 @@ pub fn address_publisher(
     })
 }
 
+/// Builds the native UDP publisher for both DHT records a public overlay node
+/// needs: its `address` value and, when the overlay name is known, its
+/// `overlay.<id>.nodes` membership value.
+///
+/// The membership half is skipped for an arbitrary overlay ID because the ID is
+/// a hash and the DHT key description must carry the original `pub.overlay`
+/// name that hashes back to it.
+pub(crate) fn overlay_publisher(
+    local_addr: SocketAddr,
+    local_keypair: &AdnlKeyPair,
+    configured_external: Option<SocketAddr>,
+    timeout: Duration,
+    overlay: OverlayId,
+    overlay_name: Option<Vec<u8>>,
+) -> DhtAddressPublisher {
+    let address = address_publisher(local_addr, *local_keypair, configured_external, timeout);
+    let membership = overlay_name.map(|overlay_name| {
+        membership::membership_publisher(local_addr, local_keypair, overlay, overlay_name, timeout)
+    });
+    combine_publishers(address, membership)
+}
+
+/// Runs address publication and, when configured, overlay-membership
+/// publication against the same resolver set.
+fn combine_publishers(
+    address: DhtAddressPublisher,
+    membership: Option<DhtAddressPublisher>,
+) -> DhtAddressPublisher {
+    let Some(membership) = membership else {
+        return address;
+    };
+    Arc::new(move |nodes| {
+        let address = Arc::clone(&address);
+        let membership = Arc::clone(&membership);
+        Box::pin(async move {
+            let stored = address(nodes.clone()).await;
+            membership(nodes).await;
+            stored
+        })
+    })
+}
+
 /// Resolves the externally reachable UDP address for a publish
 /// round: the configured address, then the
 /// `TON_MEMPOOL_EXTERNAL_ADDRESS` environment variable, then a
@@ -798,11 +880,41 @@ async fn resolve_external_udp_address(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::{
-        Address, AddressListBoxed, AdnlKeyPair, DhtCandidate, DhtUpdateRule, ENRICH_ATTEMPTS,
-        Int256, IpAddr, SeedPeer, SocketAddr, VALUE_TTL_SECS, address_dht_value, enrichment_order,
-        is_globally_routable, known_candidates, now_i32, short_id, value_matches, xor_distance,
+        Address, AddressListBoxed, AdnlKeyPair, DhtAddressPublisher, DhtCandidate, DhtUpdateRule,
+        ENRICH_ATTEMPTS, Int256, IpAddr, SeedPeer, SocketAddr, VALUE_TTL_SECS, address_dht_value,
+        combine_publishers, enrichment_order, is_globally_routable, known_candidates, now_i32,
+        short_id, value_matches, xor_distance,
     };
+
+    #[tokio::test]
+    async fn combined_publisher_forwards_the_same_resolver_set_to_membership() {
+        let seeds = vec![SeedPeer::from_public_key([7; 32], "8.8.8.8:5000")];
+        let (address_tx, mut address_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (membership_tx, mut membership_rx) = tokio::sync::mpsc::unbounded_channel();
+        let address: DhtAddressPublisher = Arc::new(move |nodes| {
+            let address_tx = address_tx.clone();
+            Box::pin(async move {
+                address_tx.send(nodes).expect("test receiver stays open");
+                1
+            })
+        });
+        let membership: DhtAddressPublisher = Arc::new(move |nodes| {
+            let membership_tx = membership_tx.clone();
+            Box::pin(async move {
+                membership_tx.send(nodes).expect("test receiver stays open");
+                1
+            })
+        });
+
+        let stored = combine_publishers(address, Some(membership))(seeds.clone()).await;
+
+        assert_eq!(stored, 1);
+        assert_eq!(address_rx.recv().await.unwrap(), seeds);
+        assert_eq!(membership_rx.recv().await.unwrap(), seeds);
+    }
 
     #[test]
     fn address_value_is_signed_and_parses_back() {

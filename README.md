@@ -109,8 +109,8 @@ invariants are documented in [docs/reference/README.md](docs/reference/README.md
 `overlay` owns every transport and network-maintenance concern: ADNL UDP and
 QUIC sessions, factories and lookups, bootstrap and discovery, peer growth,
 peer quality and persistence, inbound query answering, membership gossip,
-capabilities, DHT address publication, STUN, packet pre-deduplication, and
-signed simple/FEC broadcasts. Build a client with
+capabilities, DHT address and public-overlay membership publication, STUN,
+packet pre-deduplication, and signed simple/FEC broadcasts. Build a client with
 `OverlayNodeBuilder::start_client()` or a serving node with
 `start_server()`.
 
@@ -133,17 +133,22 @@ must accept that framing. Legacy broadcasts do not use Plumtree eager feedback
 or repair; new public-overlay bulk traffic should use the Plumtree methods.
 
 `start_client` does not publish an ADNL address, so other members cannot select
-the node as a relay. `start_server` enables DHT publication and relay
-participation, but reachability, overlay membership rules, and peer selection
-still determine whether mainnet peers route a particular broadcast through the
-node. Neither mode guarantees application delivery.
+the node as a relay. `start_server` publishes both DHT records a public overlay
+full node needs: the node's `address` value and its signed
+`overlay.<overlay_id>.nodes` membership record. The second record uses
+`dht.updateRule.overlayNodes`; publishing only the address is not enough for
+other nodes to discover this node through public-overlay DHT lookup. Server
+mode also enables relay participation, but reachability, overlay membership
+rules, and peer selection still determine whether mainnet peers route a
+particular broadcast through the node. Neither mode guarantees application
+delivery.
 
 DHT publication and peer-growth address resolution use the builder's bootstrap
 DHT resolver set: explicit seeds plus the global config's `dht.static_nodes`.
 Overlay members discovered through `overlay.getRandomPeers` are dial targets,
 not DHT resolvers, and are never substituted for that set. This keeps the
-publisher's `dht.store` and verification rounds on nodes that actually answer
-DHT queries.
+publisher's `dht.store` and verification rounds for both DHT records on nodes
+that actually answer DHT queries.
 
 `mempool` owns only external-message semantics. `MempoolServer::new` takes an
 already-built `OverlayClient` and a `MempoolConfig`, subscribes to verified
