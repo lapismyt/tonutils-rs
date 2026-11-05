@@ -34,7 +34,10 @@
 use std::{
     collections::HashSet,
     net::{IpAddr, SocketAddr},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -76,12 +79,27 @@ const FIND_NODE_K: i32 = 8;
 /// it.
 const VALUE_TTL_SECS: i32 = 3600;
 
-/// Interval between publish rounds.
+/// Interval between publish rounds for the DHT `address` value.
 ///
 /// A published value lives for `VALUE_TTL_SECS`, so re-publishing
 /// every ten minutes keeps it fresh with a wide margin even when a
 /// round fails.
 pub const PUBLISH_INTERVAL: Duration = Duration::from_mins(10);
+
+/// Interval between publish-task rounds.
+///
+/// The public-overlay membership value is capped at 768 bytes and the DHT
+/// update rule randomly evicts existing nodes when a new node no longer fits.
+/// Upstream republishes that value every 60-100 seconds, so a ten-minute
+/// cadence loses the membership race against the rest of the overlay. The
+/// task wakes on this interval and publishes the membership record every
+/// round; the address record keeps the ten-minute [`PUBLISH_INTERVAL`] cadence
+/// through the combined publisher.
+pub(crate) const MEMBERSHIP_PUBLISH_INTERVAL: Duration = Duration::from_secs(60);
+
+/// How many publish-task rounds share one `address` publication.
+const ADDRESS_PUBLISH_EVERY: u64 =
+    PUBLISH_INTERVAL.as_secs() / MEMBERSHIP_PUBLISH_INTERVAL.as_secs();
 
 /// Delay before one bounded retry of a store round that stored nothing.
 ///
@@ -436,6 +454,15 @@ fn known_candidates(dht_nodes: &[SeedPeer]) -> Vec<DhtCandidate> {
 /// the cost of one bounded round each.
 const ENRICH_ATTEMPTS: usize = 3;
 
+/// Per-query deadline for one `findNode` enrichment walk.
+///
+/// The publish timeout can be much longer (the live gate uses 30 seconds), but
+/// a DHT node that has not answered `findNode` within five seconds is not a
+/// useful source of closer nodes. Waiting the full publish timeout for each of
+/// the three enrichment attempts spends almost the whole membership window on
+/// silent seeds and delays the store round.
+const ENRICH_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Asks the closest known nodes for the DHT nodes closest to the
 /// `address` key and merges them into `candidates`.
 ///
@@ -458,6 +485,7 @@ async fn enrich_with_find_node(
     attempt: usize,
     operation: &str,
 ) {
+    let find_node_timeout = timeout.min(ENRICH_TIMEOUT);
     for &index in enrichment_order(candidates, key_id, attempt)
         .iter()
         .take(ENRICH_ATTEMPTS)
@@ -480,7 +508,7 @@ async fn enrich_with_find_node(
             continue;
         };
         let nodes = match session
-            .dht_find_node(Int256(*key_id), FIND_NODE_K, timeout)
+            .dht_find_node(Int256(*key_id), FIND_NODE_K, find_node_timeout)
             .await
         {
             Ok(DhtNodesBoxed { nodes }) => nodes,
@@ -834,13 +862,29 @@ fn combine_publishers(
     let Some(membership) = membership else {
         return address;
     };
+    let rounds = Arc::new(AtomicU64::new(0));
     Arc::new(move |nodes| {
         let address = Arc::clone(&address);
         let membership = Arc::clone(&membership);
+        let rounds = Arc::clone(&rounds);
         Box::pin(async move {
-            let stored = address(nodes.clone()).await;
-            membership(nodes).await;
-            stored
+            let round = rounds.fetch_add(1, Ordering::Relaxed) + 1;
+            let publish_address = round == 1 || round.is_multiple_of(ADDRESS_PUBLISH_EVERY);
+            log::debug!(
+                "dht publish: round={round} records={}",
+                if publish_address {
+                    "address,overlay_nodes"
+                } else {
+                    "overlay_nodes"
+                }
+            );
+            if publish_address {
+                let (stored, _) = futures::join!(address(nodes.clone()), membership(nodes));
+                stored
+            } else {
+                membership(nodes).await;
+                0
+            }
         })
     })
 }
@@ -880,7 +924,10 @@ async fn resolve_external_udp_address(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use super::{
         Address, AddressListBoxed, AdnlKeyPair, DhtAddressPublisher, DhtCandidate, DhtUpdateRule,
@@ -914,6 +961,38 @@ mod tests {
         assert_eq!(stored, 1);
         assert_eq!(address_rx.recv().await.unwrap(), seeds);
         assert_eq!(membership_rx.recv().await.unwrap(), seeds);
+    }
+
+    #[tokio::test]
+    async fn combined_publisher_republishes_membership_every_round() {
+        let address_calls = Arc::new(AtomicUsize::new(0));
+        let membership_calls = Arc::new(AtomicUsize::new(0));
+        let address: DhtAddressPublisher = {
+            let calls = Arc::clone(&address_calls);
+            Arc::new(move |_| {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Box::pin(async { 1 })
+            })
+        };
+        let membership: DhtAddressPublisher = {
+            let calls = Arc::clone(&membership_calls);
+            Arc::new(move |_| {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Box::pin(async { 1 })
+            })
+        };
+        let publish = combine_publishers(address, Some(membership));
+        let seeds = vec![SeedPeer::from_public_key([7; 32], "8.8.8.8:5000")];
+
+        for _ in 0..10 {
+            publish(seeds.clone()).await;
+        }
+        assert_eq!(address_calls.load(Ordering::Relaxed), 2);
+        assert_eq!(membership_calls.load(Ordering::Relaxed), 10);
+
+        publish(seeds).await;
+        assert_eq!(address_calls.load(Ordering::Relaxed), 2);
+        assert_eq!(membership_calls.load(Ordering::Relaxed), 11);
     }
 
     #[test]

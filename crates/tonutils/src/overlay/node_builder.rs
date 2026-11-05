@@ -19,11 +19,11 @@ use crate::{
     adnl::AdnlKeyPair,
     overlay::{
         DEFAULT_PEER_STORE_SAVE_INTERVAL, DhtAddressPublisher, DiscoveryConfig, DiscoveryLookup,
-        DiscoveryStats, OverlayBroadcastPeer, OverlayClient, OverlayClientInit, OverlayConfig,
-        OverlayError, OverlayId, OverlayMemberEndpoints, OverlayServer, OverlaySessionFactory,
-        PUBLISH_FIRST_ROUND_STAGGER_MAX, PUBLISH_INTERVAL, PeerId, PeerManager, PeerQualityConfig,
-        PeerQualityRegistry, PlumtreeConfig, PlumtreeHandle, ReconnectFactory, SeedDiscoveryLookup,
-        SeedPeer, TypedDiscoveryLookup,
+        DiscoveryStats, MEMBERSHIP_PUBLISH_INTERVAL, OverlayBroadcastPeer, OverlayClient,
+        OverlayClientInit, OverlayConfig, OverlayError, OverlayId, OverlayMemberEndpoints,
+        OverlayServer, OverlaySessionFactory, PUBLISH_FIRST_ROUND_STAGGER_MAX, PeerId, PeerManager,
+        PeerQualityConfig, PeerQualityRegistry, PlumtreeConfig, PlumtreeHandle, ReconnectFactory,
+        SeedDiscoveryLookup, SeedPeer, TypedDiscoveryLookup,
         bootstrap::{BootstrapDial, await_registered, merge_peer_sets, warm_store_fallback},
         discovery_task::{
             DEFAULT_PEER_STORE_DISCOVERY_INTERVAL, PeerDiscoveryTask, discovery_runner,
@@ -925,20 +925,19 @@ impl OverlayNodeBuilder {
                 let first_round_stagger_max = PUBLISH_FIRST_ROUND_STAGGER_MAX;
                 let mut shutdown = manager.subscribe_shutdown();
                 server_tasks.push(tokio::spawn(async move {
-                    // Publish before the first growth round so
-                    // transitive discovery can resolve this node's
-                    // address right away, then re-publish inside
-                    // the value's one hour lifetime.  The first
-                    // round is staggered over a random window:
-                    // parallel scanners behind one NAT fire their
-                    // STUN probes and store rounds in the same
-                    // second, which correlates the candidate
-                    // silence the retries exist for (TODO item
-                    // 447).
+                    // Publish before the first growth round so transitive
+                    // discovery can resolve this node's address right away.
+                    // Membership is republished every minute because the
+                    // public DHT record is a short, randomly evicted list;
+                    // the combined publisher rotates the address record only
+                    // every ten rounds.  The first round is staggered over a
+                    // random window: parallel scanners behind one NAT fire
+                    // their STUN probes and store rounds in the same second,
+                    // which correlates the candidate silence the retries
+                    // exist for (TODO item 447).
                     let stagger_ms = (rand::random::<f64>()
                         * f64::from(
-                            u32::try_from(first_round_stagger_max.as_millis())
-                                .unwrap_or(u32::MAX),
+                            u32::try_from(first_round_stagger_max.as_millis()).unwrap_or(u32::MAX),
                         )) as u64;
                     tokio::select! {
                         _ = shutdown.changed() => return,
@@ -948,18 +947,18 @@ impl OverlayNodeBuilder {
                         let nodes = resolvers.read().await.clone();
                         if nodes.is_empty() {
                             log::debug!(
-                                "dht publish: no bootstrap DHT resolver seeds; skipping address and membership rounds"
+                                "dht publish: no bootstrap DHT resolver seeds; skipping the round"
                             );
                         } else {
                             log::debug!(
-                                "dht publish: resolver_seeds={} source=bootstrap_seeds records=address,overlay_nodes",
+                                "dht publish: resolver_seeds={} source=bootstrap_seeds",
                                 nodes.len()
                             );
                             publish(nodes).await;
                         }
                         tokio::select! {
                             _ = shutdown.changed() => return,
-                            () = tokio::time::sleep(PUBLISH_INTERVAL) => {}
+                            () = tokio::time::sleep(MEMBERSHIP_PUBLISH_INTERVAL) => {}
                         }
                     }
                 }));

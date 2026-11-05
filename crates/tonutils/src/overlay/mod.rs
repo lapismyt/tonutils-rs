@@ -79,6 +79,7 @@ pub use quic_session::{
     quic_overlay_lookup, quic_overlay_lookup_with_endpoints,
 };
 pub use server::OverlayServer;
+pub(crate) use udp_session::MEMBERSHIP_PUBLISH_INTERVAL;
 pub(crate) use udp_session::overlay_factory_with_endpoints_and_plumtree;
 pub use udp_session::{
     AdnlUdpOverlaySession, DhtAddressPublisher, PUBLISH_FIRST_ROUND_STAGGER_MAX, PUBLISH_INTERVAL,

@@ -85,6 +85,16 @@ bootstrap resolver set and verified with `dht.findValue`; a public overlay
 membership round succeeds only when the returned value contains this node's
 valid signed record and its payload stays within the DHT's 768-byte value limit.
 
+The `nodes` value is a rotating sample, not a stable member list. The DHT
+`dht.updateRule.overlayNodes` merge keeps the serialized list within 768 bytes
+and randomly evicts entries when a new record does not fit. Upstream public
+overlay nodes therefore re-store their own record every 60-100 seconds. This
+crate's publish task wakes every 60 seconds and publishes membership on every
+round, while the `address` record keeps its ten-minute cadence because its TTL
+is one hour. A successful `dht.store` means the node was accepted, not that it
+survived the subsequent random eviction; `membership_listed` is a discovery
+metric and must not be used as a store-success signal.
+
 ## Plumtree Runtime
 
 Plumtree is the bulk public-overlay broadcast path for peers that speak it.

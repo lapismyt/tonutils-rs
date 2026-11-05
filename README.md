@@ -148,7 +148,9 @@ DHT resolver set: explicit seeds plus the global config's `dht.static_nodes`.
 Overlay members discovered through `overlay.getRandomPeers` are dial targets,
 not DHT resolvers, and are never substituted for that set. This keeps the
 publisher's `dht.store` and verification rounds for both DHT records on nodes
-that actually answer DHT queries.
+that actually answer DHT queries. Membership is republished every minute
+because the 768-byte overlay membership record is a rotating sample; the
+address record is republished every ten minutes.
 
 `mempool` owns only external-message semantics. `MempoolServer::new` takes an
 already-built `OverlayClient` and a `MempoolConfig`, subscribes to verified

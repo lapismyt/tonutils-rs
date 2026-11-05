@@ -298,6 +298,9 @@ async fn verify_overlay_membership(
                 DhtValueResult::Found { value } => {
                     let served =
                         membership_value_matches(&value, local_keypair, overlay, overlay_name);
+                    if !served {
+                        log_membership_mismatch(&value, local_keypair, overlay, overlay_name);
+                    }
                     log::debug!(
                         "dht membership verify: served={served} (round {round}, node {})",
                         candidate.address
@@ -332,6 +335,58 @@ async fn verify_overlay_membership(
     }
     log::debug!("dht membership verify: this node is not in the public overlay DHT yet");
     false
+}
+
+/// Logs why a `dht.findValue` answer does not prove this node's membership.
+///
+/// A failed membership verification is otherwise indistinguishable from a
+/// rejected store or an evicted record, and the returned value is the only
+/// evidence that distinguishes them.
+fn log_membership_mismatch(
+    value: &DhtValue,
+    local_keypair: &AdnlKeyPair,
+    overlay: OverlayId,
+    overlay_name: &[u8],
+) {
+    let expected_key = DhtKey {
+        id: Int256(overlay.as_bytes()),
+        name: b"nodes".to_vec(),
+        idx: 0,
+    };
+    let local_id = TlPublicKey::Ed25519 {
+        key: Int256(local_keypair.public_key.to_bytes()),
+    };
+    let now = now_i32();
+    let parsed = tl_proto::deserialize::<OverlayNodesBoxed>(&value.value);
+    let node_summary: Vec<String> = match &parsed {
+        Ok(nodes) => nodes
+            .nodes
+            .iter()
+            .map(|node| {
+                format!(
+                    "id_matches={} overlay_matches={} version={} valid={}",
+                    node.id == local_id,
+                    node.overlay.0 == overlay.as_bytes(),
+                    node.version,
+                    valid_overlay_node(node, overlay, now),
+                )
+            })
+            .collect(),
+        Err(error) => vec![format!("unparsable={error}")],
+    };
+    log::debug!(
+        "dht membership verify: mismatch key_id_matches={} name={:?} idx={} key_id={:?} update_rule={:?} key_signature_len={} value_signature_len={} value_len={} name_hashes_back={} nodes={node_summary:?} value_hex={}",
+        value.key.key == expected_key,
+        String::from_utf8_lossy(&value.key.key.name),
+        value.key.key.idx,
+        value.key.id,
+        value.key.update_rule,
+        value.key.signature.len(),
+        value.signature.len(),
+        value.value.len(),
+        OverlayId::from_name(overlay_name) == overlay,
+        hex::encode(&value.value),
+    );
 }
 
 #[cfg(test)]
