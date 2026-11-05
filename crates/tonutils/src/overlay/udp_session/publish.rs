@@ -33,6 +33,7 @@
 //! discoverable as an overlay member.
 
 use std::{
+    collections::HashSet,
     net::{IpAddr, SocketAddr},
     sync::{
         Arc,
@@ -332,24 +333,25 @@ async fn publish_dht_value_attempt(
         let stores = targets.iter().cloned().map(|candidate| {
             let value = value.clone();
             async move {
-                let session = match shared_session(
-                    local_addr,
-                    &local_keypair,
-                    candidate.public_key,
-                    candidate.address,
-                )
-                .await
-                {
-                    Ok(session) => session,
-                    Err(error) => {
-                        log::debug!(
-                            "{operation}: session to {} failed: {error}",
-                            candidate.address
-                        );
-                        return None;
-                    }
-                };
-                if let Err(error) = session.dht_store(value, store_timeout).await {
+                let result = tokio::time::timeout(store_timeout, async move {
+                    let session = shared_session(
+                        local_addr,
+                        &local_keypair,
+                        candidate.public_key,
+                        candidate.address,
+                    )
+                    .await
+                    .map_err(|error| error.clone())?;
+                    session
+                        .dht_store(value, store_timeout)
+                        .await
+                        .map_err(|error| error.to_string())
+                })
+                .await;
+                if let Err(error) = match result {
+                    Ok(result) => result,
+                    Err(_) => Err(format!("DHT store timed out after {store_timeout:?}")),
+                } {
                     log::debug!(
                         "{operation}: store on {} failed: {error}",
                         candidate.address
@@ -424,6 +426,10 @@ async fn verify_dht_address_value_until(
     let key_id = dht_key_id(short_id(&local_keypair.public_key), b"address").0;
     let pending =
         verification_candidates(&key_id, dht_nodes, publish_candidates, acknowledged_targets);
+    let priority: HashSet<_> = acknowledged_targets
+        .iter()
+        .map(|target| target.id)
+        .collect();
     if pending.is_empty() {
         log::debug!("dht address verify: no nodes to ask");
         return false;
@@ -435,6 +441,7 @@ async fn verify_dht_address_value_until(
         deadline,
         find_value_requester(local_addr, &local_keypair),
         find_node_requester(local_addr, &local_keypair),
+        &priority,
         move |value| value_matches(value, &local_keypair, external),
     )
     .await;

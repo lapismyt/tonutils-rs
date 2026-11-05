@@ -13,6 +13,7 @@
 //! it in the first place.
 
 use std::{
+    collections::HashSet,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
@@ -262,6 +263,10 @@ async fn verify_overlay_membership(
     let key_id = dht_key_id(overlay.as_bytes(), b"nodes").0;
     let pending =
         verification_candidates(&key_id, dht_nodes, publish_candidates, acknowledged_targets);
+    let priority: HashSet<_> = acknowledged_targets
+        .iter()
+        .map(|target| target.id)
+        .collect();
     if pending.is_empty() {
         log::debug!("dht membership verify: no nodes to ask");
         return false;
@@ -282,6 +287,7 @@ async fn verify_overlay_membership(
         deadline,
         find_value_requester(local_addr, &keypair),
         find_node_requester(local_addr, &keypair),
+        &priority,
         matches,
     )
     .await;

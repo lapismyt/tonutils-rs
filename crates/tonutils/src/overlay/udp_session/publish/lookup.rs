@@ -143,6 +143,31 @@ fn insert_candidate(candidates: &mut Vec<DhtCandidate>, candidate: DhtCandidate)
     true
 }
 
+/// Returns the closest not-yet-tried candidates for one verification wave,
+/// querying acknowledged store targets before the wider candidate set.
+pub(super) fn next_verification_batch(
+    candidates: &[DhtCandidate],
+    key_id: &[u8; 32],
+    tried: &HashSet<[u8; 32]>,
+    priority: &HashSet<[u8; 32]>,
+) -> Vec<DhtCandidate> {
+    let mut order: Vec<usize> = (0..candidates.len())
+        .filter(|&index| !tried.contains(&candidates[index].id))
+        .collect();
+    order.sort_by_key(|&index| {
+        let candidate = &candidates[index];
+        (
+            !priority.contains(&candidate.id),
+            xor_distance(&candidate.id, key_id),
+        )
+    });
+    order
+        .into_iter()
+        .take(DHT_ALPHA)
+        .map(|index| candidates[index].clone())
+        .collect()
+}
+
 /// The publish round's starting candidate set: the known bootstrap DHT
 /// resolver nodes. Overlay members are never inserted here.
 pub(super) fn known_candidates(dht_nodes: &[SeedPeer]) -> Vec<DhtCandidate> {
@@ -355,6 +380,7 @@ pub(super) async fn lookup_closest(
 /// value.
 #[expect(
     clippy::too_many_lines,
+    clippy::too_many_arguments,
     reason = "One verification wave must keep answer handling, stale follow-up, and counters together"
 )]
 pub(super) async fn verify_value<F>(
@@ -364,6 +390,7 @@ pub(super) async fn verify_value<F>(
     deadline: Instant,
     find_value: FindValueFn,
     find_node: FindNodeFn,
+    priority: &HashSet<[u8; 32]>,
     matches: F,
 ) -> VerificationOutcome
 where
@@ -379,7 +406,7 @@ where
 
     for wave in 1..=DHT_LOOKUP_WAVES {
         sort_candidates(&mut pending, &key_id);
-        let batch = next_lookup_batch(&pending, &key_id, &tried);
+        let batch = next_verification_batch(&pending, &key_id, &tried, priority);
         if batch.is_empty() {
             stop_reason = "candidate_exhausted";
             break;
@@ -395,6 +422,10 @@ where
             tried.insert(candidate.id);
         }
         let batch_len = batch.len();
+        let priority_asked = batch
+            .iter()
+            .filter(|candidate| priority.contains(&candidate.id))
+            .count();
         asked += batch_len;
 
         let results = join_all(batch.into_iter().map(|candidate| {
@@ -476,7 +507,7 @@ where
         }
         new_candidates += wave_new;
         log::debug!(
-            "{operation}: wave={wave} asked={batch_len} answered={wave_answered} new_candidates={wave_new} stale_values={stale_values} pending={}",
+            "{operation}: wave={wave} asked={batch_len} priority_asked={priority_asked} answered={wave_answered} new_candidates={wave_new} stale_values={stale_values} pending={}",
             pending.len()
         );
     }
@@ -503,27 +534,32 @@ pub(super) fn find_node_requester(
     let local_keypair = *local_keypair;
     Arc::new(move |candidate, key_id, k, timeout| {
         Box::pin(async move {
-            let session = shared_session(
-                local_addr,
-                &local_keypair,
-                candidate.public_key,
-                candidate.address,
-            )
-            .await
-            .ok()?;
-            let nodes = session
-                .dht_find_node(Int256(key_id), k, timeout)
+            tokio::time::timeout(timeout, async move {
+                let session = shared_session(
+                    local_addr,
+                    &local_keypair,
+                    candidate.public_key,
+                    candidate.address,
+                )
                 .await
                 .ok()?;
-            let now = now_i32();
-            Some(
-                nodes
-                    .nodes
-                    .into_iter()
-                    .filter(|node| node.is_valid(now))
-                    .filter_map(|node| candidate_from_dht_node(&node))
-                    .collect(),
-            )
+                let nodes = session
+                    .dht_find_node(Int256(key_id), k, timeout)
+                    .await
+                    .ok()?;
+                let now = now_i32();
+                Some(
+                    nodes
+                        .nodes
+                        .into_iter()
+                        .filter(|node| node.is_valid(now))
+                        .filter_map(|node| candidate_from_dht_node(&node))
+                        .collect(),
+                )
+            })
+            .await
+            .ok()
+            .flatten()
         })
     })
 }
@@ -536,18 +572,23 @@ pub(super) fn find_value_requester(
     let local_keypair = *local_keypair;
     Arc::new(move |candidate, key_id, k, timeout| {
         Box::pin(async move {
-            let session = shared_session(
-                local_addr,
-                &local_keypair,
-                candidate.public_key,
-                candidate.address,
-            )
-            .await
-            .ok()?;
-            session
-                .dht_find_value(Int256(key_id), k, timeout)
+            tokio::time::timeout(timeout, async move {
+                let session = shared_session(
+                    local_addr,
+                    &local_keypair,
+                    candidate.public_key,
+                    candidate.address,
+                )
                 .await
-                .ok()
+                .ok()?;
+                session
+                    .dht_find_value(Int256(key_id), k, timeout)
+                    .await
+                    .ok()
+            })
+            .await
+            .ok()
+            .flatten()
         })
     })
 }
@@ -584,9 +625,9 @@ mod tests {
     };
 
     use super::{
-        DHT_K, DhtCandidate, FindNodeFn, FindValueFn, STORE_TARGETS, candidate_from_dht_node,
-        lookup_closest, next_lookup_batch, short_id, store_targets, verification_candidates,
-        verify_value,
+        DHT_ALPHA, DHT_K, DhtCandidate, FindNodeFn, FindValueFn, STORE_TARGETS,
+        candidate_from_dht_node, lookup_closest, next_lookup_batch, next_verification_batch,
+        short_id, store_targets, verification_candidates, verify_value,
     };
 
     fn candidate(id: u8, port: u16) -> DhtCandidate {
@@ -733,6 +774,7 @@ mod tests {
             Box::pin(async { Some(empty_not_found()) })
         });
         let find_node: FindNodeFn = Arc::new(|_, _, _, _| Box::pin(async { None }));
+        let priority = HashSet::new();
 
         let outcome = verify_value(
             "test verify",
@@ -741,6 +783,7 @@ mod tests {
             Instant::now() + Duration::from_secs(5),
             find_value,
             find_node,
+            &priority,
             |_| false,
         )
         .await;
@@ -776,6 +819,7 @@ mod tests {
             };
             Box::pin(async move { Some(DhtValueResult::Found { value }) })
         });
+        let priority = HashSet::new();
 
         let outcome = verify_value(
             "test verify",
@@ -784,6 +828,7 @@ mod tests {
             Instant::now() + Duration::from_secs(5),
             find_value,
             find_node,
+            &priority,
             |value| value.value == [1],
         )
         .await;
@@ -815,6 +860,7 @@ mod tests {
             Box::pin(async move { Some(result) })
         });
         let find_node: FindNodeFn = Arc::new(|_, _, _, _| Box::pin(async { None }));
+        let priority = HashSet::new();
 
         let outcome = verify_value(
             "test verify",
@@ -823,6 +869,7 @@ mod tests {
             Instant::now() + Duration::from_secs(5),
             find_value,
             find_node,
+            &priority,
             |value| value.value == [1],
         )
         .await;
@@ -853,5 +900,29 @@ mod tests {
         );
         assert_eq!(batch.len(), 1);
         assert_eq!(batch[0].id, [2; 32]);
+    }
+
+    #[test]
+    fn verification_batch_queries_acknowledged_targets_first() {
+        let key_id = [0u8; 32];
+        let mut candidates: Vec<DhtCandidate> = (1..=9)
+            .map(|id| candidate(id, 47_000 + u16::from(id)))
+            .collect();
+        let acknowledged = candidate(100, 47_100);
+        candidates.push(acknowledged.clone());
+        let priority = HashSet::from([acknowledged.id]);
+
+        let batch = next_verification_batch(&candidates, &key_id, &HashSet::new(), &priority);
+
+        assert_eq!(batch.len(), DHT_ALPHA);
+        assert_eq!(batch[0].id, acknowledged.id);
+        assert_eq!(
+            batch
+                .iter()
+                .skip(1)
+                .map(|candidate| candidate.id[0])
+                .collect::<Vec<_>>(),
+            (1..=7).collect::<Vec<_>>()
+        );
     }
 }
