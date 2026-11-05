@@ -12,14 +12,18 @@
 //! the overlay's public DHT membership, so that peer has no route to discover
 //! it in the first place.
 
-use std::{collections::HashSet, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use crate::{
     adnl::{
         AdnlAddress, AdnlKeyPair, now_i32,
         tl::{
             AdnlIdShort, AdnlTlPublicKey as TlPublicKey, DhtKey, DhtKeyDescription, DhtUpdateRule,
-            DhtValue, DhtValueResult,
+            DhtValue,
         },
     },
     overlay::{
@@ -31,30 +35,15 @@ use crate::{
 };
 
 use super::{
-    DhtAddressPublisher, DhtCandidate, PUBLISH_STORE_RETRY_DELAY, PUBLISH_STORE_RETRY_LONG_DELAY,
-    PublishAttempt, VALUE_TTL_SECS, candidate_from_dht_node, known_candidates,
-    publish_dht_value_attempt, xor_distance,
+    DhtAddressPublisher, VALUE_TTL_SECS,
+    lookup::{
+        DhtCandidate, PublishAttempt, attempt_deadline, find_node_requester, find_value_requester,
+        merge_attempt, verification_candidates, verify_value,
+    },
+    publish_dht_value_attempt,
 };
 
 use futures::future::BoxFuture;
-
-/// Per-query deadline for a membership `findValue` verification probe.
-///
-/// The publish timeout can be 30 seconds, but asking multiple enriched
-/// candidates at that deadline would make verification outlast the fixed
-/// republish cadence. A DHT node that has not answered a small `findValue`
-/// within five seconds is not useful verification evidence.
-const MEMBERSHIP_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// Overall per-query deadline for a membership store or enrichment round.
-///
-/// Upstream's DHT store query gives each responsible node a 2-4 second
-/// response window. Using the caller's 30-second publish deadline stretches
-/// one failed round across most of the 300-second admission window, leaving
-/// only two or three chances for the rotating 768-byte membership sample.
-/// A healthy DHT node answers a 256-byte store or `findNode` well inside this
-/// bound; silent nodes are better retried on the next fixed cadence.
-const MEMBERSHIP_DHT_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Builds a membership publisher bound to this node's identity and overlay.
 pub(super) fn membership_publisher(
@@ -91,14 +80,13 @@ pub(super) async fn publish_overlay_membership(
     dht_nodes: Vec<SeedPeer>,
     timeout: Duration,
 ) -> usize {
-    let timeout = timeout.min(MEMBERSHIP_DHT_TIMEOUT);
-    let mut stored = Vec::new();
+    let mut acknowledged = Vec::new();
     let mut candidates = Vec::new();
     let mut served = false;
     for (attempt, delay) in [
         None,
-        Some(PUBLISH_STORE_RETRY_DELAY),
-        Some(PUBLISH_STORE_RETRY_LONG_DELAY),
+        Some(super::PUBLISH_STORE_RETRY_DELAY),
+        Some(super::PUBLISH_STORE_RETRY_LONG_DELAY),
     ]
     .into_iter()
     .enumerate()
@@ -106,17 +94,18 @@ pub(super) async fn publish_overlay_membership(
         if let Some(delay) = delay {
             tokio::time::sleep(delay).await;
         }
+        let deadline = attempt_deadline(timeout);
         let publish = publish_membership_attempt(
             local_addr,
             local_keypair,
             overlay,
             &overlay_name,
             &dht_nodes,
-            timeout,
+            deadline,
             attempt,
         )
         .await;
-        merge_attempt(&mut stored, &mut candidates, publish);
+        merge_attempt(&mut acknowledged, &mut candidates, publish);
         served = verify_overlay_membership(
             local_addr,
             local_keypair,
@@ -124,47 +113,23 @@ pub(super) async fn publish_overlay_membership(
             &overlay_name,
             &dht_nodes,
             &candidates,
-            &stored,
-            timeout,
+            &acknowledged,
+            deadline,
         )
         .await;
         if served {
             break;
         }
         log::debug!(
-            "dht membership publish: attempt {attempt} stored on {} node(s) but served_by_dht=false",
-            stored.len()
+            "dht membership publish: attempt {attempt} acknowledged={} but served_by_dht=false",
+            acknowledged.len()
         );
     }
     log::info!(
-        "dht membership publish: overlay={overlay} stored on {} node(s), served_by_dht={served}",
-        stored.len()
+        "dht membership publish: overlay={overlay} acknowledged={} served_by_dht={served}",
+        acknowledged.len()
     );
-    stored.len()
-}
-
-/// Merges one retry round into the accumulated placement evidence.
-fn merge_attempt(
-    stored: &mut Vec<DhtCandidate>,
-    candidates: &mut Vec<DhtCandidate>,
-    attempt: PublishAttempt,
-) {
-    for candidate in attempt.stored {
-        if !stored
-            .iter()
-            .any(|existing| existing.address == candidate.address)
-        {
-            stored.push(candidate);
-        }
-    }
-    for candidate in attempt.candidates {
-        if !candidates
-            .iter()
-            .any(|existing| existing.address == candidate.address)
-        {
-            candidates.push(candidate);
-        }
-    }
+    acknowledged.len()
 }
 
 async fn publish_membership_attempt(
@@ -173,7 +138,7 @@ async fn publish_membership_attempt(
     overlay: OverlayId,
     overlay_name: &[u8],
     dht_nodes: &[SeedPeer],
-    timeout: Duration,
+    deadline: Instant,
     attempt: usize,
 ) -> PublishAttempt {
     let value = membership_dht_value(local_keypair, overlay, overlay_name);
@@ -184,7 +149,7 @@ async fn publish_membership_attempt(
         dht_nodes,
         key_id,
         value,
-        timeout,
+        deadline,
         attempt,
         "dht membership publish",
     )
@@ -291,129 +256,49 @@ async fn verify_overlay_membership(
     overlay_name: &[u8],
     dht_nodes: &[SeedPeer],
     publish_candidates: &[DhtCandidate],
-    stored_targets: &[DhtCandidate],
-    timeout: Duration,
+    acknowledged_targets: &[DhtCandidate],
+    deadline: Instant,
 ) -> bool {
-    let key_id = dht_key_id(overlay.as_bytes(), b"nodes");
-    let query_timeout = timeout.min(MEMBERSHIP_VERIFY_TIMEOUT);
-    let mut pending =
-        membership_verification_candidates(dht_nodes, publish_candidates, stored_targets);
+    let key_id = dht_key_id(overlay.as_bytes(), b"nodes").0;
+    let pending =
+        verification_candidates(&key_id, dht_nodes, publish_candidates, acknowledged_targets);
     if pending.is_empty() {
         log::debug!("dht membership verify: no nodes to ask");
         return false;
     }
-    pending.sort_by_key(|candidate| xor_distance(&candidate.id, &key_id.0));
-    let mut tried = HashSet::new();
-
-    for round in 1..=3 {
-        let mut batch = Vec::new();
-        let mut rest = Vec::new();
-        for candidate in pending.drain(..) {
-            if !tried.insert(candidate.address) {
-                continue;
-            }
-            if batch.len() < 4 {
-                batch.push(candidate);
-            } else {
-                rest.push(candidate);
-            }
+    let keypair = *local_keypair;
+    let overlay_name = overlay_name.to_vec();
+    let matches = move |value: &DhtValue| {
+        let served = membership_value_matches(value, &keypair, overlay, &overlay_name);
+        if !served {
+            log_membership_mismatch(value, &keypair, overlay, &overlay_name);
         }
-        if batch.is_empty() {
-            break;
-        }
-        let results = futures::future::join_all(batch.into_iter().map(|candidate| {
-            let key_id = key_id.clone();
-            async move {
-                let session = super::shared_session(
-                    local_addr,
-                    local_keypair,
-                    candidate.public_key,
-                    candidate.address,
-                )
-                .await
-                .ok()?;
-                let result = session
-                    .dht_find_value(key_id, 1, query_timeout)
-                    .await
-                    .ok()?;
-                Some((candidate, result))
-            }
-        }))
-        .await;
-
-        let mut answered = 0usize;
-        for (candidate, result) in results.into_iter().flatten() {
-            answered += 1;
-            match result {
-                DhtValueResult::Found { value } => {
-                    let served =
-                        membership_value_matches(&value, local_keypair, overlay, overlay_name);
-                    if !served {
-                        log_membership_mismatch(&value, local_keypair, overlay, overlay_name);
-                    }
-                    log::debug!(
-                        "dht membership verify: served={served} (round {round}, node {})",
-                        candidate.address
-                    );
-                    if served {
-                        return true;
-                    }
-                }
-                DhtValueResult::NotFound { nodes } => {
-                    let now = now_i32();
-                    for node in nodes.nodes {
-                        if !node.is_valid(now) {
-                            continue;
-                        }
-                        if let Some(closer) = candidate_from_dht_node(&node)
-                            && !tried.contains(&closer.address)
-                        {
-                            rest.push(closer);
-                        }
-                    }
-                }
-            }
-        }
-        if answered == 0 {
-            log::debug!("dht membership verify: walk round {round} got no answers");
-            break;
-        }
-        pending = rest;
-        if pending.is_empty() {
-            break;
-        }
-    }
-    log::debug!("dht membership verify: this node is not in the public overlay DHT yet");
-    false
-}
-
-/// Chooses the nodes asked to prove that this membership record is served.
-///
-/// A successful `dht.store` only means at least one member of the target's
-/// forwarding set accepted the value.  The target that answered can still
-/// serve an older record, so verification starts from the complete enriched
-/// placement set and treats acknowledged targets as additional evidence,
-/// not as the only candidates.  When the store round produced no candidate
-/// at all, fall back to the configured resolver seeds.
-fn membership_verification_candidates(
-    dht_nodes: &[SeedPeer],
-    publish_candidates: &[DhtCandidate],
-    stored_targets: &[DhtCandidate],
-) -> Vec<DhtCandidate> {
-    let mut pending = if publish_candidates.is_empty() {
-        known_candidates(dht_nodes)
-    } else {
-        publish_candidates.to_vec()
+        served
     };
-    for candidate in stored_targets {
-        if !pending
-            .iter()
-            .any(|existing| existing.address == candidate.address)
-        {
-            pending.push(candidate.clone());
-        }
-    }
-    pending
+    let outcome = verify_value(
+        "dht membership verify",
+        pending,
+        key_id,
+        deadline,
+        find_value_requester(local_addr, &keypair),
+        find_node_requester(local_addr, &keypair),
+        matches,
+    )
+    .await;
+    log::info!(
+        "dht membership verify: overlay={overlay} seeds={} lookup_candidates={} acknowledged={} served_by_dht={} rounds={} asked={} answered={} new_candidates={} stale_values={} stop={}",
+        dht_nodes.len(),
+        publish_candidates.len(),
+        acknowledged_targets.len(),
+        outcome.served,
+        outcome.rounds,
+        outcome.asked,
+        outcome.answered,
+        outcome.new_candidates,
+        outcome.stale_values,
+        outcome.stop_reason
+    );
+    outcome.served
 }
 
 /// Logs why a `dht.findValue` answer does not prove this node's membership.
@@ -476,8 +361,7 @@ mod tests {
     };
 
     use super::{
-        DhtCandidate, membership_dht_value, membership_value_matches,
-        membership_verification_candidates,
+        DhtCandidate, membership_dht_value, membership_value_matches, verification_candidates,
     };
 
     #[test]
@@ -543,13 +427,14 @@ mod tests {
             "127.0.0.1:30305",
         )];
 
-        let candidates = membership_verification_candidates(
+        let candidates = verification_candidates(
+            &[9; 32],
             &seeds,
             std::slice::from_ref(&enriched),
             std::slice::from_ref(&acknowledged),
         );
 
-        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates.len(), 3);
         assert!(
             candidates
                 .iter()
