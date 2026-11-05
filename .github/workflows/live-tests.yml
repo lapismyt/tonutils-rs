@@ -40,6 +40,9 @@ jobs:
       - name: Check workspace feature build
         run: cargo check --workspace --all-features
 
+      - name: Check CLI with its declared features
+        run: cargo check -p tonutils-cli
+
       - name: Test workspace feature build
         run: cargo test --workspace --all-features
 

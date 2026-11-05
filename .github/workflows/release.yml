@@ -52,6 +52,7 @@ jobs:
         run: |
           cargo fmt --check
           cargo check --workspace --all-features
+          cargo check -p tonutils-cli
           cargo test --workspace --all-features
           cargo clippy --workspace --all-targets --all-features -- -D warnings
           for package in tonutils tonutils-macros tonutils-cli; do
