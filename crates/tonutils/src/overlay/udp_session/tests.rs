@@ -13,7 +13,7 @@ use std::{
 
 use crate::{
     adnl::{
-        AdnlAddress, AdnlKeyPair, AdnlUdpSession, now_i32,
+        AdnlAddress, AdnlKeyPair, AdnlUdpSession, AdnlUdpTransport, now_i32,
         tl::{AdnlIdShort, AdnlMessage, AdnlTlPublicKey as TlPublicKey, PacketContents},
     },
     overlay::{
@@ -26,13 +26,127 @@ use crate::{
     },
     overlay::{
         OverlayId, OverlaySession, PeerId,
-        tl::{FecType, OverlayBroadcastFec, OverlayCertificate, OverlayNode, OverlayNodeToSign},
+        tl::{
+            FecType, OverlayBroadcastFec, OverlayCertificate, OverlayNode, OverlayNodeToSign,
+            OverlayPong, OverlayQuery,
+        },
     },
     tl::TlInt256 as Int256,
 };
 
 use raptorq::Encoder;
 use sha2::{Digest, Sha256};
+
+fn query_packet(query_id: Int256, query: Vec<u8>) -> PacketContents {
+    PacketContents {
+        rand1: vec![0; 7],
+        flags: (),
+        from: None,
+        from_short: None,
+        message: Some(AdnlMessage::Query { query_id, query }),
+        messages: None,
+        address: None,
+        priority_address: None,
+        seqno: None,
+        confirm_seqno: None,
+        recv_addr_list_version: None,
+        recv_priority_addr_list_version: None,
+        reinit_date: None,
+        dst_reinit_date: None,
+        signature: None,
+        rand2: vec![0; 7],
+    }
+}
+
+fn wrapped_overlay_query(overlay: OverlayId, inner: &[u8]) -> Vec<u8> {
+    let mut query = tl_proto::serialize(OverlayQuery::Query {
+        overlay: Int256(overlay.as_bytes()),
+    });
+    query.extend_from_slice(inner);
+    query
+}
+
+/// A peer may send its first overlay query over the session this node
+/// established outbound: the receiving side must route the datagram by the
+/// peer's source address and answer both liveness probes from the session
+/// receive task before they reach the consumer.
+#[tokio::test]
+async fn outbound_session_answers_unsolicited_liveness_queries() {
+    let overlay = OverlayId::from_name(b"unsolicited liveness");
+    let local_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+    let peer_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+    let local_transport = AdnlUdpTransport::bind("127.0.0.1:0".parse().unwrap(), local_key)
+        .await
+        .expect("local transport must bind");
+    let peer_transport = AdnlUdpTransport::bind("127.0.0.1:0".parse().unwrap(), peer_key)
+        .await
+        .expect("peer transport must bind");
+    let local_addr = local_transport.local_addr().unwrap();
+    let peer_addr = peer_transport.local_addr().unwrap();
+
+    // The local side dials the peer first. The peer has not dialled back,
+    // so the next datagram from it is unsolicited from this node's view.
+    let local_session = local_transport.session_for_peer(peer_key.public_key, peer_addr);
+    let local = AdnlUdpOverlaySession {
+        peer: PeerId::from_bytes(peer_key.public_key.to_bytes()),
+        session: local_session,
+        overlay: Some(overlay),
+        fec: HashMap::new(),
+        last_keepalive: Instant::now(),
+        last_activity: Instant::now(),
+        members: OverlayMemberCache::default(),
+        endpoints: OverlayMemberEndpoints::default(),
+        pre_dedup: PacketPreDedup::default(),
+        plumtree: None,
+    };
+    local.register_fast_answers();
+    let peer = peer_transport.session_for_peer(local_key.public_key, local_addr);
+    let before = protocol_stats();
+
+    let overlay_ping_id = Int256::random();
+    peer.send_contents(query_packet(
+        overlay_ping_id.clone(),
+        tl_proto::serialize(OverlayQuery::Ping),
+    ))
+    .await
+    .expect("overlay.ping must send");
+    let answer = tokio::time::timeout(Duration::from_secs(2), peer.recv_contents())
+        .await
+        .expect("overlay.ping must be answered")
+        .expect("the pong packet must decode");
+    let Some(AdnlMessage::Answer { query_id, answer }) = answer.message else {
+        panic!("expected overlay.pong, got {answer:?}");
+    };
+    assert_eq!(query_id.0, overlay_ping_id.0);
+    assert_eq!(answer, tl_proto::serialize(OverlayPong));
+
+    let dht_ping_id = Int256::random();
+    let dht_ping = tl_proto::serialize(crate::adnl::tl::DhtMessage::Ping { random_id: 17 });
+    peer.send_contents(query_packet(
+        dht_ping_id.clone(),
+        wrapped_overlay_query(overlay, &dht_ping),
+    ))
+    .await
+    .expect("dht.ping must send");
+    let answer = tokio::time::timeout(Duration::from_secs(2), peer.recv_contents())
+        .await
+        .expect("dht.ping must be answered")
+        .expect("the dht.pong packet must decode");
+    let Some(AdnlMessage::Answer { query_id, answer }) = answer.message else {
+        panic!("expected dht.pong, got {answer:?}");
+    };
+    assert_eq!(query_id.0, dht_ping_id.0);
+    assert_eq!(
+        answer,
+        tl_proto::serialize(crate::adnl::tl::DhtPong { random_id: 17 })
+    );
+
+    let after = protocol_stats();
+    assert!(after.queries_received > before.queries_received);
+    assert!(after.pongs_sent > before.pongs_sent);
+    assert!(after.unique_pingers > before.unique_pingers);
+    assert!(after.dht_pings_received > before.dht_pings_received);
+}
 
 #[tokio::test]
 async fn reassembles_single_source_raptorq_external_message() {
