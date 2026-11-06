@@ -6,9 +6,9 @@
 //! publishers drifting apart and makes the walk testable without a live DHT.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant},
 };
 
@@ -31,11 +31,14 @@ use super::super::shared_session;
 /// Upstream DHT replication factor and lookup width.
 pub(super) const DHT_K: usize = 10;
 
+/// The upstream lookup starts from the nearest `2k` candidates.
+pub(super) const DHT_LOOKUP_WIDTH: usize = 2 * DHT_K;
+
 /// The same `k` in the signed wire field's width.
 const DHT_K_I32: i32 = 10;
 
 /// How many store targets one publish round uses.
-pub(super) const STORE_TARGETS: usize = 10;
+pub(super) const STORE_TARGETS: usize = DHT_K;
 
 /// How many candidates one lookup or verification wave asks concurrently.
 pub(super) const DHT_ALPHA: usize = 8;
@@ -52,6 +55,16 @@ pub(super) const DHT_STORE_TIMEOUT: Duration = Duration::from_secs(4);
 /// Total deadline for one lookup/store/verification attempt.
 pub(super) const DHT_ATTEMPT_BUDGET: Duration = Duration::from_secs(35);
 
+/// Verification keeps the larger of twelve seconds and two fifths of the
+/// capped attempt budget, even when the caller passed a shorter timeout.
+pub(super) const DHT_VERIFICATION_RESERVE: Duration = Duration::from_secs(14);
+
+/// Upper bound on cached DHT routes held by one publisher.
+const DHT_ROUTING_CACHE_CAP: usize = 512;
+
+/// Cached DHT routes older than this are ignored.
+const DHT_ROUTING_CACHE_TTL: Duration = Duration::from_mins(10);
+
 /// A DHT node a publish round can query or store a value on.
 #[derive(Clone, Debug)]
 pub(super) struct DhtCandidate {
@@ -61,12 +74,116 @@ pub(super) struct DhtCandidate {
     pub(super) address: SocketAddr,
 }
 
+#[derive(Clone, Debug)]
+struct RoutingCacheEntry {
+    candidate: DhtCandidate,
+    observed: Instant,
+}
+
+#[derive(Debug)]
+struct RoutingCacheInner {
+    entries: HashMap<[u8; 32], RoutingCacheEntry>,
+    capacity: usize,
+    ttl: Duration,
+}
+
+/// A bounded, expiring cache of DHT routes discovered by one publisher.
+///
+/// The address and public-membership records of a server share one instance.
+/// Only bootstrap seeds and validated `findNode` answers enter this cache;
+/// overlay membership records are never routing candidates.
+#[derive(Clone, Debug)]
+pub(super) struct DhtRoutingCache {
+    inner: Arc<Mutex<RoutingCacheInner>>,
+}
+
+impl DhtRoutingCache {
+    pub(super) fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(RoutingCacheInner {
+                entries: HashMap::new(),
+                capacity: DHT_ROUTING_CACHE_CAP,
+                ttl: DHT_ROUTING_CACHE_TTL,
+            })),
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, RoutingCacheInner> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn prune(inner: &mut RoutingCacheInner, now: Instant) {
+        let ttl = inner.ttl;
+        inner
+            .entries
+            .retain(|_, entry| now.saturating_duration_since(entry.observed) < ttl);
+    }
+
+    /// Returns every non-expired route. Callers sort and bound the result for
+    /// the key they are currently looking up.
+    pub(super) fn candidates(&self, now: Instant) -> Vec<DhtCandidate> {
+        let mut inner = self.lock();
+        Self::prune(&mut inner, now);
+        inner
+            .entries
+            .values()
+            .map(|entry| entry.candidate.clone())
+            .collect()
+    }
+
+    pub(super) fn observe(&self, candidate: DhtCandidate) {
+        self.observe_at(candidate, Instant::now());
+    }
+
+    fn observe_at(&self, candidate: DhtCandidate, observed: Instant) {
+        let mut inner = self.lock();
+        Self::prune(&mut inner, observed);
+        if inner.capacity == 0 {
+            return;
+        }
+        if !inner.entries.contains_key(&candidate.id)
+            && inner.entries.len() >= inner.capacity
+            && let Some(oldest) = inner
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.observed)
+                .map(|(id, _)| *id)
+        {
+            inner.entries.remove(&oldest);
+        }
+        inner.entries.insert(
+            candidate.id,
+            RoutingCacheEntry {
+                candidate,
+                observed,
+            },
+        );
+    }
+
+    pub(super) fn observe_all(&self, candidates: impl IntoIterator<Item = DhtCandidate>) {
+        let now = Instant::now();
+        for candidate in candidates {
+            self.observe_at(candidate, now);
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self, now: Instant) -> usize {
+        let mut inner = self.lock();
+        Self::prune(&mut inner, now);
+        inner.entries.len()
+    }
+}
+
 /// Outcome of one DHT store round.
 ///
 /// `acknowledged` contains only nodes that answered `dht.stored`. That answer
 /// confirms the store request was delivered; it does not prove the node kept
-/// the value or that `findValue` can serve it. `candidates` is the enriched,
-/// distance-sorted placement set used for those stores.
+/// the value or that `findValue` can serve it. `candidates` is every valid
+/// route learned during the attempt and seeds the verification walk; stores
+/// themselves use only `LookupOutcome::results`.
 #[derive(Debug)]
 pub(super) struct PublishAttempt {
     pub(super) acknowledged: Vec<DhtCandidate>,
@@ -90,12 +207,28 @@ pub(super) type FindValueFn = Arc<
 /// Result of a bounded iterative lookup.
 #[derive(Debug)]
 pub(super) struct LookupOutcome {
+    /// Successful `findNode` responders, closest first and capped at `k`.
+    pub(super) results: Vec<DhtCandidate>,
+    /// Every valid route learned during the walk, used for verification.
     pub(super) candidates: Vec<DhtCandidate>,
     pub(super) rounds: usize,
     pub(super) asked: usize,
     pub(super) answered: usize,
     pub(super) new_candidates: usize,
     pub(super) stop_reason: &'static str,
+}
+
+/// The bounded phases of one lookup/store/verification attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "Each field is a distinct phase deadline and the suffix keeps call sites unambiguous"
+)]
+pub(super) struct AttemptPhases {
+    pub(super) total_deadline: Instant,
+    pub(super) publish_deadline: Instant,
+    pub(super) lookup_deadline: Instant,
+    pub(super) verification_deadline: Instant,
 }
 
 /// Result of a bounded `findValue` verification walk.
@@ -110,9 +243,27 @@ pub(super) struct VerificationOutcome {
     pub(super) stop_reason: &'static str,
 }
 
-/// Returns the deadline for one bounded DHT attempt.
-pub(super) fn attempt_deadline(timeout: Duration) -> Instant {
-    Instant::now() + timeout.min(DHT_ATTEMPT_BUDGET)
+/// Splits one attempt into publish, lookup, and verification phases.
+pub(super) fn attempt_phases(timeout: Duration) -> AttemptPhases {
+    attempt_phases_at(Instant::now(), timeout)
+}
+
+fn attempt_phases_at(start: Instant, timeout: Duration) -> AttemptPhases {
+    let budget = timeout.min(DHT_ATTEMPT_BUDGET);
+    let total_deadline = start + budget;
+    let verification_reserve = DHT_VERIFICATION_RESERVE.min(budget);
+    let publish_deadline = total_deadline
+        .checked_sub(verification_reserve)
+        .unwrap_or(start);
+    let lookup_deadline = publish_deadline
+        .checked_sub(DHT_STORE_TIMEOUT)
+        .unwrap_or(start);
+    AttemptPhases {
+        total_deadline,
+        publish_deadline,
+        lookup_deadline,
+        verification_deadline: total_deadline,
+    }
 }
 
 /// XOR distance between two DHT key ids - the ordering the DHT
@@ -141,6 +292,26 @@ fn insert_candidate(candidates: &mut Vec<DhtCandidate>, candidate: DhtCandidate)
     }
     candidates.push(candidate);
     true
+}
+
+fn insert_pending(
+    pending: &mut Vec<DhtCandidate>,
+    tried: &HashSet<[u8; 32]>,
+    key_id: &[u8; 32],
+    candidate: DhtCandidate,
+) -> bool {
+    if tried.contains(&candidate.id) || !insert_candidate(pending, candidate) {
+        return false;
+    }
+    sort_candidates(pending, key_id);
+    pending.truncate(DHT_LOOKUP_WIDTH);
+    true
+}
+
+fn insert_result(results: &mut Vec<DhtCandidate>, key_id: &[u8; 32], candidate: DhtCandidate) {
+    let _ = insert_candidate(results, candidate);
+    sort_candidates(results, key_id);
+    results.truncate(DHT_K);
 }
 
 /// Returns the closest not-yet-tried candidates for one verification wave,
@@ -189,24 +360,49 @@ pub(super) fn known_candidates(dht_nodes: &[SeedPeer]) -> Vec<DhtCandidate> {
     candidates
 }
 
+/// The nearest `2k` bootstrap and cached routes that seed one lookup.
+///
+/// Seeds are refreshed in the shared cache on every attempt. Overlay members
+/// are dial targets only and cannot enter this set.
+pub(super) fn initial_lookup_candidates(
+    cache: &DhtRoutingCache,
+    dht_nodes: &[SeedPeer],
+    key_id: &[u8; 32],
+    now: Instant,
+) -> Vec<DhtCandidate> {
+    let mut candidates = known_candidates(dht_nodes);
+    cache.observe_all(candidates.iter().cloned());
+    candidates.extend(cache.candidates(now));
+    sort_candidates(&mut candidates, key_id);
+    candidates.truncate(DHT_LOOKUP_WIDTH);
+    candidates
+}
+
 /// The full verification seed set: bootstrap resolvers, enriched lookup
-/// candidates, and nodes that acknowledged `dht.store`, deduplicated by DHT
-/// node id and sorted by distance to the key.
+/// candidates, cached routes, and nodes that acknowledged `dht.store`,
+/// deduplicated by DHT node id and sorted by distance to the key.
 pub(super) fn verification_candidates(
     key_id: &[u8; 32],
     dht_nodes: &[SeedPeer],
     publish_candidates: &[DhtCandidate],
     acknowledged_targets: &[DhtCandidate],
+    cache: &DhtRoutingCache,
+    now: Instant,
 ) -> Vec<DhtCandidate> {
     let mut pending = known_candidates(dht_nodes);
-    for candidate in publish_candidates.iter().chain(acknowledged_targets) {
+    for candidate in publish_candidates
+        .iter()
+        .chain(acknowledged_targets)
+        .chain(cache.candidates(now).iter())
+    {
         let _ = insert_candidate(&mut pending, candidate.clone());
     }
     sort_candidates(&mut pending, key_id);
     pending
 }
 
-/// Selects the closest store targets. `dht.store` is sent only to these.
+/// Selects the closest store targets. Callers pass only successful `findNode`
+/// responders, so a short result set stays short rather than being padded.
 pub(super) fn store_targets(candidates: &[DhtCandidate], key_id: &[u8; 32]) -> Vec<DhtCandidate> {
     let mut selected = candidates.to_vec();
     sort_candidates(&mut selected, key_id);
@@ -269,44 +465,61 @@ pub(super) fn candidate_from_dht_node(node: &DhtNode) -> Option<DhtCandidate> {
 }
 
 /// Runs a bounded iterative `findNode` lookup and returns the merged,
-/// distance-sorted candidate set.
+/// distance-sorted placement evidence.
 ///
-/// Each wave asks the closest untried candidates. The walk stops as soon as
-/// no untried candidate is closer than the current tenth result, when a wave
-/// or query budget is exhausted, or when the attempt deadline passes.
+/// `pending` holds at most the nearest `2k` untried candidates, while
+/// `results` holds only successful responders and is capped at `k`. The walk
+/// converges only after ten peers answered and no pending candidate is closer
+/// than the tenth successful result. Discovery alone never completes it.
+#[expect(
+    clippy::too_many_lines,
+    reason = "The lookup state machine keeps response handling, convergence, and counters together"
+)]
 pub(super) async fn lookup_closest(
     operation: &'static str,
     attempt: usize,
-    mut candidates: Vec<DhtCandidate>,
+    mut pending: Vec<DhtCandidate>,
     key_id: [u8; 32],
     deadline: Instant,
+    cache: &DhtRoutingCache,
     query: FindNodeFn,
 ) -> LookupOutcome {
+    let initial_candidates = pending.len();
+    let mut learned = pending.clone();
+    sort_candidates(&mut pending, &key_id);
+    pending.truncate(DHT_LOOKUP_WIDTH);
     let mut tried = HashSet::new();
+    let mut results: Vec<DhtCandidate> = Vec::with_capacity(DHT_K);
     let mut rounds = 0usize;
     let mut asked = 0usize;
     let mut answered = 0usize;
     let mut new_candidates = 0usize;
-    let mut stop_reason = "candidate_exhausted";
+    let mut stop_reason = "wave_limit";
 
     for wave in 1..=DHT_LOOKUP_WAVES {
-        sort_candidates(&mut candidates, &key_id);
-        let batch = next_lookup_batch(&candidates, &key_id, &tried);
+        pending.retain(|candidate| !tried.contains(&candidate.id));
+        sort_candidates(&mut pending, &key_id);
+        pending.truncate(DHT_LOOKUP_WIDTH);
+
+        if results.len() == DHT_K {
+            let kth_distance = xor_distance(&results[DHT_K - 1].id, &key_id);
+            let nearest_pending = pending
+                .first()
+                .map(|candidate| xor_distance(&candidate.id, &key_id));
+            if nearest_pending.is_none_or(|distance| distance >= kth_distance) {
+                stop_reason = "converged";
+                break;
+            }
+        }
+
+        let batch = next_lookup_batch(&pending, &key_id, &tried);
         if batch.is_empty() {
-            stop_reason = if candidates.len() >= DHT_K {
+            stop_reason = if results.len() == DHT_K {
                 "converged"
             } else {
                 "candidate_exhausted"
             };
             break;
-        }
-        if candidates.len() >= DHT_K {
-            let kth_distance = xor_distance(&candidates[DHT_K - 1].id, &key_id);
-            let nearest_untried = xor_distance(&batch[0].id, &key_id);
-            if nearest_untried >= kth_distance {
-                stop_reason = "converged";
-                break;
-            }
         }
 
         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -319,10 +532,11 @@ pub(super) async fn lookup_closest(
         for candidate in &batch {
             tried.insert(candidate.id);
         }
+        pending.retain(|candidate| !tried.contains(&candidate.id));
         let batch_len = batch.len();
         asked += batch_len;
 
-        let results = join_all(batch.into_iter().map(|candidate| {
+        let responses = join_all(batch.into_iter().map(|candidate| {
             let query = Arc::clone(&query);
             async move {
                 let result = query(candidate.clone(), key_id, DHT_K_I32, timeout).await;
@@ -333,36 +547,46 @@ pub(super) async fn lookup_closest(
 
         let mut wave_answered = 0usize;
         let mut wave_new = 0usize;
-        for (candidate, result) in results {
+        for (candidate, result) in responses {
             let Some(nodes) = result else {
                 continue;
             };
             wave_answered += 1;
-            for node in nodes {
-                if insert_candidate(&mut candidates, node) {
-                    wave_new += 1;
-                }
-            }
+            cache.observe(candidate.clone());
+            let _ = insert_candidate(&mut learned, candidate.clone());
             log::debug!(
                 "{operation}: findNode via {} answered on wave {wave}",
                 candidate.address
             );
+            insert_result(&mut results, &key_id, candidate);
+            for node in nodes {
+                cache.observe(node.clone());
+                if insert_candidate(&mut learned, node.clone()) {
+                    wave_new += 1;
+                }
+                let _ = insert_pending(&mut pending, &tried, &key_id, node);
+            }
         }
         answered += wave_answered;
         new_candidates += wave_new;
         log::debug!(
-            "{operation}: lookup attempt={attempt} wave={wave} asked={batch_len} answered={wave_answered} new_candidates={wave_new} candidates={}",
-            candidates.len()
+            "{operation}: lookup attempt={attempt} wave={wave} asked={batch_len} answered={wave_answered} new_candidates={wave_new} pending={} results={}",
+            pending.len(),
+            results.len()
         );
     }
 
-    sort_candidates(&mut candidates, &key_id);
+    sort_candidates(&mut learned, &key_id);
+    sort_candidates(&mut results, &key_id);
     log::debug!(
-        "{operation}: lookup attempt={attempt} rounds={rounds} asked={asked} answered={answered} new_candidates={new_candidates} candidates={} stop={stop_reason}",
-        candidates.len()
+        "{operation}: lookup attempt={attempt} initial_candidates={initial_candidates} pending={} rounds={rounds} asked={asked} answered={answered} new_candidates={new_candidates} successful_results={} candidates={} stop={stop_reason}",
+        pending.len(),
+        results.len(),
+        learned.len()
     );
     LookupOutcome {
-        candidates,
+        results,
+        candidates: learned,
         rounds,
         asked,
         answered,
@@ -391,6 +615,7 @@ pub(super) async fn verify_value<F>(
     find_value: FindValueFn,
     find_node: FindNodeFn,
     priority: &HashSet<[u8; 32]>,
+    cache: &DhtRoutingCache,
     matches: F,
 ) -> VerificationOutcome
 where
@@ -402,7 +627,7 @@ where
     let mut answered = 0usize;
     let mut new_candidates = 0usize;
     let mut stale_values = 0usize;
-    let mut stop_reason = "candidate_exhausted";
+    let mut stop_reason = "wave_limit";
 
     for wave in 1..=DHT_LOOKUP_WAVES {
         sort_candidates(&mut pending, &key_id);
@@ -428,7 +653,7 @@ where
             .count();
         asked += batch_len;
 
-        let results = join_all(batch.into_iter().map(|candidate| {
+        let responses = join_all(batch.into_iter().map(|candidate| {
             let find_value = Arc::clone(&find_value);
             async move {
                 let result = find_value(candidate.clone(), key_id, DHT_K_I32, timeout).await;
@@ -440,11 +665,12 @@ where
         let mut wave_answered = 0usize;
         let mut wave_new = 0usize;
         let mut stale_peers = Vec::new();
-        for (candidate, result) in results {
+        for (candidate, result) in responses {
             let Some(result) = result else {
                 continue;
             };
             wave_answered += 1;
+            cache.observe(candidate.clone());
             match result {
                 DhtValueResult::Found { value } => {
                     if matches(&value) {
@@ -475,10 +701,11 @@ where
                         if !node.is_valid(now) {
                             continue;
                         }
-                        if let Some(closer) = candidate_from_dht_node(&node)
-                            && insert_candidate(&mut pending, closer)
-                        {
-                            wave_new += 1;
+                        if let Some(closer) = candidate_from_dht_node(&node) {
+                            cache.observe(closer.clone());
+                            if insert_candidate(&mut pending, closer) {
+                                wave_new += 1;
+                            }
                         }
                     }
                 }
@@ -499,6 +726,7 @@ where
             .await;
             for nodes in follow {
                 for node in nodes {
+                    cache.observe(node.clone());
                     if insert_candidate(&mut pending, node) {
                         wave_new += 1;
                     }
@@ -625,9 +853,11 @@ mod tests {
     };
 
     use super::{
-        DHT_ALPHA, DHT_K, DhtCandidate, FindNodeFn, FindValueFn, STORE_TARGETS,
-        candidate_from_dht_node, lookup_closest, next_lookup_batch, next_verification_batch,
-        short_id, store_targets, verification_candidates, verify_value,
+        DHT_ALPHA, DHT_K, DHT_LOOKUP_WIDTH, DHT_ROUTING_CACHE_TTL, DHT_STORE_TIMEOUT,
+        DHT_VERIFICATION_RESERVE, DhtCandidate, DhtRoutingCache, FindNodeFn, FindValueFn,
+        STORE_TARGETS, attempt_phases_at, candidate_from_dht_node, initial_lookup_candidates,
+        lookup_closest, next_lookup_batch, next_verification_batch, short_id, store_targets,
+        verification_candidates, verify_value,
     };
 
     fn candidate(id: u8, port: u16) -> DhtCandidate {
@@ -704,6 +934,7 @@ mod tests {
     #[tokio::test]
     async fn lookup_converges_to_ten_closest() {
         let key_id = [0u8; 32];
+        let cache = DhtRoutingCache::new();
         let seed = candidate(200, 40_000);
         let discovered: Vec<DhtCandidate> = (1..=12)
             .map(|id| candidate(id, 40_000 + u16::from(id)))
@@ -723,19 +954,125 @@ mod tests {
             vec![seed],
             key_id,
             Instant::now() + Duration::from_secs(5),
+            &cache,
             query,
         )
         .await;
 
         assert!(outcome.candidates.len() >= DHT_K);
+        assert_eq!(outcome.results.len(), DHT_K);
         let ids: Vec<u8> = outcome
-            .candidates
+            .results
             .iter()
-            .take(DHT_K)
             .map(|candidate| candidate.id[0])
             .collect();
         assert_eq!(ids, (1..=10).collect::<Vec<_>>());
         assert_eq!(outcome.stop_reason, "converged");
+    }
+
+    #[test]
+    fn lookup_starts_from_the_nearest_twenty_routes() {
+        let key_id = [0u8; 32];
+        let now = Instant::now();
+        let cache = DhtRoutingCache::new();
+        for id in 1..=25 {
+            cache.observe_at(candidate(id, 40_000 + u16::from(id)), now);
+        }
+
+        let initial = initial_lookup_candidates(&cache, &[], &key_id, now);
+
+        assert_eq!(initial.len(), DHT_LOOKUP_WIDTH);
+        assert_eq!(
+            initial
+                .iter()
+                .map(|candidate| candidate.id[0])
+                .collect::<Vec<_>>(),
+            (1..=20).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn lookup_does_not_converge_on_discovery_alone() {
+        let key_id = [0u8; 32];
+        let cache = DhtRoutingCache::new();
+        let seed = candidate(200, 40_100);
+        let seed_id = seed.id;
+        let discovered: Vec<DhtCandidate> = (1..=12)
+            .map(|id| candidate(id, 40_100 + u16::from(id)))
+            .collect();
+        let query: FindNodeFn = Arc::new(move |candidate, _, _, _| {
+            let nodes = if candidate.id == seed_id {
+                Some(discovered.clone())
+            } else {
+                None
+            };
+            Box::pin(async move { nodes })
+        });
+
+        let outcome = lookup_closest(
+            "test lookup",
+            0,
+            vec![seed.clone()],
+            key_id,
+            Instant::now() + Duration::from_secs(5),
+            &cache,
+            query,
+        )
+        .await;
+
+        assert_eq!(outcome.results.len(), 1);
+        assert_eq!(outcome.results[0].id, seed.id);
+        assert_eq!(outcome.stop_reason, "candidate_exhausted");
+    }
+
+    #[test]
+    fn attempt_phases_reserve_a_real_verification_window() {
+        let start = Instant::now();
+        let phases = attempt_phases_at(start, Duration::from_secs(30));
+
+        assert_eq!(phases.total_deadline, start + Duration::from_secs(30));
+        assert!(
+            phases
+                .verification_deadline
+                .saturating_duration_since(phases.publish_deadline)
+                >= Duration::from_secs(12)
+        );
+        assert_eq!(
+            phases
+                .publish_deadline
+                .saturating_duration_since(phases.lookup_deadline),
+            DHT_STORE_TIMEOUT
+        );
+        assert!(phases.lookup_deadline > start);
+
+        let capped = attempt_phases_at(start, Duration::from_secs(60));
+        assert_eq!(capped.total_deadline, start + Duration::from_secs(35));
+        assert!(
+            capped
+                .verification_deadline
+                .saturating_duration_since(capped.publish_deadline)
+                >= DHT_VERIFICATION_RESERVE
+        );
+    }
+
+    #[tokio::test]
+    async fn lookup_stops_when_its_deadline_is_already_expired() {
+        let cache = DhtRoutingCache::new();
+        let query: FindNodeFn = Arc::new(|_, _, _, _| Box::pin(async { None }));
+
+        let outcome = lookup_closest(
+            "test lookup",
+            0,
+            vec![candidate(1, 40_300)],
+            [0u8; 32],
+            Instant::now(),
+            &cache,
+            query,
+        )
+        .await;
+
+        assert_eq!(outcome.stop_reason, "deadline");
+        assert_eq!(outcome.asked, 0);
     }
 
     #[test]
@@ -757,15 +1094,138 @@ mod tests {
         );
     }
 
+    #[test]
+    fn store_targets_do_not_pad_beyond_successful_responders() {
+        let responders = vec![
+            candidate(7, 41_100),
+            candidate(1, 41_101),
+            candidate(4, 41_102),
+        ];
+        let targets = store_targets(&responders, &[0u8; 32]);
+
+        assert_eq!(targets.len(), responders.len());
+        assert_eq!(
+            targets
+                .iter()
+                .map(|candidate| candidate.id[0])
+                .collect::<Vec<_>>(),
+            vec![1, 4, 7]
+        );
+    }
+
+    #[tokio::test]
+    async fn store_targets_exclude_discovered_non_responders() {
+        let cache = DhtRoutingCache::new();
+        let seed = candidate(200, 41_200);
+        let seed_id = seed.id;
+        let discovered: Vec<DhtCandidate> = (1..=12)
+            .map(|id| candidate(id, 41_200 + u16::from(id)))
+            .collect();
+        let query: FindNodeFn = Arc::new(move |asked, _, _, _| {
+            let result = if asked.id == seed_id {
+                Some(discovered.clone())
+            } else if asked.id[0] <= 6 {
+                Some(Vec::new())
+            } else {
+                None
+            };
+            Box::pin(async move { result })
+        });
+
+        let outcome = lookup_closest(
+            "test lookup",
+            0,
+            vec![seed],
+            [0u8; 32],
+            Instant::now() + Duration::from_secs(5),
+            &cache,
+            query,
+        )
+        .await;
+        let targets = store_targets(&outcome.results, &[0u8; 32]);
+        let target_ids: HashSet<[u8; 32]> = targets.iter().map(|target| target.id).collect();
+
+        assert_eq!(outcome.results.len(), 7);
+        assert_eq!(targets.len(), 7);
+        assert!((7..=12).all(|id| !target_ids.contains(&[id; 32])));
+    }
+
+    #[test]
+    fn routing_cache_persists_across_clones_and_deduplicates_by_node_id() {
+        let now = Instant::now();
+        let cache = DhtRoutingCache::new();
+        cache.observe_at(candidate(1, 42_100), now);
+        let shared = cache.clone();
+        cache.observe_at(candidate(1, 42_101), now);
+
+        let candidates = shared.candidates(now);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].address.port(), 42_101);
+    }
+
+    #[test]
+    fn routing_cache_expires_and_enforces_its_capacity() {
+        let now = Instant::now();
+        let cache = DhtRoutingCache::new();
+        cache.observe_at(candidate(1, 42_200), now);
+        assert_eq!(
+            cache.len(now + DHT_ROUTING_CACHE_TTL.saturating_sub(Duration::from_millis(1))),
+            1
+        );
+        assert_eq!(cache.len(now + DHT_ROUTING_CACHE_TTL), 0);
+
+        {
+            let mut inner = cache.lock();
+            inner.capacity = 2;
+        }
+        cache.observe_at(candidate(2, 42_201), now);
+        cache.observe_at(candidate(3, 42_202), now + Duration::from_secs(1));
+        cache.observe_at(candidate(4, 42_203), now + Duration::from_secs(2));
+        let mut ids: Vec<u8> = cache
+            .candidates(now + Duration::from_secs(3))
+            .iter()
+            .map(|candidate| candidate.id[0])
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![3, 4]);
+    }
+
+    #[test]
+    fn routing_cache_never_accepts_overlay_membership_nodes() {
+        use crate::overlay::tl::{OverlayNode, OverlayNodesBoxed};
+
+        let keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+        let overlay_node = OverlayNode {
+            id: TlPublicKey::Ed25519 {
+                key: Int256(keypair.public_key.to_bytes()),
+            },
+            overlay: Int256([9; 32]),
+            version: now_i32(),
+            signature: Vec::new(),
+        };
+        let membership = tl_proto::serialize(OverlayNodesBoxed {
+            nodes: vec![overlay_node.clone()],
+        });
+        assert!(tl_proto::deserialize::<DhtNode>(&tl_proto::serialize(&overlay_node)).is_err());
+        assert!(tl_proto::deserialize::<DhtNode>(&membership).is_err());
+
+        let cache = DhtRoutingCache::new();
+        assert_eq!(cache.len(Instant::now()), 0);
+    }
+
     #[tokio::test]
     async fn acknowledged_store_is_not_success_without_a_served_value() {
         let key_id = [0u8; 32];
+        let cache = DhtRoutingCache::new();
         let a = candidate(1, 42_001);
+        let now = Instant::now();
         let pending = verification_candidates(
             &key_id,
             &[],
             std::slice::from_ref(&a),
             std::slice::from_ref(&a),
+            &cache,
+            now,
         );
         let find_value_calls = Arc::new(AtomicUsize::new(0));
         let calls = Arc::clone(&find_value_calls);
@@ -784,7 +1244,8 @@ mod tests {
             find_value,
             find_node,
             &priority,
-            |_| false,
+            &cache,
+            |_: &DhtValue| false,
         )
         .await;
 
@@ -795,6 +1256,7 @@ mod tests {
     #[tokio::test]
     async fn stale_value_found_triggers_find_node_and_then_serves() {
         let key_id = [0u8; 32];
+        let cache = DhtRoutingCache::new();
         let a = candidate(1, 43_001);
         let b = candidate(2, 43_002);
         let stale = dummy_value(0);
@@ -829,7 +1291,8 @@ mod tests {
             find_value,
             find_node,
             &priority,
-            |value| value.value == [1],
+            &cache,
+            |value: &DhtValue| value.value == [1],
         )
         .await;
 
@@ -842,6 +1305,7 @@ mod tests {
     #[tokio::test]
     async fn value_not_found_merges_nodes_and_continues() {
         let key_id = [0u8; 32];
+        let cache = DhtRoutingCache::new();
         let a = candidate(1, 44_001);
         let (b_node, b) = signed_dht_node(77, 44_002);
         assert_eq!(candidate_from_dht_node(&b_node).unwrap().id, b.id);
@@ -870,7 +1334,8 @@ mod tests {
             find_value,
             find_node,
             &priority,
-            |value| value.value == [1],
+            &cache,
+            |value: &DhtValue| value.value == [1],
         )
         .await;
 
@@ -882,10 +1347,12 @@ mod tests {
     #[test]
     fn verification_candidates_deduplicate_by_node_id() {
         let key_id = [0u8; 32];
+        let cache = DhtRoutingCache::new();
         let a = candidate(1, 45_001);
         let mut same_id = a.clone();
         same_id.address = "127.0.0.1:45999".parse().unwrap();
-        let pending = verification_candidates(&key_id, &[], &[a], &[same_id]);
+        let pending =
+            verification_candidates(&key_id, &[], &[a], &[same_id], &cache, Instant::now());
         assert_eq!(pending.len(), 1);
     }
 

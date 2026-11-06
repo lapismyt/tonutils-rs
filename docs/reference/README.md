@@ -95,30 +95,46 @@ membership on every round.
 
 DHT placement uses upstream's replication factor `k = 10`. The upstream
 responsibility window is `k + 10`, so a node must place its record across the
-ten closest candidates rather than a small fixed sample. Placement runs a
-bounded iterative `findNode` walk: each wave asks up to eight nearest untried
-candidates, validates and merges the returned nodes, and re-sorts by XOR
-distance. The walk stops when no untried candidate is closer than the current
-tenth result, after at most six waves, or at the attempt deadline. Only the ten
-nearest final candidates receive `dht.store`.
+ten closest responding nodes rather than a small fixed sample. Each lookup
+starts from the nearest twenty (`2k`) bootstrap and cached routes. Placement
+keeps a pending set capped at those twenty candidates and a separate result set
+of successful `findNode` responders capped at ten. Each wave asks up to eight
+nearest untried candidates, validates and merges returned nodes, and re-sorts
+by XOR distance. The walk converges only when ten peers answered and no pending
+candidate is closer than the tenth successful result; discovery alone never
+completes it. Failures never enter the result set. Only the successful result
+set receives `dht.store`, so fewer than ten responders produce fewer stores
+instead of padding with non-responders.
+
+One publisher instance owns a bounded routing cache shared by its address and
+membership records. It retains bootstrap seeds and validated `findNode`
+responses across attempts and rounds, deduplicates by DHT node id, expires old
+entries, and is scoped to that publisher rather than the process. Overlay
+membership records are never DHT routing seeds: overlay members may be dial
+targets, but they cannot enter lookup, store, or verification candidate sets.
 
 Each `findNode` and `findValue` query has a three-second deadline, each
 `dht.store` has a four-second deadline, and one lookup/store/verification
-attempt is capped at 35 seconds. A membership round is retried at most twice
-after five- and fifteen-second delays; retries stop immediately after a served
-record. The `address` record keeps its ten-minute cadence because its TTL is
-one hour and follows the same `k = 10` walk and verification rules.
+attempt is capped at 35 seconds. An attempt reserves at least twelve seconds, or
+two fifths of the capped budget (fourteen seconds), for verification and stops
+lookup four seconds before the publish deadline so stores still have a window.
+A membership round is retried at most twice after five- and fifteen-second
+delays; retries stop immediately after a served record. The `address` record
+keeps its ten-minute cadence because its TTL is one hour and follows the same
+`k = 10` walk and verification rules.
 
 A `dht.stored` answer confirms only that the store request was delivered and
 accepted by that peer. It is not proof that the record survived or that
 `findValue` serves it. Verification starts from the union of bootstrap
-resolvers, enriched lookup candidates, and acknowledged store targets,
-deduplicated by DHT node id, and queries `findValue` with `k = 10`. A
-`valueFound` answer that does not contain this node's valid signed record, and
-a `valueNotFound` answer, both continue the walk; a stale `valueFound` also
-triggers `findNode(k = 10)` against the same peer. Success requires the actual
-local signed membership (or address) record; `membership_listed` is a
-discovery metric and must not be used as a store-success signal.
+resolvers, valid routes learned during publication, the shared routing cache,
+and acknowledged store targets, deduplicated by DHT node id, with acknowledged
+targets queried first, and uses `findValue(k = 10)`. A `valueFound` answer that
+does not contain this node's valid signed record, and a `valueNotFound` answer,
+both continue the walk; a stale `valueFound` also triggers
+`findNode(k = 10)` against the same peer and merges its answer. Success
+requires the actual local signed membership (or address) record;
+`membership_listed` is a discovery metric and must not be used as a
+store-success signal.
 
 ## Plumtree Runtime
 

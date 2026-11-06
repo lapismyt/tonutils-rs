@@ -36,12 +36,12 @@ use crate::{
 };
 
 use super::{
-    DhtAddressPublisher, VALUE_TTL_SECS,
+    DhtAddressPublisher, PublishRound, VALUE_TTL_SECS,
     lookup::{
-        DhtCandidate, PublishAttempt, attempt_deadline, find_node_requester, find_value_requester,
-        merge_attempt, verification_candidates, verify_value,
+        AttemptPhases, DhtCandidate, DhtRoutingCache, PublishAttempt, attempt_phases,
+        find_node_requester, find_value_requester, verification_candidates, verify_value,
     },
-    publish_dht_value_attempt,
+    publish_dht_value_attempt, publish_rounds,
 };
 
 use futures::future::BoxFuture;
@@ -53,10 +53,12 @@ pub(super) fn membership_publisher(
     overlay: OverlayId,
     overlay_name: Vec<u8>,
     timeout: Duration,
+    cache: DhtRoutingCache,
 ) -> DhtAddressPublisher {
     let local_keypair = *local_keypair;
     Arc::new(move |nodes| {
         let overlay_name = overlay_name.clone();
+        let cache = cache.clone();
         Box::pin(async move {
             publish_overlay_membership(
                 local_addr,
@@ -65,6 +67,7 @@ pub(super) fn membership_publisher(
                 overlay_name,
                 nodes,
                 timeout,
+                &cache,
             )
             .await
         }) as BoxFuture<'static, usize>
@@ -80,67 +83,68 @@ pub(super) async fn publish_overlay_membership(
     overlay_name: Vec<u8>,
     dht_nodes: Vec<SeedPeer>,
     timeout: Duration,
+    cache: &DhtRoutingCache,
 ) -> usize {
-    let mut acknowledged = Vec::new();
-    let mut candidates = Vec::new();
-    let mut served = false;
-    for (attempt, delay) in [
-        None,
-        Some(super::PUBLISH_STORE_RETRY_DELAY),
-        Some(super::PUBLISH_STORE_RETRY_LONG_DELAY),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        if let Some(delay) = delay {
-            tokio::time::sleep(delay).await;
-        }
-        let deadline = attempt_deadline(timeout);
-        let publish = publish_membership_attempt(
-            local_addr,
-            local_keypair,
-            overlay,
-            &overlay_name,
-            &dht_nodes,
-            deadline,
-            attempt,
-        )
-        .await;
-        merge_attempt(&mut acknowledged, &mut candidates, publish);
-        served = verify_overlay_membership(
-            local_addr,
-            local_keypair,
-            overlay,
-            &overlay_name,
-            &dht_nodes,
-            &candidates,
-            &acknowledged,
-            deadline,
-        )
-        .await;
-        if served {
-            break;
-        }
-        log::debug!(
-            "dht membership publish: attempt {attempt} acknowledged={} but served_by_dht=false",
-            acknowledged.len()
-        );
-    }
+    let local_keypair = *local_keypair;
+    let dht_nodes = Arc::new(dht_nodes);
+    let seed_count = dht_nodes.len();
+    let overlay_name = Arc::new(overlay_name);
+    let cache = cache.clone();
+    let (served, acknowledged) = publish_rounds("dht membership publish", |attempt| {
+        let dht_nodes = Arc::clone(&dht_nodes);
+        let overlay_name = Arc::clone(&overlay_name);
+        let cache = cache.clone();
+        Box::pin(async move {
+            let phases = attempt_phases(timeout);
+            let publish = publish_membership_attempt(
+                local_addr,
+                &local_keypair,
+                overlay,
+                &overlay_name,
+                &dht_nodes,
+                phases,
+                attempt,
+                &cache,
+            )
+            .await;
+            let served = verify_overlay_membership(
+                local_addr,
+                &local_keypair,
+                overlay,
+                &overlay_name,
+                &dht_nodes,
+                &publish.candidates,
+                &publish.acknowledged,
+                &cache,
+                phases.verification_deadline,
+            )
+            .await;
+            PublishRound {
+                attempt: publish,
+                served,
+            }
+        })
+    })
+    .await;
     log::info!(
-        "dht membership publish: overlay={overlay} acknowledged={} served_by_dht={served}",
-        acknowledged.len()
+        "dht membership publish: overlay={overlay} seeds={seed_count} acknowledged={acknowledged} served_by_dht={served}"
     );
-    acknowledged.len()
+    acknowledged
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The attempt needs the overlay identity, routing cache, and phase deadlines"
+)]
 async fn publish_membership_attempt(
     local_addr: SocketAddr,
     local_keypair: &AdnlKeyPair,
     overlay: OverlayId,
     overlay_name: &[u8],
     dht_nodes: &[SeedPeer],
-    deadline: Instant,
+    phases: AttemptPhases,
     attempt: usize,
+    cache: &DhtRoutingCache,
 ) -> PublishAttempt {
     let value = membership_dht_value(local_keypair, overlay, overlay_name);
     let key_id = dht_key_id(overlay.as_bytes(), b"nodes").0;
@@ -150,8 +154,9 @@ async fn publish_membership_attempt(
         dht_nodes,
         key_id,
         value,
-        deadline,
+        phases,
         attempt,
+        cache,
         "dht membership publish",
     )
     .await
@@ -258,11 +263,19 @@ async fn verify_overlay_membership(
     dht_nodes: &[SeedPeer],
     publish_candidates: &[DhtCandidate],
     acknowledged_targets: &[DhtCandidate],
+    cache: &DhtRoutingCache,
     deadline: Instant,
 ) -> bool {
+    let started = Instant::now();
     let key_id = dht_key_id(overlay.as_bytes(), b"nodes").0;
-    let pending =
-        verification_candidates(&key_id, dht_nodes, publish_candidates, acknowledged_targets);
+    let pending = verification_candidates(
+        &key_id,
+        dht_nodes,
+        publish_candidates,
+        acknowledged_targets,
+        cache,
+        started,
+    );
     let priority: HashSet<_> = acknowledged_targets
         .iter()
         .map(|target| target.id)
@@ -288,11 +301,12 @@ async fn verify_overlay_membership(
         find_value_requester(local_addr, &keypair),
         find_node_requester(local_addr, &keypair),
         &priority,
+        cache,
         matches,
     )
     .await;
     log::info!(
-        "dht membership verify: overlay={overlay} seeds={} lookup_candidates={} acknowledged={} served_by_dht={} rounds={} asked={} answered={} new_candidates={} stale_values={} stop={}",
+        "dht membership verify: overlay={overlay} seeds={} candidates={} acknowledged={} served_by_dht={} rounds={} asked={} answered={} new_candidates={} stale_values={} stop={} verification_elapsed_ms={}",
         dht_nodes.len(),
         publish_candidates.len(),
         acknowledged_targets.len(),
@@ -302,7 +316,8 @@ async fn verify_overlay_membership(
         outcome.answered,
         outcome.new_candidates,
         outcome.stale_values,
-        outcome.stop_reason
+        outcome.stop_reason,
+        started.elapsed().as_millis(),
     );
     outcome.served
 }
@@ -367,7 +382,8 @@ mod tests {
     };
 
     use super::{
-        DhtCandidate, membership_dht_value, membership_value_matches, verification_candidates,
+        DhtCandidate, DhtRoutingCache, membership_dht_value, membership_value_matches,
+        verification_candidates,
     };
 
     #[test]
@@ -433,11 +449,14 @@ mod tests {
             "127.0.0.1:30305",
         )];
 
+        let cache = DhtRoutingCache::new();
         let candidates = verification_candidates(
             &[9; 32],
             &seeds,
             std::slice::from_ref(&enriched),
             std::slice::from_ref(&acknowledged),
+            &cache,
+            std::time::Instant::now(),
         );
 
         assert_eq!(candidates.len(), 3);

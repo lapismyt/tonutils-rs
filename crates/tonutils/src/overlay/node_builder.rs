@@ -927,10 +927,10 @@ impl OverlayNodeBuilder {
                 server_tasks.push(tokio::spawn(async move {
                     // Publish before the first growth round so transitive
                     // discovery can resolve this node's address right away.
-                    // Membership is republished every minute because the
+                    // Membership is republished every thirty seconds because the
                     // public DHT record is a short, randomly evicted list;
                     // the combined publisher rotates the address record only
-                    // every ten rounds.  The first round is staggered over a
+                    // every twenty rounds.  The first round is staggered over a
                     // random window: parallel scanners behind one NAT fire
                     // their STUN probes and store rounds in the same second,
                     // which correlates the candidate silence the retries
@@ -946,7 +946,7 @@ impl OverlayNodeBuilder {
                     // Keep the membership cadence anchored to the start of the
                     // previous round.  Sleeping a full interval after a slow
                     // store/verify round stretches the period to 105-140s,
-                    // outside the upstream 60-100s republish window.  When a
+                    // outside the upstream 60-100s republish interval.  When a
                     // round overruns, start the next one immediately instead
                     // of adding another minute.
                     let mut next_round = tokio::time::Instant::now();

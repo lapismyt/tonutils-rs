@@ -19,9 +19,9 @@
 //! compounding.
 //!
 //! Publishing is a thin-client operation: the value is signed by
-//! the ADNL key pair, the ten DHT nodes closest to the key are located
-//! with a bounded iterative `dht.findNode` walk, and the value is stored
-//! with `dht.store` on those candidates, mirroring upstream's `k = 10`
+//! the ADNL key pair, the ten closest successful `dht.findNode` responders are
+//! located with a bounded iterative walk, and the value is stored with
+//! `dht.store` only on those responders, mirroring upstream's `k = 10`
 //! replication factor. Upstream DHT nodes accept a store only when they are
 //! responsible for the key and drop it otherwise, so storing on the closest
 //! known candidates is what makes the value retrievable. A `dht.stored`
@@ -62,9 +62,9 @@ mod lookup;
 mod membership;
 
 use lookup::{
-    DHT_STORE_TIMEOUT, DhtCandidate, PublishAttempt, attempt_deadline, find_node_requester,
-    find_value_requester, known_candidates, lookup_closest, merge_attempt, short_id, store_targets,
-    verification_candidates, verify_value,
+    DHT_ATTEMPT_BUDGET, DHT_STORE_TIMEOUT, DhtCandidate, DhtRoutingCache, PublishAttempt,
+    attempt_phases, find_node_requester, find_value_requester, initial_lookup_candidates,
+    lookup_closest, merge_attempt, short_id, store_targets, verification_candidates, verify_value,
 };
 
 /// Lifetime of a published `address` value.
@@ -117,8 +117,44 @@ const PUBLISH_STORE_RETRY_LONG_DELAY: Duration = Duration::from_secs(15);
 /// start their STUN probes and store rounds within the same second,
 /// which correlates the candidate silence the retries exist for; a
 /// per-instance jitter spreads the first round over this window.
-/// Later rounds stay on the fixed [`PUBLISH_INTERVAL`] cadence.
+/// Later rounds stay on the fixed `MEMBERSHIP_PUBLISH_INTERVAL` cadence.
 pub const PUBLISH_FIRST_ROUND_STAGGER_MAX: Duration = Duration::from_secs(20);
+
+/// Delays before the three attempts of one publication round.
+const PUBLISH_RETRY_DELAYS: [Option<Duration>; 3] = [
+    None,
+    Some(PUBLISH_STORE_RETRY_DELAY),
+    Some(PUBLISH_STORE_RETRY_LONG_DELAY),
+];
+
+struct PublishRound {
+    attempt: PublishAttempt,
+    served: bool,
+}
+
+/// Runs the bounded retry schedule and stops immediately after a served round.
+async fn publish_rounds<F>(operation: &'static str, mut round: F) -> (bool, usize)
+where
+    F: FnMut(usize) -> BoxFuture<'static, PublishRound>,
+{
+    let mut acknowledged = Vec::new();
+    let mut candidates = Vec::new();
+    for (attempt, delay) in PUBLISH_RETRY_DELAYS.into_iter().enumerate() {
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
+        let round = round(attempt).await;
+        merge_attempt(&mut acknowledged, &mut candidates, round.attempt);
+        if round.served {
+            return (true, acknowledged.len());
+        }
+        log::debug!(
+            "{operation}: attempt={attempt} acknowledged={} but served_by_dht=false",
+            acknowledged.len()
+        );
+    }
+    (false, acknowledged.len())
+}
 
 /// Builds the signed DHT `address` value for this node.
 ///
@@ -261,8 +297,9 @@ async fn publish_dht_address_value_attempt(
     local_keypair: AdnlKeyPair,
     external: SocketAddr,
     dht_nodes: &[SeedPeer],
-    deadline: Instant,
+    phases: lookup::AttemptPhases,
     attempt: usize,
+    cache: &DhtRoutingCache,
 ) -> PublishAttempt {
     let value = address_dht_value(&local_keypair, external);
     let key_id = dht_key_id(short_id(&local_keypair.public_key), b"address").0;
@@ -272,14 +309,15 @@ async fn publish_dht_address_value_attempt(
         dht_nodes,
         key_id,
         value,
-        deadline,
+        phases,
         attempt,
+        cache,
         "dht address publish",
     )
     .await
 }
 
-/// Stores one signed DHT value on the ten nodes closest to `key_id`.
+/// Stores one signed DHT value on the closest successful `findNode` responders.
 ///
 /// The address publisher and the overlay-membership publisher share this
 /// placement logic; only the value and key differ.
@@ -294,10 +332,12 @@ async fn publish_dht_value_attempt(
     dht_nodes: &[SeedPeer],
     key_id: [u8; 32],
     value: DhtValue,
-    deadline: Instant,
+    phases: lookup::AttemptPhases,
     attempt: usize,
+    cache: &DhtRoutingCache,
     operation: &'static str,
 ) -> PublishAttempt {
+    let started = Instant::now();
     let store_query = tl_proto::serialize(DhtMessage::Store {
         value: DhtValueBare::from(&value),
     });
@@ -309,22 +349,21 @@ async fn publish_dht_value_attempt(
         store_query.len(),
         hex::encode(&store_query)
     );
-    log::debug!(
-        "{operation}: attempt={attempt} seeds={} starting k={} lookup",
-        dht_nodes.len(),
-        lookup::DHT_K
-    );
+    let initial = initial_lookup_candidates(cache, dht_nodes, &key_id, started);
     let lookup = lookup_closest(
         operation,
         attempt,
-        known_candidates(dht_nodes),
+        initial.clone(),
         key_id,
-        deadline,
+        phases.lookup_deadline,
+        cache,
         find_node_requester(local_addr, &local_keypair),
     )
     .await;
-    let targets = store_targets(&lookup.candidates, &key_id);
-    let remaining = deadline.saturating_duration_since(Instant::now());
+    let targets = store_targets(&lookup.results, &key_id);
+    let remaining = phases
+        .publish_deadline
+        .saturating_duration_since(Instant::now());
     let store_timeout = DHT_STORE_TIMEOUT.min(remaining);
     let mut acknowledged = Vec::new();
     if !targets.is_empty() && !remaining.is_zero() {
@@ -367,16 +406,33 @@ async fn publish_dht_value_attempt(
             .flatten()
             .collect();
     }
+    let acknowledged_ranks: Vec<usize> = acknowledged
+        .iter()
+        .filter_map(|acknowledged| {
+            targets
+                .iter()
+                .position(|target| target.id == acknowledged.id)
+                .map(|index| index + 1)
+        })
+        .collect();
     log::debug!(
-        "{operation}: attempt={attempt} lookup_rounds={} asked={} answered={} new_candidates={} candidates={} stop={} store_targets={} acknowledged={}",
+        "{operation}: attempt={attempt} seeds={} initial_candidates={} lookup_rounds={} asked={} answered={} new_candidates={} candidates={} successful_results={} stop={} store_targets={} acknowledged={} acknowledged_ranks={acknowledged_ranks:?} publish_elapsed_ms={} total_budget_ms={}",
+        dht_nodes.len(),
+        initial.len(),
         lookup.rounds,
         lookup.asked,
         lookup.answered,
         lookup.new_candidates,
         lookup.candidates.len(),
+        lookup.results.len(),
         lookup.stop_reason,
         targets.len(),
-        acknowledged.len()
+        acknowledged.len(),
+        started.elapsed().as_millis(),
+        phases
+            .total_deadline
+            .saturating_duration_since(started)
+            .as_millis(),
     );
     PublishAttempt {
         acknowledged,
@@ -414,6 +470,10 @@ fn value_matches(value: &DhtValue, local_keypair: &AdnlKeyPair, external: Socket
     clippy::large_types_passed_by_value,
     reason = "The verifier keeps the local identity and deadline together for the bounded attempt"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Verification keeps the local identity, routing evidence, cache, and deadline together"
+)]
 async fn verify_dht_address_value_until(
     local_addr: SocketAddr,
     local_keypair: AdnlKeyPair,
@@ -421,11 +481,19 @@ async fn verify_dht_address_value_until(
     dht_nodes: &[SeedPeer],
     publish_candidates: &[DhtCandidate],
     acknowledged_targets: &[DhtCandidate],
+    cache: &DhtRoutingCache,
     deadline: Instant,
 ) -> bool {
+    let started = Instant::now();
     let key_id = dht_key_id(short_id(&local_keypair.public_key), b"address").0;
-    let pending =
-        verification_candidates(&key_id, dht_nodes, publish_candidates, acknowledged_targets);
+    let pending = verification_candidates(
+        &key_id,
+        dht_nodes,
+        publish_candidates,
+        acknowledged_targets,
+        cache,
+        started,
+    );
     let priority: HashSet<_> = acknowledged_targets
         .iter()
         .map(|target| target.id)
@@ -442,11 +510,12 @@ async fn verify_dht_address_value_until(
         find_value_requester(local_addr, &local_keypair),
         find_node_requester(local_addr, &local_keypair),
         &priority,
+        cache,
         move |value| value_matches(value, &local_keypair, external),
     )
     .await;
     log::info!(
-        "dht address verify: seeds={} lookup_candidates={} acknowledged={} served_by_dht={} rounds={} asked={} answered={} new_candidates={} stale_values={} stop={}",
+        "dht address verify: seeds={} candidates={} acknowledged={} served_by_dht={} rounds={} asked={} answered={} new_candidates={} stale_values={} stop={} verification_elapsed_ms={}",
         dht_nodes.len(),
         publish_candidates.len(),
         acknowledged_targets.len(),
@@ -456,7 +525,8 @@ async fn verify_dht_address_value_until(
         outcome.answered,
         outcome.new_candidates,
         outcome.stale_values,
-        outcome.stop_reason
+        outcome.stop_reason,
+        started.elapsed().as_millis(),
     );
     outcome.served
 }
@@ -490,10 +560,31 @@ pub fn address_publisher(
     configured_external: Option<SocketAddr>,
     timeout: Duration,
 ) -> DhtAddressPublisher {
+    address_publisher_with_cache(
+        local_addr,
+        local_keypair,
+        configured_external,
+        timeout,
+        DhtRoutingCache::new(),
+    )
+}
+
+#[expect(
+    clippy::large_types_passed_by_value,
+    reason = "The key pair is moved into the long-lived publisher closure"
+)]
+fn address_publisher_with_cache(
+    local_addr: SocketAddr,
+    local_keypair: AdnlKeyPair,
+    configured_external: Option<SocketAddr>,
+    timeout: Duration,
+    cache: DhtRoutingCache,
+) -> DhtAddressPublisher {
     Arc::new(move |nodes: Vec<SeedPeer>| {
         let local_addr = local_addr;
         let local_keypair = local_keypair;
         let configured_external = configured_external;
+        let cache = cache.clone();
         Box::pin(async move {
             let probes: Vec<SocketAddr> = nodes
                 .iter()
@@ -510,54 +601,45 @@ pub fn address_publisher(
                 log::debug!("dht address publish: no externally reachable address for this node");
                 return 0;
             };
-            let mut acknowledged = Vec::new();
-            let mut candidates = Vec::new();
-            let mut served = false;
-            for (attempt, delay) in [
-                None,
-                Some(PUBLISH_STORE_RETRY_DELAY),
-                Some(PUBLISH_STORE_RETRY_LONG_DELAY),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                if let Some(delay) = delay {
-                    tokio::time::sleep(delay).await;
-                }
-                let deadline = attempt_deadline(timeout);
-                let publish = publish_dht_address_value_attempt(
-                    local_addr,
-                    local_keypair,
-                    external,
-                    &nodes,
-                    deadline,
-                    attempt,
-                )
-                .await;
-                merge_attempt(&mut acknowledged, &mut candidates, publish);
-                served = verify_dht_address_value_until(
-                    local_addr,
-                    local_keypair,
-                    external,
-                    &nodes,
-                    &candidates,
-                    &acknowledged,
-                    deadline,
-                )
-                .await;
-                if served {
-                    break;
-                }
-                log::debug!(
-                    "dht address publish: attempt {attempt} acknowledged={} but served_by_dht=false",
-                    acknowledged.len()
-                );
-            }
+            let nodes = Arc::new(nodes);
+            let seed_count = nodes.len();
+            let (served, acknowledged) = publish_rounds("dht address publish", |attempt| {
+                let nodes = Arc::clone(&nodes);
+                let cache = cache.clone();
+                Box::pin(async move {
+                    let phases = attempt_phases(timeout);
+                    let publish = publish_dht_address_value_attempt(
+                        local_addr,
+                        local_keypair,
+                        external,
+                        &nodes,
+                        phases,
+                        attempt,
+                        &cache,
+                    )
+                    .await;
+                    let served = verify_dht_address_value_until(
+                        local_addr,
+                        local_keypair,
+                        external,
+                        &nodes,
+                        &publish.candidates,
+                        &publish.acknowledged,
+                        &cache,
+                        phases.verification_deadline,
+                    )
+                    .await;
+                    PublishRound {
+                        attempt: publish,
+                        served,
+                    }
+                })
+            })
+            .await;
             log::info!(
-                "dht address publish: acknowledged={} served_by_dht={served}",
-                acknowledged.len()
+                "dht address publish: seeds={seed_count} acknowledged={acknowledged} served_by_dht={served}"
             );
-            acknowledged.len()
+            acknowledged
         })
     })
 }
@@ -577,9 +659,27 @@ pub(crate) fn overlay_publisher(
     overlay: OverlayId,
     overlay_name: Option<Vec<u8>>,
 ) -> DhtAddressPublisher {
-    let address = address_publisher(local_addr, *local_keypair, configured_external, timeout);
+    // Discovery timeouts are commonly much shorter than one DHT attempt. The
+    // publisher always gives placement the capped budget so lookup, stores,
+    // and verification each get their reserved phase.
+    let timeout = timeout.max(DHT_ATTEMPT_BUDGET);
+    let cache = DhtRoutingCache::new();
+    let address = address_publisher_with_cache(
+        local_addr,
+        *local_keypair,
+        configured_external,
+        timeout,
+        cache.clone(),
+    );
     let membership = overlay_name.map(|overlay_name| {
-        membership::membership_publisher(local_addr, local_keypair, overlay, overlay_name, timeout)
+        membership::membership_publisher(
+            local_addr,
+            local_keypair,
+            overlay,
+            overlay_name,
+            timeout,
+            cache,
+        )
     });
     combine_publishers(address, membership)
 }
@@ -662,10 +762,47 @@ mod tests {
 
     use super::{
         ADDRESS_PUBLISH_EVERY, Address, AddressListBoxed, AdnlKeyPair, DhtAddressPublisher,
-        DhtUpdateRule, Int256, IpAddr, SeedPeer, SocketAddr, VALUE_TTL_SECS, address_dht_value,
-        combine_publishers, is_globally_routable, known_candidates, lookup::xor_distance, now_i32,
-        short_id, value_matches,
+        DhtUpdateRule, Int256, IpAddr, PublishAttempt, PublishRound, SeedPeer, SocketAddr,
+        VALUE_TTL_SECS, address_dht_value, combine_publishers, is_globally_routable,
+        lookup::{attempt_phases, known_candidates, xor_distance},
+        now_i32, publish_rounds, short_id, value_matches,
     };
+
+    #[tokio::test]
+    async fn publication_retries_stop_after_the_first_served_round() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_inner = Arc::clone(&calls);
+
+        let (served, acknowledged) = publish_rounds("test publish", move |attempt| {
+            calls_inner.fetch_add(1, Ordering::Relaxed);
+            assert_eq!(attempt, 0);
+            Box::pin(async move {
+                PublishRound {
+                    attempt: PublishAttempt {
+                        acknowledged: Vec::new(),
+                        candidates: Vec::new(),
+                    },
+                    served: true,
+                }
+            })
+        })
+        .await;
+
+        assert!(served);
+        assert_eq!(acknowledged, 0);
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn address_publication_reserves_a_verification_phase() {
+        let phases = attempt_phases(std::time::Duration::from_secs(30));
+        assert!(
+            phases
+                .verification_deadline
+                .saturating_duration_since(phases.publish_deadline)
+                >= std::time::Duration::from_secs(12)
+        );
+    }
 
     #[tokio::test]
     async fn combined_publisher_forwards_the_same_resolver_set_to_membership() {
