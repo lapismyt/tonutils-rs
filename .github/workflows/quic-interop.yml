@@ -5,17 +5,15 @@ on:
     branches:
       - main
     paths:
-      - "crates/tonutils-adnl/src/adnl/quic.rs"
-      - "crates/tonutils-adnl/src/adnl/quic_tls.rs"
-      - "crates/tonutils-adnl/src/adnl/quic_interop_tests.rs"
+      - "crates/tonutils/src/adnl/quic/**"
+      - "crates/tonutils/src/adnl/tests/quic_interop_tests.rs"
       - ".github/workflows/quic-interop.yml"
   pull_request:
     branches:
       - main
     paths:
-      - "crates/tonutils-adnl/src/adnl/quic.rs"
-      - "crates/tonutils-adnl/src/adnl/quic_tls.rs"
-      - "crates/tonutils-adnl/src/adnl/quic_interop_tests.rs"
+      - "crates/tonutils/src/adnl/quic/**"
+      - "crates/tonutils/src/adnl/tests/quic_interop_tests.rs"
       - ".github/workflows/quic-interop.yml"
   workflow_dispatch:
 
@@ -76,4 +74,5 @@ jobs:
       - name: Pair the C++ client with our rustls server
         env:
           QUIC_INTEROP_CLIENT: ${{ github.workspace }}/upstream-ton/build/quic/quic-example-client
-        run: cargo test -p tonutils-adnl --features quic --lib quic_interop_tests -- --ignored --nocapture
+          TON_LIVE_FEATURES: adnl
+        run: ./scripts/run-live-test.sh lib adnl::tests::quic_interop_tests::cpp_quictls_client_completes_the_demo_pairing

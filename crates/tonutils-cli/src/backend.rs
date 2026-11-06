@@ -1,4 +1,25 @@
-use super::*;
+use super::{
+    Address, BalancerStatusView, BlockCommand, BocCommand, BocDecodeView, Cli, Commands,
+    ConfigCommand, ConfigGlobal, ConfigLiteServer, Context, Contract, ContractCommand,
+    DecodedRunMethodResult, Duration, FromStr, HighLevelAccountArgs, HighLevelBackend,
+    HighLevelCallArgs, HighLevelCallView, HighLevelTransactionsArgs, HighLevelTransactionsView,
+    LiteBalancer, LiteClient, LiteClientCommand, LiteServerBlacklist, NetworkView, OutputFormat,
+    Parser, RequestRateLimit, Result, RunMethodResultExt, SchemaCheckView, SchemaCommand,
+    StatusView, TimeView, TonMnemonic, TvmCommand, TvmStack, TvmStackView, VersionView,
+    WalletCommand, WalletGenerateView, WalletSendView, WalletSeqnoView, WalletVersionArg,
+    account_state_view, account_value, best_effort_account_state_view, block_id_ext_view,
+    build_wallet_transfer, cell_view, decode_known_tlb, decoded_all_shards_info_value,
+    decoded_block_data_value, decoded_block_header_value, decoded_boc_view,
+    decoded_config_info_value, decoded_libraries_with_proof_value, decoded_shard_info_value,
+    download_config, fs, get_config_all_client, get_config_params_client, json,
+    latest_or_explicit_block, libraries_value, masterchain_info_view, network_name,
+    parse_account_id, parse_after_transaction, parse_block_id_ext, parse_int256, parse_libraries,
+    parse_method_ref, parse_params, parse_stack_input, parse_u64_decimal_or_hex, raw_bytes_view,
+    read_mnemonic_password, read_mnemonic_phrase, read_raw_input, run_get_method_view,
+    seqno_from_stack, seqno_from_stack_or_deploy_zero, shard_account_value, simple_account_value,
+    stack_entry_view, stack_view, transaction_value, transactions_value, wallet_address_view,
+    wallet_id_for_cli,
+};
 
 impl Cli {
     pub fn parse_args() -> Self {
@@ -152,7 +173,7 @@ impl Cli {
                 )
             })?;
         backend.close().await?;
-        self.print_account(&best_effort_account_state_view(&args.address, raw))
+        self.print_account(&best_effort_account_state_view(&args.address, &raw))
     }
 
     pub(super) async fn execute_call(&self, args: &HighLevelCallArgs) -> Result<()> {
@@ -164,7 +185,7 @@ impl Cli {
             .with_context(|| format!("call {}: failed to get latest block", args.address))?
             .last;
         let block = latest_or_explicit_block(args.block.as_ref(), latest)?;
-        let (method, method_id) = parse_method_ref(&args.method)?;
+        let (method, method_id) = parse_method_ref(&args.method);
         let stack = parse_stack_input(&args.args, args.stack_json.as_deref())?;
         let result = backend
             .run_get_method(block, address, method_id, stack)
@@ -215,7 +236,7 @@ impl Cli {
                     args.address
                 )
             })?;
-        let mut account_view = best_effort_account_state_view(&args.address, raw_account);
+        let mut account_view = best_effort_account_state_view(&args.address, &raw_account);
         let Some(lt) = account_view.last_transaction_lt else {
             backend.close().await?;
             return self.print_transactions(&HighLevelTransactionsView {
@@ -285,7 +306,7 @@ impl Cli {
                     .await
                     .context("block latest: failed to get masterchain info")?;
                 backend.close().await?;
-                self.print_structured(&masterchain_info_view(info))
+                self.print_structured(&masterchain_info_view(&info))
             }
             BlockCommand::Get { block } => {
                 let decoded = backend
@@ -339,9 +360,9 @@ impl Cli {
     pub(super) fn execute_schema(&self, command: &SchemaCommand) -> Result<()> {
         match command {
             SchemaCommand::Check => {
-                let generated = tonutils_tlb::schema::generate_block_summary()?;
+                let generated = tonutils::tlb::schema::generate_block_summary()?;
                 let constructors =
-                    tonutils_tlb::schema::parse_schema(tonutils_tlb::schema::BLOCK_TLB)?;
+                    tonutils::tlb::schema::parse_schema(tonutils::tlb::schema::BLOCK_TLB)?;
                 let view = SchemaCheckView {
                     schema: "block.tlb",
                     constructors: constructors.len(),
@@ -366,8 +387,8 @@ impl Cli {
                 tlb,
                 verify_proof,
             } => {
-                let raw = read_raw_input(hex, base64, file, *stdin)?;
-                let root = tonutils_tvm::deserialize_boc(&raw).context("failed to decode BoC")?;
+                let raw = read_raw_input(hex.as_ref(), base64.as_ref(), file.as_ref(), *stdin)?;
+                let root = tonutils::tvm::deserialize_boc(&raw).context("failed to decode BoC")?;
                 let (tlb_type, tlb, proof_verified) =
                     decode_known_tlb(root.clone(), *tlb, *verify_proof)?;
                 self.print_structured(&BocDecodeView {
@@ -381,12 +402,16 @@ impl Cli {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The LiteClient command dispatcher keeps every wire command and output mapping in one exhaustive match"
+    )]
     pub(super) async fn execute_liteclient(&self, command: &LiteClientCommand) -> Result<()> {
         match command {
             LiteClientCommand::MasterchainInfo { ls_index } => {
                 let mut client = self.create_client(*ls_index).await?;
                 let info = client.get_masterchain_info().await?;
-                self.print_structured(&masterchain_info_view(info))
+                self.print_structured(&masterchain_info_view(&info))
             }
             LiteClientCommand::Version { ls_index } => {
                 let mut client = self.create_client(*ls_index).await?;
@@ -410,7 +435,7 @@ impl Cli {
                 file,
                 stdin,
             } => {
-                let request = read_raw_input(hex, base64, file, *stdin)?;
+                let request = read_raw_input(hex.as_ref(), base64.as_ref(), file.as_ref(), *stdin)?;
                 let mut client = self.create_client(*ls_index).await?;
                 let response = client.query_raw(request).await?;
                 self.print_bytes(&response)
@@ -422,10 +447,10 @@ impl Cli {
             } => {
                 let mut client = self.create_client(*ls_index).await?;
                 let last_block = client.get_masterchain_info().await?.last;
-                let method_id = tonutils_contracts::method_name_to_id(method);
+                let method_id = tonutils::tvm::method_name_to_id(method);
                 let result = client
                     .run_get_method(
-                        tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
+                        tonutils::contracts::RUN_METHOD_MODE_RETURN_RESULT,
                         last_block.clone(),
                         Address::from_str(address)?,
                         method_id,
@@ -434,7 +459,7 @@ impl Cli {
                     .await?;
                 let _ = last_block;
                 self.print_structured(&run_get_method_view(
-                    result,
+                    &result,
                     Some(method.clone()),
                     method_id,
                 )?)
@@ -480,7 +505,7 @@ impl Cli {
                 let raw = client
                     .get_account_state(block, address_value.to_account_id())
                     .await?;
-                self.print_account(&best_effort_account_state_view(address, raw))
+                self.print_account(&best_effort_account_state_view(address, &raw))
             }
             LiteClientCommand::RawGetAccountState {
                 ls_index,
@@ -594,7 +619,7 @@ impl Cli {
                     .list_block_transactions_ext_decoded(
                         parse_block_id_ext(block)?,
                         *count,
-                        parse_after_transaction(after_account, *after_lt)?,
+                        parse_after_transaction(after_account.as_ref(), *after_lt)?,
                         *reverse_order,
                         *want_proof,
                     )
@@ -616,11 +641,11 @@ impl Cli {
                 let last = client.get_masterchain_info().await?.last;
                 let block = latest_or_explicit_block(block.as_ref(), last)?;
                 let method_id = method_id
-                    .or_else(|| method.as_deref().map(tonutils_contracts::method_name_to_id))
+                    .or_else(|| method.as_deref().map(tonutils::tvm::method_name_to_id))
                     .context("run-get-method-typed requires --method or --method-id")?;
                 let stack = client
                     .run_get_method_typed(
-                        tonutils_contracts::RUN_METHOD_MODE_RETURN_RESULT,
+                        tonutils::contracts::RUN_METHOD_MODE_RETURN_RESULT,
                         block.clone(),
                         Address::from_str(address)?,
                         method_id,
@@ -698,7 +723,7 @@ impl Cli {
                 let address = Address::from_str(address)?;
                 let mut contract = Contract::new(&mut client, address);
                 let state = contract.get_state_latest().await?;
-                self.print_structured(&account_state_view(state))
+                self.print_structured(&account_state_view(&state))
             }
             ContractCommand::RunGetMethod {
                 ls_index,
@@ -711,23 +736,27 @@ impl Cli {
                 let mut client = self.create_client(*ls_index).await?;
                 let address = Address::from_str(address)?;
                 let method_id = method_id
-                    .or_else(|| method.as_deref().map(tonutils_contracts::method_name_to_id))
+                    .or_else(|| method.as_deref().map(tonutils::tvm::method_name_to_id))
                     .context("run-get-method requires --method or --method-id")?;
                 let stack = parse_stack_input(args, stack_json.as_deref())?;
                 let mut contract = Contract::new(&mut client, address);
                 let result = contract.run_get_method_latest(method_id, stack).await?;
-                self.print_structured(&run_get_method_view(result, method.clone(), method_id)?)
+                self.print_structured(&run_get_method_view(&result, method.clone(), method_id)?)
             }
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The wallet command dispatcher keeps every wallet operation and output mapping in one exhaustive match"
+    )]
     pub(super) async fn execute_wallet(&self, command: &WalletCommand) -> Result<()> {
         match command {
             WalletCommand::Generate {
                 workchain,
                 mnemonic_password_env,
             } => {
-                let password = read_mnemonic_password(mnemonic_password_env)?;
+                let password = read_mnemonic_password(mnemonic_password_env.as_ref())?;
                 let mnemonic = TonMnemonic::generate(password.as_deref())?;
                 let public_key = mnemonic.public_key();
                 let v5_wallet_id =
@@ -752,8 +781,9 @@ impl Cli {
                 })
             }
             WalletCommand::Address(args) => {
-                let password = read_mnemonic_password(&args.mnemonic_password_env)?;
-                let phrase = read_mnemonic_phrase(&args.mnemonic_file, &args.mnemonic_env)?;
+                let password = read_mnemonic_password(args.mnemonic_password_env.as_ref())?;
+                let phrase =
+                    read_mnemonic_phrase(args.mnemonic_file.as_ref(), args.mnemonic_env.as_ref())?;
                 let mnemonic = TonMnemonic::from_phrase(&phrase, password.as_deref())?;
                 let wallet_id =
                     wallet_id_for_cli(args.version, self.network, args.workchain, args.wallet_id)?;
@@ -775,7 +805,7 @@ impl Cli {
                     .run_get_method(
                         latest.clone(),
                         Address::from_str(address).context("wallet seqno: invalid address")?,
-                        tonutils_contracts::method_name_to_id("seqno"),
+                        tonutils::tvm::method_name_to_id("seqno"),
                         TvmStack::empty(),
                     )
                     .await
@@ -783,7 +813,7 @@ impl Cli {
                 backend.close().await?;
                 self.print_wallet_seqno(&WalletSeqnoView {
                     address: address.clone(),
-                    seqno: seqno_from_stack(result)?,
+                    seqno: seqno_from_stack(&result)?,
                     block: block_id_ext_view(&latest),
                 })
             }
@@ -791,8 +821,9 @@ impl Cli {
                 let seqno = args
                     .seqno
                     .context("wallet prepare-transfer requires --seqno for offline signing")?;
-                let password = read_mnemonic_password(&args.mnemonic_password_env)?;
-                let phrase = read_mnemonic_phrase(&args.mnemonic_file, &args.mnemonic_env)?;
+                let password = read_mnemonic_password(args.mnemonic_password_env.as_ref())?;
+                let phrase =
+                    read_mnemonic_phrase(args.mnemonic_file.as_ref(), args.mnemonic_env.as_ref())?;
                 let mnemonic = TonMnemonic::from_phrase(&phrase, password.as_deref())?;
                 let (boc, view) = build_wallet_transfer(self.network, args, &mnemonic, seqno)?;
                 match self.output {
@@ -804,8 +835,9 @@ impl Cli {
                 }
             }
             WalletCommand::Send(args) => {
-                let password = read_mnemonic_password(&args.mnemonic_password_env)?;
-                let phrase = read_mnemonic_phrase(&args.mnemonic_file, &args.mnemonic_env)?;
+                let password = read_mnemonic_password(args.mnemonic_password_env.as_ref())?;
+                let phrase =
+                    read_mnemonic_phrase(args.mnemonic_file.as_ref(), args.mnemonic_env.as_ref())?;
                 let mnemonic = TonMnemonic::from_phrase(&phrase, password.as_deref())?;
                 let public_key = mnemonic.public_key();
                 let wallet_id =
@@ -818,20 +850,19 @@ impl Cli {
                     .await
                     .context("wallet send: failed to get latest block")?
                     .last;
-                let seqno = match args.seqno {
-                    Some(seqno) => seqno,
-                    None => {
-                        let result = backend
-                            .run_get_method(
-                                latest,
-                                Address::from_str(&wallet_address.address)?,
-                                tonutils_contracts::method_name_to_id("seqno"),
-                                TvmStack::empty(),
-                            )
-                            .await
-                            .context("wallet send: failed to fetch seqno")?;
-                        seqno_from_stack_or_deploy_zero(result, args.deploy)?
-                    }
+                let seqno = if let Some(seqno) = args.seqno {
+                    seqno
+                } else {
+                    let result = backend
+                        .run_get_method(
+                            latest,
+                            Address::from_str(&wallet_address.address)?,
+                            tonutils::tvm::method_name_to_id("seqno"),
+                            TvmStack::empty(),
+                        )
+                        .await
+                        .context("wallet send: failed to fetch seqno")?;
+                    seqno_from_stack_or_deploy_zero(&result, args.deploy)?
                 };
                 let (boc, view) = build_wallet_transfer(self.network, args, &mnemonic, seqno)?;
                 let status = backend

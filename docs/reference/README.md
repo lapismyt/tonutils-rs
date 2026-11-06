@@ -1,101 +1,427 @@
-# Internal reference
+# Internal Reference
 
-This section is for maintainers, contributors, and AI agents working on
-tonutils-rs internals. It records implementation details and protocol evidence
-that are useful when changing the SDK, but it is not the recommended starting
-point for users learning the public API.
+This directory contains maintainer-facing notes for protocol ownership, wire
+formats, error boundaries, async exceptions, and deterministic verification.
+User-facing usage guidance lives in the root `README.md` and rustdoc. Do not
+recreate the removed user-guide site or add parallel documentation trees.
 
-The task-oriented pages in `docs/` are the public guides and form the first
-section of the mdBook. Use them for installation, feature selection, and common
-workflows; use this reference for design constraints, wire formats, invariants,
-fixtures, source tracking, and follow-up work.
+## TL Ownership Map
 
-This directory is the internal technical reference for implementing `tonutils`. It is intentionally more implementation-oriented than general TON documentation: each page connects protocol facts to concrete Rust modules, invariants, tests, and missing work.
+TL snapshots and generated metadata stay centralized, while handwritten wire
+types live with the protocol module that serializes them.
 
-Human contributors and AI agents should read this directory before changing
-protocol behavior. Public user guides belong in `docs/`; protocol evidence,
-wire formats, invariants, source priorities, and crate mapping belong here.
+| Location | Owns | Does not own |
+| --- | --- | --- |
+| `crate::tl` | Shared TL primitives such as `TlInt256`, `TlString`, and `True`; serialization helpers; checked-in `.tl` snapshots; generated constructor metadata; cross-schema and schema-audit tests | Protocol-specific handwritten request, response, ADNL, LiteAPI, or overlay types |
+| `crate::adnl::tl` | ADNL messages and packet contents, ADNL network addresses, DHT types, QUIC types, and ADNL TL public keys (`AdnlTlPublicKey`, `AdnlTlPublicKeyOwned`, `AdnlTlPublicKeyRef`) | LiteAPI or overlay wire types |
+| `crate::liteclient::tl` | All `liteServer.*` requests and responses, LiteAPI identifiers and signatures, block links, nonfinal types, `LiteServerError`, `LiteServerAccountState`, and `LiteTransactionId` | Shared TL primitives or ADNL transport messages |
+| `crate::overlay::tl` | Overlay and full-node types, capability queries, external-message broadcasts, and shard public-overlay identifiers | LiteAPI requests or the generic overlay peer manager |
 
-## Reading Order
+The checked-in snapshots are:
 
-1. [Architecture overview](architecture/overview.md)
-2. [Feature matrix](architecture/features.md)
-3. [Source tracking](operations/source-tracking.md)
-4. [Crypto primitives](crypto/primitives.md)
-5. [TL schema language](tl/schema-language.md)
-6. [Checked-in schema inventory](schema-inventory.tsv)
-7. [LiteAPI schema](tl/lite-api.md)
-8. [ADNL TCP](network/adnl-tcp.md)
-9. [ADNL/overlay protocol matrix](network/protocol-matrix.md)
-10. [TVM cells](tvm/cells.md)
-11. [BoC format](tvm/boc.md)
-12. [TL-B data models](tvm/tlb.md)
-13. [Blockchain data model](blockchain/data-model.md)
-14. [Blockchain TL-B coverage](blockchain/tlb-coverage.md)
-15. [Block, config, and proof TL-B slice](blockchain/block-config-proof.md)
+- `crates/tonutils/src/tl/schemas/lite_api.tl`
+- `crates/tonutils/src/tl/schemas/ton_api.tl`
+- `crates/tonutils/src/tl/schemas/tonlib_api.tl`
+- `crates/tonutils/src/tlb/schemas/block.tlb`
 
-The block TL-B slice is pinned to upstream revision
-`3d478cbde854be03a18ab2a59f8fc3c565cf7d14`; typed-family fixture metadata is
-tracked in `fixtures/compatibility/block_tlb_extended.json`.
-16. [LiteClient request flow](liteclient/request-flow.md)
-17. [LiteClient rate limiting](liteclient/rate-limiting.md)
-18. [LiteClient workflow coverage](liteclient/workflow-coverage.md)
-19. [Smart-contract get-methods](contracts/get-methods.md)
-20. [Wallet V5R1](contracts/wallet-v5r1.md)
-21. [Wallet V4R2 and TON mnemonics](contracts/wallet-v4r2-mnemonics.md)
-22. [TEP metadata roadmap](contracts/tep-metadata.md)
-23. [Overlay protocol design](network/overlay.md)
-24. [Overlay delivery gate ledger](network/overlay-delivery-ledger.md)
-25. [Mempool scanner design](mempool/scanner.md)
-26. [Cross-SDK byte comparison](testing/cross-sdk-comparison.md)
-27. [DHT address publishing](network/dht-address-publishing.md)
-28. [QUIC TLS and wire profile](network/quic.md)
+Their generated metadata lives under `crates/tonutils/src/tl/generated/` and
+`crates/tonutils/src/tlb/generated/`. The schema generator owns the
+`*ConstructorMetadata` names:
+`LiteApiConstructorMetadata`, `TonApiConstructorMetadata`,
+`TonlibApiConstructorMetadata`, and `BlockTlbConstructorMetadata`.
 
-## Directory Map
+Canonical public names are intentionally unambiguous. ADNL uses
+`AdnlNetAddress` and `AdnlTlPublicKey*`; LiteAPI uses `LiteBlockId`,
+`LiteBlockIdExt`, `LiteAccountId`, `LiteTransactionId`,
+`LiteTransactionId3`, `LiteSignature`, `LiteSignatureSet`, `LiteBlockLink`,
+`LiteZeroStateIdExt`, `LiteLibraryEntry`, and the `LiteNonfinal*` types.
+There are no compatibility aliases for the old names.
 
-- `architecture/`: crate layers, features, errors, performance policy.
-- `api/`: public API design, compatibility and ergonomics.
-- `blockchain/`: blocks, accounts, transactions, messages, config params.
-- `crypto/`: hashes, checksums, keys, signatures, encryption primitives.
-- `tl/`: TL syntax, schema maintenance, LiteAPI types and function mapping.
-- `network/`: ADNL transport, DHT, overlays, global config.
-- `tvm/`: cells, BoC, addresses, dictionaries, TL-B, TVM stack.
-- `liteclient/`: request flow, balancer, proof verification.
-- `contracts/`: get-methods, external messages, high-level contract API.
-- `operations/`: source tracking, diagnostics, maintenance workflow.
-- `research/`: mempool scanning notes and future protocol investigations.
-- `testing/`: fixtures, live tests, benchmarks, cross-SDK byte comparison.
+## Overlay And Mempool Ownership
 
-## Documentation Contract
+The transport/application split is explicit and has no compatibility aliases:
 
-Every topic file should answer:
+| Location | Owns | Does not own |
+| --- | --- | --- |
+| `crate::overlay` | ADNL UDP and QUIC overlay sessions, session factories and lookups, bootstrap and discovery, peer growth, `PeerManager`, `OverlayPeerPool`, peer quality, `PeerStore`, inbound query answering, membership gossip, capabilities, DHT address and public-overlay membership publication, STUN, endpoint registries, packet pre-deduplication, protocol statistics, and signed simple/FEC broadcast encoding | External-message validation, envelopes, or application events |
+| `crate::overlay::OverlayNodeBuilder` | Transport/discovery/peer-store configuration and construction of `OverlayClient` or `OverlayServer` | External-message configuration or handlers |
+| `crate::mempool` | External-message BoC envelope checks, TL-B validation, age-aware deduplication, lazy events, local echo, and submission/receipt through an already-built `OverlayClient` | Starting transport, discovery, peer management, broadcasts without a client, DHT publication, or overlay configuration |
 
-- What TON subsystem does this describe?
-- Which wire formats, constructor ids, byte order, limits, and flags matter?
-- What invariants must code preserve?
-- Which files in this crate implement or will implement it?
-- Which tests or fixtures prove compatibility?
-- What is still missing?
+`OverlayClient` exposes packet and peer-status subscriptions, the peer manager,
+generic signed and raw broadcasts, discovery/protocol statistics, peer counts,
+and shutdown. `OverlayServer` owns server-only maintenance tasks such as DHT
+address and public-overlay membership publication and exposes its underlying
+client. `MempoolServer::new`
+subscribes to the supplied client before spawning its receiver tasks and
+returns a shared `MempoolClient` for submissions.
 
-Repository text must stay English-only.
+The `overlay-config` feature is the only overlay feature that downloads global
+network configuration. `mempool` depends on `overlay` for transport traits but
+does not imply `network-config` or `overlay-config`; callers select bootstrap
+configuration explicitly.
 
-## Source Of Truth Priority
+DHT publication and peer-growth address resolution share the bootstrap DHT
+resolver set: explicit seeds plus the global config's `dht.static_nodes`.
+`OverlayNodeBuilder::start` populates that set once; the publisher reads it on
+every round. Overlay members returned by `overlay.getRandomPeers` are dial
+targets and must never be passed to `dht.store` or `dht.findValue` verification
+as resolvers. The bootstrap `dht-server` nodes answer DHT queries; overlay
+members such as pytoniq clients do not.
 
-When sources disagree, prefer this order:
+A public overlay full node owns two DHT records:
 
-1. Upstream `ton-blockchain/ton` schemas and C++ implementation.
-2. Official TON documentation and specs.
-3. Behavior observed from public liteservers with recorded fixtures.
-4. Mature SDK behavior such as `tonutils-go`, `tongo`, pytoniq, and
-   pytoniq-core.
-5. Existing crate behavior.
+- `DhtKey { id: adnl_short_id, name: "address", idx: 0 }` stores the signed
+  `adnl.addressList` under `dht.updateRule.signature`.
+- `DhtKey { id: overlay_id, name: "nodes", idx: 0 }` stores a boxed
+  `overlay.nodes` list under `dht.updateRule.overlayNodes`. The key description
+  uses `pub.overlay { name }`, whose hash is the overlay id. The value carries
+  this node's signed `overlay.node`; the DHT value and key-description signature
+  fields are empty, while each node signature covers
+  `overlay.node.toSign { adnl_short_id, overlay, version }`.
 
-Use pytoniq and pytoniq-core for capability inspiration or comparison evidence
-after upstream TON facts are established. They are not API or structure parity
-targets. Record any deliberate protocol compatibility deviation in `TODO.md`
-and in the relevant subsystem document.
+Publishing only the `address` record is insufficient: other full nodes discover
+members through the `nodes` record. Both records are stored through the same
+bootstrap resolver set and verified with `dht.findValue`; a public overlay
+membership round succeeds only when the returned value contains this node's
+valid signed record and its payload stays within the DHT's 768-byte value limit.
 
-Public guide entry points include [getting started](../getting-started.md),
-[TVM](../tvm.md), [TL](../tl.md), [LiteClient](../liteclient.md), and
-[testing](../testing.md). These links are reader entry points only; reference
-pages remain in the separate `Internal reference` navigation section.
+The `nodes` value is a rotating sample, not a stable member list. The DHT
+`dht.updateRule.overlayNodes` merge keeps the serialized list within 768 bytes
+and randomly evicts entries when a new record does not fit. Upstream public
+overlay nodes therefore re-store their own record every 60-100 seconds. This
+crate anchors publish rounds to a fixed 30-second cadence and starts the next
+round immediately when a slow store or verification overruns, publishing
+membership on every round.
+
+DHT placement uses upstream's replication factor `k = 10`. The upstream
+responsibility window is `k + 10`, so a node must place its record across the
+ten closest responding nodes rather than a small fixed sample. Each lookup
+starts from the nearest twenty (`2k`) bootstrap and cached routes. Placement
+keeps a pending set capped at those twenty candidates and a separate result set
+of successful `findNode` responders capped at ten. Each wave asks up to eight
+nearest untried candidates, validates and merges returned nodes, and re-sorts
+by XOR distance. The walk converges only when ten peers answered and no pending
+candidate is closer than the tenth successful result; discovery alone never
+completes it. Failures never enter the result set. Only the successful result
+set receives `dht.store`, so fewer than ten responders produce fewer stores
+instead of padding with non-responders.
+
+One publisher instance owns a bounded routing cache shared by its address and
+membership records. It retains bootstrap seeds and validated `findNode`
+responses across attempts and rounds, deduplicates by DHT node id, expires old
+entries, and is scoped to that publisher rather than the process. Overlay
+membership records are never DHT routing seeds: overlay members may be dial
+targets, but they cannot enter lookup, store, or verification candidate sets.
+
+Each `findNode` and `findValue` query has a three-second deadline, each
+`dht.store` has a four-second deadline, and one lookup/store/verification
+attempt is capped at 35 seconds. An attempt reserves at least twelve seconds, or
+two fifths of the capped budget (fourteen seconds), for verification and stops
+lookup four seconds before the publish deadline so stores still have a window.
+A membership round is retried at most twice after five- and fifteen-second
+delays; retries stop immediately after a served record. The `address` record
+keeps its ten-minute cadence because its TTL is one hour and follows the same
+`k = 10` walk and verification rules.
+
+A `dht.stored` answer confirms only that the store request was delivered and
+accepted by that peer. It is not proof that the record survived or that
+`findValue` serves it. Verification starts from the union of bootstrap
+resolvers, valid routes learned during publication, the shared routing cache,
+and acknowledged store targets, deduplicated by DHT node id, with acknowledged
+targets queried first, and uses `findValue(k = 10)`. A `valueFound` answer that
+does not contain this node's valid signed record, and a `valueNotFound` answer,
+both continue the walk; a stale `valueFound` also triggers
+`findNode(k = 10)` against the same peer and merges its answer. Success
+requires the actual local signed membership (or address) record;
+`membership_listed` is a discovery metric and must not be used as a
+store-success signal.
+
+## Plumtree Runtime
+
+Plumtree is the bulk public-overlay broadcast path for peers that speak it.
+`OverlayNodeBuilder::plumtree` is the public configuration point; the shared
+`PlumtreeHandle` and the `*_with_plumtree` transport factories stay
+crate-private. UDP and QUIC sessions share one handle per overlay, so
+`subscribe_packets()` observes only decoded application payloads. `IHave`,
+`Prune`, `Useful`, statistics pushes, and repair queries are consumed
+internally.
+
+The signed simple/FEC broadcast implementation and
+`MempoolClient::send_external` remain the legacy external-message path. They
+send a single overlay object directly to connected peers and do not participate
+in Plumtree eager feedback, duplicate pruning, or repair. The current mainnet
+basechain overlay relays external messages with this legacy framing, while
+generic public-overlay payloads should use `broadcast_plumtree_simple` or
+`broadcast_plumtree_fec`.
+
+Runtime invariants:
+
+- The simple tree is index `0` with part index `0`. FEC part `i` uses tree
+  `i + 1`; `tree_slots` must exceed `parts`, and both indices are bounds-checked
+  before signature or certificate work.
+- For a simple broadcast, the signed `data_size` is the full payload length.
+  For FEC, it is the RaptorQ symbol length and the broadcast id is
+  `SHA256(TL(overlay.broadcastPlumtreeFecId))` over flags, full-data hash,
+  full-data size, and part size.
+- Signatures cover the dedicated `...ToSign` TL constructors. Timestamps must
+  be finite and within 20 seconds of local time; payloads are capped at 16 MiB.
+  Certificates enforce expiry, size, and the FEC-permission flag. Empty
+  certificates are accepted for public-overlay traffic; private-overlay
+  authorized-key sets are not modelled.
+- The `AnySender` flag is preserved and signed like any other flags value.
+  Eligibility still binds the payload to the signing source key and certificate;
+  the flag does not bypass signature checks.
+- Delivery is exactly once per broadcast id. Duplicate payload parts produce a
+  `Prune` without application publication. A changed payload under an existing
+  id is a conflict and is rejected.
+- At most 1,024 missing FEC parts and 512 active repair queries are tracked.
+  Repair requests wait for the configured timeout unless the tree has no eager
+  slot. A repair response must match the requested key and a part is served only
+  after an `IHave` to that peer while eager capacity remains. Delivered and
+  broadcast state expires after 20 seconds.
+- A node with `receive_broadcasts` disabled does not publish or forward incoming
+  Plumtree payloads, but its outbound broadcast methods remain available. This
+  is internal state semantics for `DoNotReceivePlumtreeBroadcasts`; there is no
+  public private-overlay authorization model.
+
+Each overlay owns a Tokio `Mutex` around the Plumtree state. State transitions,
+signature checks, duplicate checks, and action planning happen under that lock;
+network sends, repair queries, and packet publication happen after it is
+released. Queued actions are drained by the overlay's Plumtree task, and repair
+queries are answered by the shared inbound dispatcher for both UDP and QUIC.
+
+The loopback tests cover eager relay, control-frame hiding, and lost-FEC-part
+repair over both transports. A client-only node cannot be discovered as a live
+relay because it publishes neither an address nor a public-overlay membership
+record. Use `start_server` and a reachable UDP endpoint for relay work;
+public-overlay delivery remains best effort.
+
+## Wire Invariants
+
+- TL constructor identifiers are 32-bit little-endian values.
+- The distinction between boxed objects and bare field types is part of the
+  schema. For example, `AdnlIdShort` is bare inside `adnl.packetContents` and
+  needs its constructor prefix only when serialized as a top-level object.
+- LiteAPI common identifiers are encoded with their TON `int`, `long`, and
+  256-bit field widths. Do not widen or normalize them at the wire boundary.
+- Overlay query framing includes the overlay id before the inner query.
+  Overlay broadcasts are raw overlay objects and must not be wrapped as
+  `overlay.unicast`; only unicast payloads use that wrapper.
+- A Plumtree repair query uses `overlay.query{overlay_id}` followed by
+  `overlay.repairPlumtreePart`; QUIC wraps that query in `quic.query` and the
+  answer in `quic.answer`. Repair responses are ordinary simple/FEC broadcast
+  objects, never `overlay.unicast`.
+- TL-B decoding is exact at schema boundaries. Trailing bits or references are
+  an error unless the schema explicitly owns them.
+- Ordinary cells hold at most 1,023 data bits and four references. Builders and
+  slices reject overflow rather than truncating it.
+- Exotic cells and BoC roots retain their original bytes where the typed layer
+  does not yet model them. Generic BoC decoding is not a proof.
+- A representation hash is computed over the canonical cell representation,
+  not over the serialized BoC envelope. Proof helpers compare the roots they
+  actually decoded, and callers must opt into the relevant checks.
+
+## Typed Error Boundaries
+
+- `tvm::TvmError` is the base error for cells, slices, builders, dictionaries,
+  BoC, addresses, stacks, integer widths, hex, and base64. `tvm::TvmResult<T>`
+  is used throughout the TVM layer.
+- `tlb::TlbError::Tvm(TvmError)` preserves the low-level source while
+  `TlbError` keeps schema-specific variants for tags, trailing data,
+  non-canonical values, invalid references, and custom schema validation.
+  `tlb::TlbResult<T>` is the TL-B result alias.
+- Dictionary callbacks accept `TvmError`. When a TL-B codec crosses that
+  boundary, `TvmError::Callback` carries the structured `TlbError` opaquely and
+  `TlbError::from(TvmError)` recovers it by downcast, so schema variants are not
+  flattened into strings.
+- `wallet::WalletError::Tvm(TvmError)` and
+  `wallet::WalletError::Tlb(TlbError)` keep construction failures typed.
+- Contract helpers expose `ContractError::Decode(TvmError)`,
+  `ContractBuildError::InvalidCodeBoc(TvmError)`, and
+  `ContractBuildError::StateInitSerialization(TvmError)`. Stack conversion has
+  its own typed error rather than being stringified.
+- LiteClient BoC helpers return `liteclient::boc::LiteBocError` for TVM, TL-B,
+  root-hash mismatch, account mismatch, non-standard account addresses, and
+  account-state mismatch. `LiteError::Boc(LiteBocError)` and
+  `LiteError::Decode(TvmError)` preserve those sources at the client boundary.
+- The library must not use `anyhow` in production code or the normal dependency
+  graph. `anyhow` remains available to tests and the CLI binary, where
+  application-level context is useful.
+- `overlay::OverlayError` owns bootstrap, discovery, session, peer-store,
+  broadcast, and overlay-configuration failures. `mempool::MempoolError` owns
+  external-message validation/decoding, submission, event-queue, and
+  mempool-configuration failures. Overlay transport errors are converted only
+  at the mempool submission boundary and never re-exported as overlay types.
+
+Error messages and validation order are observable. When splitting a generic
+failure into a typed variant, preserve the old context in the variant message
+or its `#[source]` chain.
+
+## Schema Workflow
+
+`tonutils-schema-gen` is deterministic and does not fetch network data. It
+parses the checked-in snapshots, validates constructor identities, rewrites
+generated metadata, and produces
+`docs/reference/schema-inventory.tsv`.
+
+The inventory contains one tab-separated row per schema with these fields:
+source path, schema kind, source SHA-256, constructor count, upstream revision,
+generated-file SHA-256, and generated module path.
+
+To validate without changing files:
+
+```bash
+cargo run -p tonutils-schema-gen -- check
+```
+
+To inspect the deterministic inventory:
+
+```bash
+cargo run -p tonutils-schema-gen -- --inventory
+```
+
+To rewrite generated metadata and the inventory after an intentional,
+upstream-backed schema change:
+
+```bash
+cargo run -p tonutils-schema-gen -- --write
+```
+
+Commit the schema source, generated Rust modules, and inventory together.
+Never hand-edit a generated file. Update the owning handwritten wire types and
+their serialization vectors in the same change.
+
+## Async I/O And Concurrency
+
+Network and filesystem work stays on Tokio on every normal async path:
+
+- `PeerStore::load` reads peer state with `tokio::fs::read`.
+- `QuicServer::bind` and `QuicSession::connect` bind through
+  `tokio::net::UdpSocket` before handing the socket to Quinn.
+- The UDP demultiplexer heartbeat reads `/proc/net/udp` with
+  `tokio::fs::read_to_string` on Linux.
+- Capture records are formatted on the receive path but written by a dedicated
+  bounded `adnl-capture-writer` thread. The queue never blocks the receiver,
+  and the cap and JSONL format are preserved.
+- Locks held across an `.await` are Tokio locks. Standard-library mutex and
+  RwLock guards are limited to short critical sections that never cross an
+  await point.
+- The overlay endpoint registry and packet pre-deduplication cache use
+  standard-library mutexes only for short map updates with no await point.
+  Peer and session maps use Tokio locks because their critical sections cross
+  async receive and fan-out operations.
+- `MempoolServer` creates packet and status subscriptions synchronously before
+  spawning its forwarding tasks, so startup packets cannot race the receivers.
+  Its bounded event queue applies backpressure to inbound packets while local
+  echoes use a non-blocking send and are dropped when the queue is full.
+
+The following synchronous mechanisms are intentional exceptions, not missed
+conversions:
+
+- The process-wide `adnl-udp-inbound` thread owns a current-thread Tokio runtime
+  for inbound ADNL work. This mirrors upstream's dedicated receive thread and
+  prevents application task queues from delaying liveness-critical answers.
+- The inbound executor may use its synchronous non-blocking shared-socket send
+  path because it runs on that dedicated thread.
+- The capture writer uses synchronous file I/O on its own worker thread so the
+  async receive path performs no file I/O.
+- `SocketAddr`, `IpAddr`, `Duration`, `Instant`, `Arc`, and atomics remain
+  standard-library types. Their synchronous APIs are short, non-blocking, and
+  do not own runtime I/O.
+
+## Trust Boundary
+
+Offline operations are deterministic and do not contact a node: cell and BoC
+construction, TL/TL-B encoding and decoding, wallet address derivation,
+signing, and external-message construction.
+
+Live operations cross a trust boundary: ADNL transport, LiteAPI queries,
+overlay membership, mempool broadcasts, and message submission. The application
+selects the network, liteserver, public keys, timeout and retry policy, and
+proof-validation policy. A decoded response is not automatically a verified
+response, and a successful submission is not inclusion or finality proof.
+Proof helpers verify only the relations they document over the roots they
+actually decoded.
+
+The mempool server observes pending external-message broadcasts. It is a low-latency
+observation path, not a canonical transaction index or inclusion proof.
+
+## Verification
+
+Run the complete local gate from the repository root:
+
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+cargo run -p tonutils-schema-gen -- check
+RUSTDOCFLAGS="-D warnings" cargo doc -p tonutils --all-features --no-deps
+```
+
+Live network gates are ignored by default because they need public TON access.
+Run them through `scripts/run-live-test.sh`, which saves the complete log and
+fails unless the exact filter executes exactly one test and reports
+`test <name> ... ok`:
+
+```bash
+scripts/run-live-test.sh live_probe mainnet_dht_find_node_returns_valid_nodes
+scripts/run-live-test.sh live_probe mainnet_udp_overlay_get_random_peers_returns_valid_nodes
+scripts/run-live-test.sh live_probe mainnet_quic_overlay_get_random_peers_returns_valid_nodes
+scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_get_masterchain_info_smoke
+scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_get_version_and_time_smoke
+TON_GLOBAL_CONFIG_JSON="$TON_TESTNET_GLOBAL_CONFIG_JSON" \
+  scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_testnet_liteserver_smoke
+scripts/run-live-test.sh live_delivery mainnet_public_overlay_delivers_payload
+```
+
+`TON_GLOBAL_CONFIG_JSON` and `TON_TESTNET_GLOBAL_CONFIG_JSON` are required for
+their respective network gates. The overlay gates derive seeds directly from
+those configs. CI runs every live step with `if: ${{ !cancelled() }}` and
+uploads the saved logs, so one failure does not hide evidence from the remaining
+checks. Testnet DHT runs strictly from the scheduled/manual
+`.github/workflows/live-testnet-dht.yml` workflow because the canonical testnet
+seeds are currently unreachable; that workflow stays red until upstream
+recovers.
+
+- DHT evidence: config seed, remote peer, `dht.findNode`, elapsed time, raw and
+  valid node counts. A nonempty all-valid answer is required.
+- UDP evidence: config seeds, discovered member endpoints, direct
+  `overlay.getRandomPeers`, elapsed time, and valid node counts.
+- QUIC evidence: UDP-populated `advertised`/`udp+1000` targets, real handshake,
+  `overlay.getRandomPeers`, wave, elapsed time, and valid node counts. Up to five
+  waves are allowed; none may soft-skip.
+- Liteserver evidence: typed `getMasterchainInfo`, `getVersion`, and `getTime`
+  responses. The testnet smoke tries every configured index and reports the
+  first one that answers `getMasterchainInfo`.
+- Delivery evidence: three fresh-key, fresh-connection attempts of 300 seconds
+  with at most 256 peers. Success requires a real `subscribe_packets()` payload,
+  a positive `mempool.overlay_packets` count, and either a legacy/FEC custom
+  message or a completed Plumtree broadcast. `MempoolServer` runs in parallel
+  and logs peer status, routing, validation metrics, ingest drops, FEC decoding,
+  and any external-message event. Runtime delivery is best effort; the gate
+  proves observed payload traffic during the run, not a library delivery
+  guarantee.
+
+Plumtree completion is covered by the deterministic two-node UDP and QUIC
+loopback tests. The public mainnet basechain overlay currently carries legacy
+`overlay.broadcast` / `overlay.broadcastFec` frames, so the live gate accepts
+that framing instead of waiting for public traffic to switch.
+
+There is no network-unavailable bypass. Missing configuration, an unreachable
+network, an empty response, or no public payload is a failure.
+
+Check each standalone feature surface:
+
+```bash
+for feature in adnl tl tvm tlb network-config metadata liteclient contracts wallet overlay overlay-config mempool crc serde; do
+  cargo check -p tonutils --no-default-features --features "$feature"
+done
+```
+
+Inspect the normal dependency graph when dependency features change:
+
+```bash
+cargo tree -p tonutils -e normal
+```
+
+The normal `tonutils` graph must not contain `anyhow`.
