@@ -51,3 +51,4 @@ evidence.
 
 ## Docs
 - [x] Refactor it. Make it more fresh - replace deprecated paths, names, etc. Make it more helpful for those who came from other blockchains (Solana, EVM).
+- [ ] Rewrite `CONTRIBUTING.md` manually.
