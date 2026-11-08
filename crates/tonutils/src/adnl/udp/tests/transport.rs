@@ -32,28 +32,30 @@ async fn saturated_session_does_not_stall_the_shared_demux() {
     // fills up: 64 datagrams in its queue and 64 in its inbox park its
     // receive loop and permanently saturate the shared demux.
     let key_a = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let addr_a = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
+    let (peer_a_socket, addr_a) = super::bound_socket().await;
     let _session_a = transport.session_for_peer(key_a.public_key, addr_a);
-    let peer_a = AdnlUdpSession::connect(addr_a, local_addr, key_a, local_key.public_key)
-        .await
-        .unwrap();
+    let peer_a = AdnlUdpSession::connect_with_socket(
+        peer_a_socket,
+        local_addr,
+        &key_a,
+        local_key.public_key,
+    )
+    .await
+    .unwrap();
 
     // Peer B: a real single-socket session whose signed direct packet
     // the shared transport decodes and delivers to session B.
     let key_b = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let addr_b = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
+    let (peer_b_socket, addr_b) = super::bound_socket().await;
     let session_b = transport.session_for_peer(key_b.public_key, addr_b);
-    let peer_b = AdnlUdpSession::connect(addr_b, local_addr, key_b, local_key.public_key)
-        .await
-        .unwrap();
+    let peer_b = AdnlUdpSession::connect_with_socket(
+        peer_b_socket,
+        local_addr,
+        &key_b,
+        local_key.public_key,
+    )
+    .await
+    .unwrap();
 
     let packet = |data: Vec<u8>| PacketContents {
         rand1: vec![1],

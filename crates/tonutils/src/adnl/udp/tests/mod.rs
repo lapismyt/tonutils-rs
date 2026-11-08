@@ -27,6 +27,38 @@ use super::{address_storing_peers, note_peer_holds_our_addr, raw_packet_flags};
 mod fast_answer;
 mod transport;
 
+/// Binds a loopback UDP socket and returns it together with its address.
+///
+/// The socket is handed straight to the session, so its port is never
+/// released between choosing it and using it.  Reserving a port by
+/// binding `:0`, dropping the socket, and re-binding it for the session
+/// races with every other test on the machine and fails intermittently
+/// with `AddrInUse`.
+async fn bound_socket() -> (tokio::net::UdpSocket, std::net::SocketAddr) {
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("loopback socket must bind");
+    let addr = socket
+        .local_addr()
+        .expect("freshly bound socket must have a local address");
+    (socket, addr)
+}
+
+/// Binds a previously selected loopback address, retrying while a socket
+/// that still holds the port (for example a just-dropped session) closes.
+async fn bind_specific(addr: std::net::SocketAddr) -> tokio::net::UdpSocket {
+    for _ in 0..100 {
+        match tokio::net::UdpSocket::bind(addr).await {
+            Ok(socket) => return socket,
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!("loopback socket must bind at {addr}: {error}"),
+        }
+    }
+    panic!("loopback address {addr} stayed in use");
+}
+
 #[test]
 fn roundtrip_and_reject_trailing_data() {
     let params = AdnlAesParams::default();
@@ -123,28 +155,20 @@ fn direct_packet_encryption_roundtrips_with_receiver_key() {
 async fn direct_session_roundtrips_signed_packet_and_rejects_replay() {
     let sender_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
     let receiver_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let sender_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let receiver_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let sender = AdnlUdpSession::connect(
-        sender_addr,
+    let (sender_socket, sender_addr) = bound_socket().await;
+    let (receiver_socket, receiver_addr) = bound_socket().await;
+    let sender = AdnlUdpSession::connect_with_socket(
+        sender_socket,
         receiver_addr,
-        sender_key,
+        &sender_key,
         receiver_key.public_key,
     )
     .await
     .unwrap();
-    let receiver = AdnlUdpSession::connect(
-        receiver_addr,
+    let receiver = AdnlUdpSession::connect_with_socket(
+        receiver_socket,
         sender_addr,
-        receiver_key,
+        &receiver_key,
         sender_key.public_key,
     )
     .await
@@ -191,16 +215,8 @@ async fn direct_session_roundtrips_signed_packet_and_rejects_replay() {
 async fn second_session_to_same_peer_continues_sequence_numbers() {
     let sender_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
     let receiver_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let sender_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let receiver_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
+    let (sender_socket, sender_addr) = bound_socket().await;
+    let (receiver_socket, receiver_addr) = bound_socket().await;
 
     let packet = |data: Vec<u8>| PacketContents {
         rand1: vec![1],
@@ -221,19 +237,19 @@ async fn second_session_to_same_peer_continues_sequence_numbers() {
         rand2: vec![2],
     };
 
-    let receiver = AdnlUdpSession::connect(
-        receiver_addr,
+    let receiver = AdnlUdpSession::connect_with_socket(
+        receiver_socket,
         sender_addr,
-        receiver_key,
+        &receiver_key,
         sender_key.public_key,
     )
     .await
     .unwrap();
     {
-        let sender = AdnlUdpSession::connect(
-            sender_addr,
+        let sender = AdnlUdpSession::connect_with_socket(
+            sender_socket,
             receiver_addr,
-            sender_key,
+            &sender_key,
             receiver_key.public_key,
         )
         .await
@@ -250,10 +266,11 @@ async fn second_session_to_same_peer_continues_sequence_numbers() {
 
     // The peer keeps its sequence number state after our session is gone, so
     // the replacement session must pick up where the old one stopped.
-    let sender = AdnlUdpSession::connect(
-        sender_addr,
+    let sender_socket = bind_specific(sender_addr).await;
+    let sender = AdnlUdpSession::connect_with_socket(
+        sender_socket,
         receiver_addr,
-        sender_key,
+        &sender_key,
         receiver_key.public_key,
     )
     .await
@@ -273,28 +290,20 @@ async fn second_session_to_same_peer_continues_sequence_numbers() {
 async fn dht_find_node_query_routes_matching_answer() {
     let sender_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
     let receiver_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let sender_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let receiver_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let sender = AdnlUdpSession::connect(
-        sender_addr,
+    let (sender_socket, sender_addr) = bound_socket().await;
+    let (receiver_socket, receiver_addr) = bound_socket().await;
+    let sender = AdnlUdpSession::connect_with_socket(
+        sender_socket,
         receiver_addr,
-        sender_key,
+        &sender_key,
         receiver_key.public_key,
     )
     .await
     .unwrap();
-    let receiver = AdnlUdpSession::connect(
-        receiver_addr,
+    let receiver = AdnlUdpSession::connect_with_socket(
+        receiver_socket,
         sender_addr,
-        receiver_key,
+        &receiver_key,
         sender_key.public_key,
     )
     .await
@@ -340,24 +349,24 @@ async fn dht_find_node_query_routes_matching_answer() {
 async fn channel_create_confirm_switches_to_directional_channel_packets() {
     let client_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
     let server_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let client_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let server_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let client =
-        AdnlUdpSession::connect(client_addr, server_addr, client_key, server_key.public_key)
-            .await
-            .unwrap();
-    let server =
-        AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
-            .await
-            .unwrap();
+    let (client_socket, client_addr) = bound_socket().await;
+    let (server_socket, server_addr) = bound_socket().await;
+    let client = AdnlUdpSession::connect_with_socket(
+        client_socket,
+        server_addr,
+        &client_key,
+        server_key.public_key,
+    )
+    .await
+    .unwrap();
+    let server = AdnlUdpSession::connect_with_socket(
+        server_socket,
+        client_addr,
+        &server_key,
+        client_key.public_key,
+    )
+    .await
+    .unwrap();
     let (client_result, server_result) = tokio::join!(
         client.establish_channel(Duration::from_secs(1)),
         server.recv_timeout(Duration::from_secs(1))
@@ -408,28 +417,20 @@ async fn channel_create_confirm_switches_to_directional_channel_packets() {
 async fn direct_pair() -> (AdnlUdpSession, AdnlUdpSession) {
     let sender_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
     let receiver_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let sender_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let receiver_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let sender = AdnlUdpSession::connect(
-        sender_addr,
+    let (sender_socket, sender_addr) = bound_socket().await;
+    let (receiver_socket, receiver_addr) = bound_socket().await;
+    let sender = AdnlUdpSession::connect_with_socket(
+        sender_socket,
         receiver_addr,
-        sender_key,
+        &sender_key,
         receiver_key.public_key,
     )
     .await
     .unwrap();
-    let receiver = AdnlUdpSession::connect(
-        receiver_addr,
+    let receiver = AdnlUdpSession::connect_with_socket(
+        receiver_socket,
         sender_addr,
-        receiver_key,
+        &receiver_key,
         sender_key.public_key,
     )
     .await

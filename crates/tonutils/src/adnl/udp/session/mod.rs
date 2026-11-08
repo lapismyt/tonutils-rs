@@ -287,12 +287,27 @@ impl AdnlUdpSession {
         remote: AdnlPublicKey,
     ) -> Result<Self, AdnlError> {
         let socket = tokio::net::UdpSocket::bind(local_addr).await?;
+        Self::connect_with_socket(socket, remote_addr, &local, remote).await
+    }
+
+    /// Connects using an already-bound socket.
+    ///
+    /// Callers that need the local address before the session exists hand
+    /// over the socket they bound, so the port never leaves their
+    /// ownership (re-binding a released `:0` port can otherwise race with
+    /// another socket and fail with `AddrInUse`).
+    pub(crate) async fn connect_with_socket(
+        socket: tokio::net::UdpSocket,
+        remote_addr: SocketAddr,
+        local: &AdnlKeyPair,
+        remote: AdnlPublicKey,
+    ) -> Result<Self, AdnlError> {
         socket.connect(remote_addr).await?;
         // A solo session needs no receive task: its consumer's
         // receive wait reads, decodes, and returns packets
         // directly, and the socket is released synchronously
         // once the session is dropped.
-        let inner = Arc::new(SessionInner::solo(socket, &local, remote));
+        let inner = Arc::new(SessionInner::solo(socket, local, remote));
         Ok(Self { inner })
     }
 
