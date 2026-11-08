@@ -156,6 +156,7 @@ where
     })
 }
 
+#[expect(clippy::too_many_arguments, reason = "TODO")]
 pub(super) fn parse_aug_node<V, E, FV, FE>(
     slice: &mut Slice,
     remaining: usize,

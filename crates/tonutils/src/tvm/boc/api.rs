@@ -561,6 +561,7 @@ pub(super) enum ParsedCellState {
     Done,
 }
 
+#[expect(clippy::too_many_arguments, reason = "TODO")]
 pub(super) fn build_parsed_cell(
     index: usize,
     cell_refs: &[Vec<usize>],

@@ -31,8 +31,9 @@ use crate::{
 impl LiteClient {
     #[expect(
         clippy::fn_params_excessive_bools,
-        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+        reason = "signature intentionally mirrors protocol flags and values moved across async task boundaries"
     )]
+    #[expect(clippy::too_many_arguments, reason = "TODO")]
     pub async fn get_config_all_typed(
         &mut self,
         id: BlockIdExt,
@@ -69,8 +70,9 @@ impl LiteClient {
 
     #[expect(
         clippy::fn_params_excessive_bools,
-        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+        reason = "signature intentionally mirrors protocol flags and values moved across async task boundaries"
     )]
+    #[expect(clippy::too_many_arguments, reason = "TODO")]
     pub async fn get_config_params(
         &mut self,
         id: BlockIdExt,
@@ -117,8 +119,9 @@ impl LiteClient {
 
     #[expect(
         clippy::fn_params_excessive_bools,
-        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+        reason = "signature intentionally mirrors protocol flags and values moved across async task boundaries"
     )]
+    #[expect(clippy::too_many_arguments, reason = "TODO")]
     pub async fn get_config_params_typed(
         &mut self,
         id: BlockIdExt,
@@ -290,6 +293,7 @@ impl LiteClient {
         .await
     }
 
+    #[expect(clippy::too_many_arguments, reason = "TODO")]
     pub async fn get_dispatch_queue_messages(
         &mut self,
         id: BlockIdExt,

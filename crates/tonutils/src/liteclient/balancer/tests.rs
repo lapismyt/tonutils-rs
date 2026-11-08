@@ -202,7 +202,7 @@ async fn global_rate_limit_is_acquired_per_execute_request_attempt() {
         balancer.execute_request_for_test(false),
     )
     .await;
-    assert!(pending.is_err());
+    pending.unwrap_err();
     assert_eq!(
         balancer
             .peer_stats
@@ -229,7 +229,7 @@ async fn send_message_global_rate_limit_counts_each_peer_attempt() {
     let pending =
         tokio::time::timeout(Duration::from_millis(10), balancer.send_message(vec![1])).await;
 
-    assert!(pending.is_err());
+    pending.unwrap_err();
     assert_eq!(*calls.lock().await, 1);
 }
 
