@@ -12,7 +12,10 @@ use super::{
 
 use std::net::Ipv4Addr;
 
-use base64::Engine;
+use base64::{
+    Engine, engine::general_purpose::STANDARD as B64_STANDARD,
+    engine::general_purpose::URL_SAFE_NO_PAD as B64_URL_SAFE_NO_PAD,
+};
 
 #[test]
 fn test_lite_server_address_from_i32() {
@@ -162,7 +165,7 @@ fn test_config_global_multiple_servers() {
 
 #[test]
 fn test_extract_bootstrap_addresses_from_global_config() {
-    let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+    let key = B64_STANDARD.encode([7u8; 32]);
     let json = format!(
         r#"{{
             "liteservers": [{{"ip": 2130706433, "port": 8001,
@@ -186,7 +189,7 @@ fn test_extract_bootstrap_addresses_from_global_config() {
 
 #[test]
 fn test_extract_dht_addresses_excludes_liteservers() {
-    let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+    let key = B64_STANDARD.encode([7u8; 32]);
     let json = format!(
         r#"{{
             "liteservers": [{{"ip": 2130706433, "port": 8001,
@@ -204,7 +207,7 @@ fn test_extract_dht_addresses_excludes_liteservers() {
 
 #[test]
 fn test_extract_bootstrap_addresses_discards_unusable_records() {
-    let key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+    let key = B64_STANDARD.encode([7u8; 32]);
     let json = format!(
         r#"{{
             "liteservers": [
@@ -278,8 +281,8 @@ fn test_liteserver_blacklist_parse_indexes() {
 #[test]
 fn test_liteserver_blacklist_parse_ids() {
     let hex_id = hex::encode([1u8; 32]);
-    let base64_id = base64::engine::general_purpose::STANDARD.encode([2u8; 32]);
-    let base64url_id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([3u8; 32]);
+    let base64_id = B64_STANDARD.encode([2u8; 32]);
+    let base64url_id = B64_URL_SAFE_NO_PAD.encode([3u8; 32]);
     let blacklist = LiteServerBlacklist::parse_tokens([
         hex_id.as_str(),
         &format!("id:{base64_id}"),
@@ -371,7 +374,7 @@ fn test_config_global_from_str_error() {
     let invalid_json = "{ invalid json }";
     let result = ConfigGlobal::from_str(invalid_json);
 
-    assert!(result.is_err());
+    result.unwrap_err();
 }
 
 #[test]
@@ -460,7 +463,7 @@ fn test_config_public_key_non_zero_base64() {
 
 #[test]
 fn test_lite_server_various_ports() {
-    let ports = [80, 443, 8080, 3000, 65535];
+    let ports = [80, 443, 8080, 3000, 0xFFFF];
 
     for port in ports {
         let server = ConfigLiteServer {

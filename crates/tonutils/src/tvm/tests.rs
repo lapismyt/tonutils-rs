@@ -315,7 +315,7 @@ fn test_big_integer_reader_underflow_errors() {
     builder.store_big_uint(&BigUint::from(0b101u8), 3).unwrap();
     let mut slice = Slice::new(builder.build().unwrap());
 
-    assert!(slice.load_big_uint(4).is_err());
+    slice.load_big_uint(4).unwrap_err();
     assert_eq!(slice.remaining_bits(), 3);
 }
 

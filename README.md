@@ -1,5 +1,8 @@
 # tonutils
 
+> [!NOTE]
+> Unfortunately I can't dedicate much time to this project, so most of the code is AI-generated.
+
 `tonutils` is a pure-Rust SDK for The Open Network (TON). It implements TON
 cells, Bag of Cells (BoC), TL-B structures, TL/LiteAPI wire types, ADNL,
 wallets, and a direct liteserver client without depending on

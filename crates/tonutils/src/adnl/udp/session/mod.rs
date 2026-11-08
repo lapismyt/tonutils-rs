@@ -19,21 +19,17 @@
 //! to in-flight queries are routed by query id straight to the
 //! waiting call instead of competing for the inbox.
 
-mod control;
-mod diag;
-mod query;
-mod receive;
-mod send;
-
 use std::{
     collections::{HashMap, VecDeque},
     net::SocketAddr,
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc,
+        atomic::{self, AtomicBool, AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{self, Duration},
 };
+
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     adnl::{
@@ -44,14 +40,18 @@ use crate::{
             transport::{Route, TransportInner},
         },
     },
-    tl::TlInt256 as Int256,
+    tl::TlInt256,
 };
 
-use tokio::sync::mpsc;
+mod control;
+mod diag;
+mod query;
+mod receive;
+mod send;
 
 /// Raw datagrams buffered for one session before the transport's
 /// receive task applies backpressure.
-const SESSION_QUEUE: usize = 64;
+pub const SESSION_QUEUE: usize = 64;
 
 /// Inbound queries remembered per session by the instant their
 /// datagram was read off the socket, for the answer-latency
@@ -60,22 +60,22 @@ const SESSION_QUEUE: usize = 64;
 /// One peer cannot have more unanswered queries of this kind pending
 /// than it sends as a burst, so a small ring is enough to attach the
 /// socket-read instant to the answer that leaves later.
-const MAX_INBOUND_QUERIES: usize = 256;
+pub const MAX_INBOUND_QUERIES: usize = 256;
 
 /// Queries whose waiter is gone keep their registration instant for
 /// this many most-recent entries, so an answer that arrives after the
 /// caller gave up can still be logged with its real age.
-const MAX_RECENT_QUERIES: usize = 4096;
+pub const MAX_RECENT_QUERIES: usize = 4096;
 
 /// One in-flight query: the instant its waiter was registered and the
 /// channel that delivers the answer to that waiter.
-type PendingQuery = (std::time::Instant, tokio::sync::oneshot::Sender<Vec<u8>>);
+pub type PendingQuery = (time::Instant, oneshot::Sender<Vec<u8>>);
 
 /// One inbound query remembered for the answer-latency diagnostic: its
 /// query id, the instant its datagram was read off the socket, and the
 /// TL constructor the peer asked with (the little-endian id word at
 /// the start of the query payload, `0` when the payload is too short).
-type InboundQuery = ([u8; 32], std::time::Instant, u32);
+pub type InboundQuery = ([u8; 32], time::Instant, u32);
 
 /// One registered synchronous answer for inbound queries, keyed by the
 /// query's outer TL constructor word (see
@@ -84,9 +84,9 @@ type InboundQuery = ([u8; 32], std::time::Instant, u32);
 /// The closure receives the query payload and returns the answer
 /// payload, or `None` to decline an id it shares but does not
 /// recognize; a declined query continues to the consumer unchanged.
-type FastAnswer = Arc<dyn Fn(&[u8]) -> Option<Vec<u8>> + Send + Sync>;
+pub type FastAnswer = Arc<dyn Fn(&[u8]) -> Option<Vec<u8>> + Send + Sync>;
 
-/// One authenticated ADNL-over-UDP peer.
+// One authenticated ADNL-over-UDP peer.
 ///
 /// Cloning shares the same underlying session: all clones observe the
 /// same channels, sequence numbers, and inbox, which is what makes a
@@ -106,7 +106,7 @@ pub(crate) struct SessionInner {
     local_id: [u8; 32],
     remote_id: [u8; 32],
     remote: AdnlPublicKey,
-    remote_addr: Mutex<SocketAddr>,
+    remote_addr: std::sync::Mutex<SocketAddr>,
     /// Whether this session may establish ADNL channels.  One-shot
     /// sessions (DHT lookups) disable it: they are dropped
     /// right after the query, and a peer that keeps the negotiated
@@ -137,13 +137,13 @@ pub(crate) struct SessionInner {
     /// call that asked for it even when several callers share the
     /// session.  Each entry keeps the instant the waiter was
     /// registered so a delivered answer can log its real age.
-    pending: Mutex<HashMap<[u8; 32], PendingQuery>>,
+    pending: std::sync::Mutex<HashMap<[u8; 32], PendingQuery>>,
     /// Queries whose waiter is gone (the caller timed out, or the send
     /// failed), by query id with their registration instants, newest
     /// last and bounded to [`MAX_RECENT_QUERIES`].  An answer for one
     /// of them arrives after the caller stopped waiting, so the age
     /// diagnostic picks it up from here.
-    recent: Mutex<VecDeque<([u8; 32], std::time::Instant)>>,
+    recent: std::sync::Mutex<VecDeque<([u8; 32], std::time::Instant)>>,
     /// Inbound queries by query id with the instant their datagram was
     /// read off the socket and the TL constructor they asked with,
     /// newest last and bounded to [`MAX_INBOUND_QUERIES`].
@@ -152,7 +152,7 @@ pub(crate) struct SessionInner {
     /// line reports how long the peer's query waited inside this
     /// process before the answer left - the leg a peer's
     /// liveness-probe deadline is measured against.
-    inbound_queries: Mutex<VecDeque<InboundQuery>>,
+    inbound_queries: std::sync::Mutex<VecDeque<InboundQuery>>,
     /// Synchronous answers for inbound queries, by the query's outer TL
     /// constructor word, registered through
     /// [`AdnlUdpSession::register_query_answer`].
@@ -160,7 +160,7 @@ pub(crate) struct SessionInner {
     /// The session's receive task consults this before delivering a
     /// query to the consumer, so an answered query never queues behind
     /// the consumer's inbox and the consumer never sees it.
-    fast_answers: Mutex<HashMap<u32, FastAnswer>>,
+    fast_answers: std::sync::Mutex<HashMap<u32, FastAnswer>>,
 }
 
 /// Where a session's datagrams travel.
@@ -400,7 +400,11 @@ impl AdnlUdpSession {
     /// check), so this latency decides whether the peer keeps the node
     /// reachable.  The value is logged even when the send itself fails:
     /// it measures the wait, not the outcome.
-    pub async fn send_answer(&self, query_id: Int256, answer: Vec<u8>) -> Result<usize, AdnlError> {
+    pub async fn send_answer(
+        &self,
+        query_id: TlInt256,
+        answer: Vec<u8>,
+    ) -> Result<usize, AdnlError> {
         self.inner.send_answer_to(&query_id, answer).await
     }
 
@@ -550,11 +554,11 @@ impl AdnlUdpSession {
                     message: None,
                     messages: Some(vec![
                         AdnlMessage::CreateChannel {
-                            key: Int256(local_channel_key),
+                            key: TlInt256(local_channel_key),
                             date,
                         },
                         AdnlMessage::Query {
-                            query_id: Int256::random(),
+                            query_id: TlInt256::random(),
                             query: tl_proto::serialize(DhtMessage::GetSignedAddressList),
                         },
                     ]),
@@ -627,7 +631,7 @@ impl SessionInner {
             local_id,
             remote_id,
             remote,
-            remote_addr: Mutex::new(
+            remote_addr: std::sync::Mutex::new(
                 "127.0.0.1:0"
                     .parse()
                     .expect("loopback fallback address parses"),
@@ -639,10 +643,10 @@ impl SessionInner {
             queue_tx,
             inbox: tokio::sync::Mutex::new(inbox),
             inbox_tx,
-            pending: Mutex::new(HashMap::new()),
-            recent: Mutex::new(VecDeque::new()),
-            inbound_queries: Mutex::new(VecDeque::new()),
-            fast_answers: Mutex::new(HashMap::new()),
+            pending: std::sync::Mutex::new(HashMap::new()),
+            recent: std::sync::Mutex::new(VecDeque::new()),
+            inbound_queries: std::sync::Mutex::new(VecDeque::new()),
+            fast_answers: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -666,7 +670,7 @@ impl SessionInner {
             local_id: transport.local_id,
             remote_id,
             remote,
-            remote_addr: Mutex::new(remote_addr),
+            remote_addr: std::sync::Mutex::new(remote_addr),
             inbox_drops: AtomicU64::new(0),
             confirm_channels: AtomicBool::new(true),
             state: tokio::sync::Mutex::new(SessionState::new()),
@@ -674,10 +678,10 @@ impl SessionInner {
             queue_tx,
             inbox: tokio::sync::Mutex::new(inbox),
             inbox_tx,
-            pending: Mutex::new(HashMap::new()),
-            recent: Mutex::new(VecDeque::new()),
-            inbound_queries: Mutex::new(VecDeque::new()),
-            fast_answers: Mutex::new(HashMap::new()),
+            pending: std::sync::Mutex::new(HashMap::new()),
+            recent: std::sync::Mutex::new(VecDeque::new()),
+            inbound_queries: std::sync::Mutex::new(VecDeque::new()),
+            fast_answers: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -792,8 +796,8 @@ impl Drop for SessionInner {
 
 /// Monotonic session ids, used only to clean up stale routes.
 fn next_session_id() -> u64 {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, atomic::Ordering::Relaxed)
 }
 
 impl From<Arc<SessionInner>> for AdnlUdpSession {

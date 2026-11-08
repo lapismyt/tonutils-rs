@@ -1,3 +1,5 @@
+use tonutils::tlb::schema::{BLOCK_TLB, generate_block_summary, parse_schema};
+
 use super::{
     Address, BalancerStatusView, BlockCommand, BocCommand, BocDecodeView, Cli, Commands,
     ConfigCommand, ConfigGlobal, ConfigLiteServer, Context, Contract, ContractCommand,
@@ -360,9 +362,8 @@ impl Cli {
     pub(super) fn execute_schema(&self, command: &SchemaCommand) -> Result<()> {
         match command {
             SchemaCommand::Check => {
-                let generated = tonutils::tlb::schema::generate_block_summary()?;
-                let constructors =
-                    tonutils::tlb::schema::parse_schema(tonutils::tlb::schema::BLOCK_TLB)?;
+                let generated = generate_block_summary()?;
+                let constructors = parse_schema(BLOCK_TLB)?;
                 let view = SchemaCheckView {
                     schema: "block.tlb",
                     constructors: constructors.len(),

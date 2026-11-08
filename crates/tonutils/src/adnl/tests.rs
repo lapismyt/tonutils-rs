@@ -1,21 +1,39 @@
 //! Tests for ADNL (Abstract Datagram Network Layer) module
 
-use std::time::Duration;
+use std::{
+    env, net,
+    process::{Command, Stdio},
+    sync::Arc,
+    thread,
+    time::Duration,
+};
 
 use crate::adnl::{
     AdnlAesParams, AdnlCodec, AdnlError, AdnlKeyPair, AdnlPeer, AdnlPublicKey,
     crypto::SecretKey,
-    tl::{AdnlTlPublicKeyOwned as PublicKeyOwned, AdnlTlPublicKeyRef as TlPublicKey},
+    quic::tls::make_quinn_server_config_with_alpn,
+    tl::{AdnlTlPublicKeyOwned, AdnlTlPublicKeyRef},
 };
 
-use rand::rngs::OsRng;
-use tokio::net::TcpListener;
+use quinn::crypto::rustls::HandshakeData;
+use rand::rngs::{self, OsRng};
+use tokio::{
+    io::duplex,
+    net::TcpListener,
+    time::{self, sleep},
+};
 use tokio_util::{
     bytes::{Bytes, BytesMut},
     codec::{Decoder, Encoder},
 };
 
-mod quic_interop_tests;
+// ALPN the upstream `quic-example-client` hardcodes (its `--alpn` default
+/// with no flag to change it; `quic/quic-example-client.cpp`).
+const DEMO_ALPN: &[u8] = b"hq-interop";
+
+/// Response bytes the demo client prints before declaring success on the
+/// stream end.
+const DEMO_RESPONSE: &[u8] = b"tonutils-rs quic interop response\n";
 
 #[test]
 fn test_keypair_generation() {
@@ -166,7 +184,7 @@ async fn test_adnl_loopback_handshake() {
     let server_secret = SecretKey::from_bytes([7u8; 32]);
     let server_keypair = AdnlKeyPair::from(&server_secret);
     let server_public = server_keypair.public_key.to_bytes();
-    let (client_transport, server_transport) = tokio::io::duplex(4096);
+    let (client_transport, server_transport) = duplex(4096);
 
     let server = tokio::spawn(async move {
         AdnlPeer::handle_handshake(server_transport, |_| Some(server_keypair)).await
@@ -174,8 +192,8 @@ async fn test_adnl_loopback_handshake() {
     let client = AdnlPeer::perform_handshake(client_transport, server_public).await;
     let server = server.await.unwrap();
 
-    assert!(client.is_ok());
-    assert!(server.is_ok());
+    client.unwrap();
+    server.unwrap();
 }
 
 #[tokio::test]
@@ -184,7 +202,7 @@ async fn adnl_connect_with_timeout_maps_handshake_timeout() {
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
         let (_stream, _addr) = listener.accept().await.unwrap();
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        sleep(Duration::from_secs(60)).await;
     });
 
     let server_secret = SecretKey::from_bytes([9u8; 32]);
@@ -420,10 +438,10 @@ fn test_compute_shared_secret_value() {
 #[test]
 fn test_tl_public_key_ed25519() {
     let key_bytes = [42u8; 32];
-    let tl_key = TlPublicKey::Ed25519 { key: &key_bytes };
+    let tl_key = AdnlTlPublicKeyRef::Ed25519 { key: &key_bytes };
 
     match tl_key {
-        TlPublicKey::Ed25519 { key } => {
+        AdnlTlPublicKeyRef::Ed25519 { key } => {
             assert_eq!(key, &key_bytes);
         }
         _ => panic!("Wrong variant"),
@@ -433,13 +451,13 @@ fn test_tl_public_key_ed25519() {
 #[test]
 fn test_tl_public_key_owned_conversion() {
     let key_bytes = [42u8; 32];
-    let tl_key = TlPublicKey::Ed25519 { key: &key_bytes };
+    let tl_key = AdnlTlPublicKeyRef::Ed25519 { key: &key_bytes };
 
     let owned = tl_key.as_equivalent_owned();
     let back_to_ref = owned.as_equivalent_ref();
 
     match (tl_key, back_to_ref) {
-        (TlPublicKey::Ed25519 { key: k1 }, TlPublicKey::Ed25519 { key: k2 }) => {
+        (AdnlTlPublicKeyRef::Ed25519 { key: k1 }, AdnlTlPublicKeyRef::Ed25519 { key: k2 }) => {
             assert_eq!(k1, k2);
         }
         _ => panic!("Conversion failed"),
@@ -449,11 +467,11 @@ fn test_tl_public_key_owned_conversion() {
 #[test]
 fn test_tl_public_key_aes() {
     let key_bytes = [99u8; 32];
-    let tl_key = TlPublicKey::Aes { key: &key_bytes };
+    let tl_key = AdnlTlPublicKeyRef::Aes { key: &key_bytes };
 
     let owned = tl_key.as_equivalent_owned();
     match owned {
-        PublicKeyOwned::Aes { key } => {
+        AdnlTlPublicKeyOwned::Aes { key } => {
             assert_eq!(key, key_bytes);
         }
         _ => panic!("Wrong variant"),
@@ -463,11 +481,11 @@ fn test_tl_public_key_aes() {
 #[test]
 fn test_tl_public_key_overlay() {
     let name = b"overlay_name";
-    let tl_key = TlPublicKey::Overlay { name };
+    let tl_key = AdnlTlPublicKeyRef::Overlay { name };
 
     let owned = tl_key.as_equivalent_owned();
     match owned {
-        PublicKeyOwned::Overlay { name: n } => {
+        AdnlTlPublicKeyOwned::Overlay { name: n } => {
             assert_eq!(n, name.to_vec());
         }
         _ => panic!("Wrong variant"),
@@ -477,11 +495,11 @@ fn test_tl_public_key_overlay() {
 #[test]
 fn test_tl_public_key_unencoded() {
     let data = b"unencoded_data";
-    let tl_key = TlPublicKey::Unencoded { data };
+    let tl_key = AdnlTlPublicKeyRef::Unencoded { data };
 
     let owned = tl_key.as_equivalent_owned();
     match owned {
-        PublicKeyOwned::Unencoded { data: d } => {
+        AdnlTlPublicKeyOwned::Unencoded { data: d } => {
             assert_eq!(d, data.to_vec());
         }
         _ => panic!("Wrong variant"),
@@ -501,7 +519,7 @@ fn test_public_key_from_tl() {
 
 #[test]
 fn test_public_key_from_tl_non_ed25519() {
-    let tl_key = TlPublicKey::Aes { key: &[42u8; 32] };
+    let tl_key = AdnlTlPublicKeyRef::Aes { key: &[42u8; 32] };
     let pubkey = AdnlPublicKey::from_tl(tl_key);
 
     // Should return None for non-Ed25519 keys
@@ -575,4 +593,138 @@ fn test_keypair_copy_clone() {
     let sig2 = keypair_copy.sign_raw(data);
 
     assert_eq!(sig1, sig2);
+}
+
+/// Serves one connection the way the upstream interop servers do: read the
+/// client's request stream to its end, then answer with bytes followed by a
+/// stream end (the client prints the bytes and logs `test passed` on FIN).
+async fn serve_demo_connection(connection: &quinn::Connection) {
+    let request = tokio::select! {
+        accepted = connection.accept_uni() => {
+            let mut recv = accepted.expect("client uni stream");
+            let request = recv
+                .read_to_end(1024)
+                .await
+                .expect("read demo request");
+            let mut send = connection
+                .open_uni()
+                .await
+                .expect("open response stream");
+            send.write_all(DEMO_RESPONSE)
+                .await
+                .expect("write response");
+            send.finish().expect("finish response stream");
+            request
+        }
+        accepted = connection.accept_bi() => {
+            let (mut send, mut recv) = accepted.expect("client bidi stream");
+            let request = recv
+                .read_to_end(1024)
+                .await
+                .expect("read demo request");
+            send.write_all(DEMO_RESPONSE)
+                .await
+                .expect("write response");
+            send.finish().expect("finish response stream");
+            request
+        }
+    };
+    assert!(
+        request.starts_with(b"GET /"),
+        "the demo client must send an HTTP/0.9 GET, got {request:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the upstream quic-example-client binary (QUIC_INTEROP_CLIENT)"]
+async fn cpp_quictls_client_completes_the_demo_pairing() {
+    let client_bin = env::var("QUIC_INTEROP_CLIENT").expect(
+        "set QUIC_INTEROP_CLIENT to the upstream quic-example-client binary \
+         (see .github/workflows/quic-interop.yml)",
+    );
+
+    let keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
+
+    // The production SNI and client-auth pieces, with the demo ALPN added so
+    // the hardcoded `hq-interop` client can negotiate; `ton` stays offered
+    // for symmetry with the production profile.
+    let server_config = make_quinn_server_config_with_alpn(&keypair, &[DEMO_ALPN, b"ton"])
+        .expect("interop server TLS config");
+
+    let socket = net::UdpSocket::bind("127.0.0.1:0").expect("bind interop port");
+    socket.set_nonblocking(true).expect("nonblocking socket");
+    let endpoint = quinn::Endpoint::new(
+        quinn::EndpointConfig::default(),
+        Some(server_config),
+        socket,
+        Arc::new(quinn::TokioRuntime),
+    )
+    .expect("server endpoint");
+    let port = endpoint.local_addr().expect("local addr").port();
+
+    let mut client = Command::new(&client_bin)
+        .arg("--host")
+        .arg("127.0.0.1")
+        .arg("--port")
+        .arg(port.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn the C++ interop client");
+
+    let serve = async {
+        let incoming = time::timeout(Duration::from_secs(30), endpoint.accept())
+            .await
+            .expect("the C++ client must reach the server")
+            .expect("the server endpoint must stay open");
+        let connecting = incoming.accept().expect("incoming connection");
+        let connection = time::timeout(Duration::from_secs(30), connecting)
+            .await
+            .expect("the handshake must complete within 30s")
+            .expect("the raw-public-key handshake must succeed");
+
+        let observed_sni = connection
+            .handshake_data()
+            .expect("handshake data")
+            .downcast_ref::<HandshakeData>()
+            .and_then(|data| data.server_name.clone());
+        assert_eq!(
+            observed_sni, None,
+            "the demo client has no expected peer key and sends no SNI; the \
+             server must serve its default identity like upstream sni_select_cb"
+        );
+
+        serve_demo_connection(&connection).await;
+
+        // Keep the connection alive until the client consumed the response.
+        time::sleep(Duration::from_millis(250)).await;
+    };
+    time::timeout(Duration::from_secs(60), serve)
+        .await
+        .expect("serving the demo pairing must finish within 60s");
+
+    let deadline = time::Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = client.try_wait().expect("poll the C++ client") {
+            break status;
+        }
+        assert!(
+            time::Instant::now() < deadline,
+            "the C++ client did not exit after the response"
+        );
+        thread::sleep(Duration::from_millis(100));
+    };
+    let output = client.wait_with_output().expect("collect client output");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    eprintln!("quic-example-client output:\n{combined}");
+
+    assert!(status.success(), "the C++ client must exit cleanly");
+    assert!(
+        combined.contains("test passed"),
+        "the C++ client must report test passed:\n{combined}"
+    );
 }

@@ -1,3 +1,14 @@
+use tonutils::{
+    liteclient::{
+        boc::{
+            DecodedAccountState, DecodedBlockData, DecodedBoc, DecodedConfigInfo,
+            SimpleAccountState, decode_account_state_boc,
+        },
+        tl::{LiteServerAccountState, MasterchainInfo, RunMethodResult},
+    },
+    tlb::{Account, AccountState},
+};
+
 use super::{
     AccountId, Address, Arc, BackendView, BestEffortAccountStateView, BlockIdExt, Builder, Cell,
     Cli, ConfigModeFlags, Context, DecodedRunMethodResult, FromStr, Int256, LiteBalancer,
@@ -12,7 +23,7 @@ use super::{
 };
 
 pub(super) fn run_get_method_view(
-    result: &tonutils::liteclient::tl::RunMethodResult,
+    result: &RunMethodResult,
     method: Option<String>,
     method_id: u64,
 ) -> Result<RunGetMethodView> {
@@ -37,9 +48,7 @@ pub(super) fn run_get_method_view(
     })
 }
 
-pub(super) fn masterchain_info_view(
-    info: &tonutils::liteclient::tl::MasterchainInfo,
-) -> MasterchainInfoView {
+pub(super) fn masterchain_info_view(info: &MasterchainInfo) -> MasterchainInfoView {
     MasterchainInfoView {
         last: block_id_ext_view(&info.last),
         state_root_hash: info.state_root_hash.to_hex(),
@@ -87,9 +96,7 @@ impl HighLevelBackend {
         }
     }
 
-    pub(super) async fn get_masterchain_info(
-        &mut self,
-    ) -> Result<tonutils::liteclient::tl::MasterchainInfo> {
+    pub(super) async fn get_masterchain_info(&mut self) -> Result<MasterchainInfo> {
         match self {
             HighLevelBackend::Single(client) => Ok(client.get_masterchain_info().await?),
             HighLevelBackend::Balanced(balancer) => Ok(balancer.get_masterchain_info().await?),
@@ -100,7 +107,7 @@ impl HighLevelBackend {
         &mut self,
         block: BlockIdExt,
         account: AccountId,
-    ) -> Result<tonutils::liteclient::tl::LiteServerAccountState> {
+    ) -> Result<LiteServerAccountState> {
         match self {
             HighLevelBackend::Single(client) => {
                 Ok(client.get_account_state(block, account).await?)
@@ -114,7 +121,7 @@ impl HighLevelBackend {
     pub(super) async fn raw_get_block_data(
         &mut self,
         block: BlockIdExt,
-    ) -> Result<tonutils::liteclient::boc::DecodedBlockData> {
+    ) -> Result<DecodedBlockData> {
         match self {
             HighLevelBackend::Single(client) => Ok(client.raw_get_block_data(block).await?),
             HighLevelBackend::Balanced(balancer) => Ok(balancer.raw_get_block_data(block).await?),
@@ -127,7 +134,7 @@ impl HighLevelBackend {
         address: Address,
         method_id: u64,
         stack: TvmStack,
-    ) -> Result<tonutils::liteclient::tl::RunMethodResult> {
+    ) -> Result<RunMethodResult> {
         match self {
             HighLevelBackend::Single(client) => Ok(client
                 .run_get_method(
@@ -178,7 +185,7 @@ impl HighLevelBackend {
         &mut self,
         block: BlockIdExt,
         flags: &ConfigModeFlags,
-    ) -> Result<tonutils::liteclient::boc::DecodedConfigInfo> {
+    ) -> Result<DecodedConfigInfo> {
         match self {
             HighLevelBackend::Single(client) => {
                 Ok(get_config_all_client(client, block, flags).await?)
@@ -194,7 +201,7 @@ impl HighLevelBackend {
         block: BlockIdExt,
         params: Vec<i32>,
         flags: &ConfigModeFlags,
-    ) -> Result<tonutils::liteclient::boc::DecodedConfigInfo> {
+    ) -> Result<DecodedConfigInfo> {
         match self {
             HighLevelBackend::Single(client) => {
                 Ok(get_config_params_client(client, block, params, flags).await?)
@@ -208,7 +215,7 @@ impl HighLevelBackend {
 
 pub(super) fn best_effort_account_state_view(
     address: &str,
-    raw: &tonutils::liteclient::tl::LiteServerAccountState,
+    raw: &LiteServerAccountState,
 ) -> BestEffortAccountStateView {
     let mut decode_errors = Vec::new();
     let (shard_proof_root_count, shard_proof_root_hashes) =
@@ -220,10 +227,7 @@ pub(super) fn best_effort_account_state_view(
     let state_root_hash = decode_root_hash(&raw.state, "state", &mut decode_errors);
 
     let decoded = match tonutils::tvm::Address::from_str(address) {
-        Ok(address) => {
-            tonutils::liteclient::boc::DecodedAccountState::from_raw_verified(raw.clone(), &address)
-                .ok()
-        }
+        Ok(address) => DecodedAccountState::from_raw_verified(raw.clone(), &address).ok(),
         Err(error) => {
             decode_errors.push(format!(
                 "address parse failed for proof extraction: {error}"
@@ -238,7 +242,7 @@ pub(super) fn best_effort_account_state_view(
             if raw.state.is_empty() {
                 None
             } else {
-                match tonutils::liteclient::boc::decode_account_state_boc(&raw.state) {
+                match decode_account_state_boc(&raw.state) {
                     Ok(value) => Some(value.account),
                     Err(error) => {
                         decode_errors.push(format!("state TL-B decode failed: {error}"));
@@ -256,8 +260,8 @@ pub(super) fn best_effort_account_state_view(
         .map(|account| account.last_trans_lt)
         .or_else(|| {
             account.as_ref().and_then(|account| match account {
-                tonutils::tlb::Account::None => None,
-                tonutils::tlb::Account::Full { storage, .. } => Some(storage.last_trans_lt),
+                Account::None => None,
+                Account::Full { storage, .. } => Some(storage.last_trans_lt),
             })
         });
     let last_transaction_hash = shard_account
@@ -313,7 +317,7 @@ pub(super) fn decode_root_hash(
     if raw.is_empty() {
         return None;
     }
-    match tonutils::liteclient::boc::DecodedBoc::decode(raw) {
+    match DecodedBoc::decode(raw) {
         Ok(decoded) => Some(decoded.root_hash_hex()),
         Err(error) => {
             errors.push(format!("{label} BoC decode failed: {error:#}"));
@@ -322,22 +326,14 @@ pub(super) fn decode_root_hash(
     }
 }
 
-pub(super) fn account_summary(
-    account: Option<&tonutils::tlb::Account>,
-) -> (String, Option<String>) {
+pub(super) fn account_summary(account: Option<&Account>) -> (String, Option<String>) {
     match account {
-        None | Some(tonutils::tlb::Account::None) => ("none".to_owned(), None),
-        Some(tonutils::tlb::Account::Full { storage, .. }) => (
+        None | Some(Account::None) => ("none".to_owned(), None),
+        Some(Account::Full { storage, .. }) => (
             simple_account_state_name(&match &storage.state {
-                tonutils::tlb::AccountState::Uninit => {
-                    tonutils::liteclient::boc::SimpleAccountState::Uninit
-                }
-                tonutils::tlb::AccountState::Frozen { .. } => {
-                    tonutils::liteclient::boc::SimpleAccountState::Frozen
-                }
-                tonutils::tlb::AccountState::Active { .. } => {
-                    tonutils::liteclient::boc::SimpleAccountState::Active
-                }
+                AccountState::Uninit => SimpleAccountState::Uninit,
+                AccountState::Frozen { .. } => SimpleAccountState::Frozen,
+                AccountState::Active { .. } => SimpleAccountState::Active,
             })
             .to_owned(),
             Some(grams_decimal(&storage.balance.grams)),
@@ -443,7 +439,7 @@ pub(super) fn valid_until_from_timeout(timeout: u32) -> Result<u32> {
     u32::try_from(valid_until).context("valid_until does not fit into uint32")
 }
 
-pub(super) fn seqno_from_stack(result: &tonutils::liteclient::tl::RunMethodResult) -> Result<u32> {
+pub(super) fn seqno_from_stack(result: &RunMethodResult) -> Result<u32> {
     let stack = match result.result_stack_lossless() {
         DecodedRunMethodResult::Decoded(stack) => stack,
         DecodedRunMethodResult::Missing => anyhow::bail!("seqno get-method returned no stack"),
@@ -461,7 +457,7 @@ pub(super) fn seqno_from_stack(result: &tonutils::liteclient::tl::RunMethodResul
 }
 
 pub(super) fn seqno_from_stack_or_deploy_zero(
-    result: &tonutils::liteclient::tl::RunMethodResult,
+    result: &RunMethodResult,
     deploy: bool,
 ) -> Result<u32> {
     if deploy

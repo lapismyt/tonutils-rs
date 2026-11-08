@@ -14,7 +14,7 @@ impl LiteBalancer {
         // Try to lookup an old block to check if peer is archival
         let block_id = BlockId {
             workchain: -1,
-            shard: -9223372036854775808i64,
+            shard: -0b1000000000000000000000000000000000000000000000000000000000000000i64,
             seqno: Self::archive_probe_seqno(),
         };
 

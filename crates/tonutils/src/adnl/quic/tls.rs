@@ -34,15 +34,21 @@ use std::sync::Arc;
 
 use crate::adnl::{AdnlAddress, AdnlError, AdnlKeyPair, AdnlPublicKey};
 
+use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::{
     DigitallySignedStruct, DistinguishedName, SignatureScheme,
-    client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    client::{
+        AlwaysResolvesClientRawPublicKeys,
+        danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    },
+    crypto::ring::default_provider,
     pki_types::{CertificateDer, ServerName, UnixTime},
     server::{
         ClientHello, ResolvesServerCert,
         danger::{ClientCertVerified, ClientCertVerifier},
     },
     sign::CertifiedKey,
+    version::TLS13,
 };
 
 /// SubjectPublicKeyInfo prefix for an Ed25519 public key (RFC 8410):
@@ -97,7 +103,7 @@ fn extract_ed25519_key(cert: &CertificateDer<'_>) -> Option<AdnlPublicKey> {
 /// signing key is the identity key itself, so the handshake `CertificateVerify`
 /// proves possession of the ADNL identity key.
 fn make_certified_key(keypair: &AdnlKeyPair) -> Result<Arc<CertifiedKey>, AdnlError> {
-    let provider = rustls::crypto::ring::default_provider();
+    let provider = default_provider();
     let signing_key = provider
         .key_provider
         .load_private_key(keypair.private_key_der())
@@ -321,22 +327,20 @@ pub(crate) fn make_quinn_client_config(
     local_keypair: &AdnlKeyPair,
     expected_key: &AdnlPublicKey,
 ) -> Result<quinn::ClientConfig, AdnlError> {
-    let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .map_err(|e| AdnlError::TlsConfig(e.to_string()))?
-    .dangerous()
-    .with_custom_certificate_verifier(Arc::new(TonServerCertVerifier {
-        expected_key: *expected_key,
-    }))
-    .with_client_cert_resolver(Arc::new(
-        rustls::client::AlwaysResolvesClientRawPublicKeys::new(make_certified_key(local_keypair)?),
-    ));
+    let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(default_provider()))
+        .with_protocol_versions(&[&TLS13])
+        .map_err(|e| AdnlError::TlsConfig(e.to_string()))?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(TonServerCertVerifier {
+            expected_key: *expected_key,
+        }))
+        .with_client_cert_resolver(Arc::new(AlwaysResolvesClientRawPublicKeys::new(
+            make_certified_key(local_keypair)?,
+        )));
     tls_config.alpn_protocols = vec![ALPN_TON.to_vec()];
 
-    let quic_config = quinn::crypto::rustls::QuicClientConfig::try_from(tls_config)
-        .map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
+    let quic_config =
+        QuicClientConfig::try_from(tls_config).map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
     Ok(quinn::ClientConfig::new(Arc::new(quic_config)))
 }
 
@@ -365,17 +369,15 @@ pub(crate) fn make_quinn_server_config_with_alpn(
         expected_sni: sni_for_public_key(&keypair.public_key),
     };
 
-    let mut tls_config = rustls::ServerConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .map_err(|e| AdnlError::TlsConfig(e.to_string()))?
-    .with_client_cert_verifier(Arc::new(TonRpkClientVerifier))
-    .with_cert_resolver(Arc::new(resolver));
+    let mut tls_config = rustls::ServerConfig::builder_with_provider(Arc::new(default_provider()))
+        .with_protocol_versions(&[&TLS13])
+        .map_err(|e| AdnlError::TlsConfig(e.to_string()))?
+        .with_client_cert_verifier(Arc::new(TonRpkClientVerifier))
+        .with_cert_resolver(Arc::new(resolver));
     tls_config.alpn_protocols = alpn.iter().map(|proto| proto.to_vec()).collect();
 
-    let quic_config = quinn::crypto::rustls::QuicServerConfig::try_from(tls_config)
-        .map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
+    let quic_config =
+        QuicServerConfig::try_from(tls_config).map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
     Ok(quinn::ServerConfig::with_crypto(Arc::new(quic_config)))
 }
 
@@ -387,25 +389,25 @@ pub(crate) fn make_quinn_server_config_with_alpn(
 pub(crate) fn make_quinn_client_config_without_identity(
     expected_key: &AdnlPublicKey,
 ) -> Result<quinn::ClientConfig, AdnlError> {
-    let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(
-        rustls::crypto::ring::default_provider(),
-    ))
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .map_err(|e| AdnlError::TlsConfig(e.to_string()))?
-    .dangerous()
-    .with_custom_certificate_verifier(Arc::new(TonServerCertVerifier {
-        expected_key: *expected_key,
-    }))
-    .with_no_client_auth();
+    let mut tls_config = rustls::ClientConfig::builder_with_provider(Arc::new(default_provider()))
+        .with_protocol_versions(&[&TLS13])
+        .map_err(|e| AdnlError::TlsConfig(e.to_string()))?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(TonServerCertVerifier {
+            expected_key: *expected_key,
+        }))
+        .with_no_client_auth();
     tls_config.alpn_protocols = vec![ALPN_TON.to_vec()];
 
-    let quic_config = quinn::crypto::rustls::QuicClientConfig::try_from(tls_config)
-        .map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
+    let quic_config =
+        QuicClientConfig::try_from(tls_config).map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
     Ok(quinn::ClientConfig::new(Arc::new(quic_config)))
 }
 
 #[cfg(test)]
 mod tests {
+    use rand::rngs;
+
     use super::{
         AdnlAddress, AdnlKeyPair, CertificateDer, ClientCertVerifier, ED25519_SPKI_PREFIX,
         ResolvesServerCert, ServerCertVerifier, ServerName, SignatureScheme, SniRpkResolver,
@@ -428,7 +430,7 @@ mod tests {
         "c46870c7c81b3b56bafd6e0836362a18.9ebc58281029effb8460bda50f3a3af0.adnl";
 
     fn keypair() -> AdnlKeyPair {
-        AdnlKeyPair::generate(&mut rand::rngs::OsRng)
+        AdnlKeyPair::generate(&mut rngs::OsRng)
     }
 
     fn spki_cert_for(keypair: &AdnlKeyPair) -> CertificateDer<'static> {
@@ -438,8 +440,12 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::case_sensitive_file_extension_comparisons)]
     fn sni_for_public_key_matches_the_adnl_short_id_vector() {
+        #![expect(
+            clippy::case_sensitive_file_extension_comparisons,
+            reason = "not file extension"
+        )]
+
         let keypair = AdnlKeyPair::from(&SecretKey::from_bytes(SNI_SEED));
         assert_eq!(hex::encode(keypair.public_key.to_bytes()), SNI_PUBKEY_HEX);
         assert_eq!(
@@ -525,27 +531,21 @@ mod tests {
         assert!(verifier.requires_raw_public_keys());
 
         let name = ServerName::try_from("test").expect("server name must parse");
-        assert!(
-            verifier
-                .verify_server_cert(&spki_cert_for(&expected), &[], &name, &[], UnixTime::now())
-                .is_ok()
-        );
-        assert!(
-            verifier
-                .verify_server_cert(&spki_cert_for(&other), &[], &name, &[], UnixTime::now())
-                .is_err()
-        );
-        assert!(
-            verifier
-                .verify_server_cert(
-                    &CertificateDer::from(vec![0x30u8; 300]),
-                    &[],
-                    &name,
-                    &[],
-                    UnixTime::now()
-                )
-                .is_err()
-        );
+        verifier
+            .verify_server_cert(&spki_cert_for(&expected), &[], &name, &[], UnixTime::now())
+            .unwrap();
+        verifier
+            .verify_server_cert(&spki_cert_for(&other), &[], &name, &[], UnixTime::now())
+            .unwrap_err();
+        verifier
+            .verify_server_cert(
+                &CertificateDer::from(vec![0x30u8; 300]),
+                &[],
+                &name,
+                &[],
+                UnixTime::now(),
+            )
+            .unwrap_err();
     }
 
     #[test]
@@ -556,20 +556,16 @@ mod tests {
         assert!(verifier.client_auth_mandatory());
         assert!(verifier.root_hint_subjects().is_empty());
 
-        assert!(
-            verifier
-                .verify_client_cert(&spki_cert_for(&keypair()), &[], UnixTime::now())
-                .is_ok()
-        );
-        assert!(
-            verifier
-                .verify_client_cert(
-                    &CertificateDer::from(vec![0x30u8; 64]),
-                    &[],
-                    UnixTime::now()
-                )
-                .is_err()
-        );
+        verifier
+            .verify_client_cert(&spki_cert_for(&keypair()), &[], UnixTime::now())
+            .unwrap();
+        verifier
+            .verify_client_cert(
+                &CertificateDer::from(vec![0x30u8; 64]),
+                &[],
+                UnixTime::now(),
+            )
+            .unwrap_err();
     }
 
     #[test]
@@ -607,9 +603,7 @@ mod tests {
         let message = b"ton quic certificate verify context";
 
         let signature = signing.sign_raw(message);
-        assert!(
-            verify_ed25519_signature(message, &cert, SignatureScheme::ED25519, &signature).is_ok()
-        );
+        verify_ed25519_signature(message, &cert, SignatureScheme::ED25519, &signature).unwrap();
 
         // Tampered message.
         assert!(
@@ -641,8 +635,11 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::case_sensitive_file_extension_comparisons)]
     fn sni_resolver_builds_the_short_id_identity_gate() {
+        #![expect(
+            clippy::case_sensitive_file_extension_comparisons,
+            reason = "not file extension"
+        )]
         let server = keypair();
         let resolver = SniRpkResolver {
             identity: make_certified_key(&server).expect("identity must build"),

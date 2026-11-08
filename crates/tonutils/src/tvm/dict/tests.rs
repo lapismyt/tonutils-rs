@@ -21,7 +21,7 @@ mod tests {
 
     #[test]
     fn bit_key_canonicalizes_and_orders() {
-        assert!(BitKey::new(vec![0b1010_0001], 4).is_err());
+        BitKey::new(vec![0b1010_0001], 4).unwrap_err();
         let key = BitKey::from_bits(vec![0b1010_1111], 4).unwrap();
         assert_eq!(key.data(), &[0b1010_0000]);
         assert!(key.bit(0).unwrap());
@@ -205,7 +205,7 @@ mod tests {
         builder.store_bit(true).unwrap();
         builder.store_bit(false).unwrap();
         let mut slice = builder.to_slice().unwrap();
-        assert!(load_label(&mut slice, 1).is_err());
+        load_label(&mut slice, 1).unwrap_err();
 
         let mut dict = HashmapE::new(2);
         dict.insert_bit_key(BitKey::from_u64(0, 2).unwrap(), 1u64)
@@ -221,9 +221,7 @@ mod tests {
         let mut broken = Builder::new();
         broken.store_bits(root.data(), root.bit_len()).unwrap();
         let broken = broken.build().unwrap();
-        assert!(
-            deserialize_hashmap_root(&broken, 2, |slice| slice.load_uint_custom::<u8>(2)).is_err()
-        );
+        deserialize_hashmap_root(&broken, 2, |slice| slice.load_uint_custom::<u8>(2)).unwrap_err();
     }
 
     #[test]
@@ -288,13 +286,9 @@ mod tests {
         builder.store_uint::<u8>(99_u8).unwrap();
 
         let mut slice = builder.to_slice().unwrap();
-        assert!(
-            slice
-                .load_hashmap_aug_e_with(8, Slice::load_uint::<u8>, |slice| {
-                    slice.load_uint::<u8>()
-                })
-                .is_err()
-        );
+        slice
+            .load_hashmap_aug_e_with(8, Slice::load_uint::<u8>, Slice::load_uint::<u8>)
+            .unwrap_err();
     }
 
     #[test]
@@ -395,37 +389,33 @@ mod tests {
 
     #[test]
     fn hashmap_aug_rejects_empty_duplicate_and_wrong_width() {
-        assert!(HashmapAug::<u64, u64>::from_entries(4, vec![], 0).is_err());
-        assert!(
-            HashmapAug::from_entries(
-                4,
-                vec![HashmapAugLeaf {
-                    key: BitKey::from_u64(0, 5).unwrap(),
+        HashmapAug::<u64, u64>::from_entries(4, vec![], 0).unwrap_err();
+        HashmapAug::from_entries(
+            4,
+            vec![HashmapAugLeaf {
+                key: BitKey::from_u64(0, 5).unwrap(),
+                value: 1u64,
+                extra: 1u64,
+            }],
+            0,
+        )
+        .unwrap_err();
+        HashmapAug::from_entries(
+            4,
+            vec![
+                HashmapAugLeaf {
+                    key: BitKey::from_u64(1, 4).unwrap(),
                     value: 1u64,
                     extra: 1u64,
-                }],
-                0,
-            )
-            .is_err()
-        );
-        assert!(
-            HashmapAug::from_entries(
-                4,
-                vec![
-                    HashmapAugLeaf {
-                        key: BitKey::from_u64(1, 4).unwrap(),
-                        value: 1u64,
-                        extra: 1u64,
-                    },
-                    HashmapAugLeaf {
-                        key: BitKey::from_u64(1, 4).unwrap(),
-                        value: 2u64,
-                        extra: 2u64,
-                    },
-                ],
-                0,
-            )
-            .is_err()
-        );
+                },
+                HashmapAugLeaf {
+                    key: BitKey::from_u64(1, 4).unwrap(),
+                    value: 2u64,
+                    extra: 2u64,
+                },
+            ],
+            0,
+        )
+        .unwrap_err();
     }
 }

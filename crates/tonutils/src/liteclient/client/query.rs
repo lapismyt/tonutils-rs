@@ -24,8 +24,7 @@ use crate::{
             BlockTransactionsExt, ConfigInfo, CurrentTime, GetAccountState, GetAllShardsInfo,
             GetBlock, GetBlockHeader, GetBlockProof, GetConfigAll, GetMasterchainInfoExt,
             GetOneTransaction, GetShardInfo, GetState, GetTransactions, ListBlockTransactions,
-            LiteAccountId as AccountId, LiteBlockId as BlockId, LiteBlockIdExt as BlockIdExt,
-            LiteServerAccountState as AccountState, LiteTransactionId3 as TransactionId3,
+            LiteAccountId, LiteBlockId, LiteBlockIdExt, LiteServerAccountState, LiteTransactionId3,
             LookupBlock, LookupBlockResult, LookupBlockWithProof, MasterchainInfo,
             MasterchainInfoExt, PartialBlockProof, RawWrappedRequest, Request, Response,
             RunMethodResult, RunSmcMethod, SendMessage, SendMsgStatus, ShardInfo, TransactionInfo,
@@ -33,7 +32,7 @@ use crate::{
         },
         types::LiteError,
     },
-    tl::{TlError, TlInt256 as Int256},
+    tl::{TlError, TlInt256},
     tlb::{Account, Block, ShardAccount, Transaction},
     tvm::{Address, TvmStack, TvmStackEntry, method_name_to_id},
 };
@@ -230,24 +229,24 @@ impl LiteClient {
         Ok(response)
     }
 
-    pub async fn get_block(&mut self, id: BlockIdExt) -> Result<Vec<u8>> {
+    pub async fn get_block(&mut self, id: LiteBlockIdExt) -> Result<Vec<u8>> {
         let request = Request::GetBlock(GetBlock { id });
         let response: BlockData = self.send_request(request).await?;
         Ok(response.data)
     }
 
-    pub async fn raw_get_block(&mut self, id: BlockIdExt) -> Result<Block> {
+    pub async fn raw_get_block(&mut self, id: LiteBlockIdExt) -> Result<Block> {
         Ok(self.raw_get_block_data(id).await?.data.block)
     }
 
-    pub async fn raw_get_block_data(&mut self, id: BlockIdExt) -> Result<DecodedBlockData> {
+    pub async fn raw_get_block_data(&mut self, id: LiteBlockIdExt) -> Result<DecodedBlockData> {
         let request = Request::GetBlock(GetBlock { id });
         let raw: BlockData = self.send_request(request).await?;
         let data = decode_block_boc(&raw.data).map_err(decode_error)?;
         Ok(DecodedBlockData { raw, data })
     }
 
-    pub async fn get_state(&mut self, id: BlockIdExt) -> Result<BlockState> {
+    pub async fn get_state(&mut self, id: LiteBlockIdExt) -> Result<BlockState> {
         let request = Request::GetState(GetState { id });
         let response: BlockState = self.send_request(request).await?;
         Ok(response)
@@ -259,7 +258,7 @@ impl LiteClient {
     )]
     pub async fn get_block_header(
         &mut self,
-        id: BlockIdExt,
+        id: LiteBlockIdExt,
         with_state_update: bool,
         with_value_flow: bool,
         with_extra: bool,
@@ -289,7 +288,7 @@ impl LiteClient {
     )]
     pub async fn raw_get_block_header(
         &mut self,
-        id: BlockIdExt,
+        id: LiteBlockIdExt,
         with_state_update: bool,
         with_value_flow: bool,
         with_extra: bool,
@@ -322,18 +321,18 @@ impl LiteClient {
 
     pub async fn get_account_state(
         &mut self,
-        id: BlockIdExt,
-        account: AccountId,
-    ) -> Result<AccountState> {
+        id: LiteBlockIdExt,
+        account: LiteAccountId,
+    ) -> Result<LiteServerAccountState> {
         let request = Request::GetAccountState(GetAccountState { id, account });
-        let response: AccountState = self.send_request(request).await?;
+        let response: LiteServerAccountState = self.send_request(request).await?;
         Ok(response)
     }
 
     pub async fn raw_get_account_state(
         &mut self,
         account: Address,
-        block: Option<BlockIdExt>,
+        block: Option<LiteBlockIdExt>,
     ) -> Result<(Option<Account>, Option<ShardAccount>)> {
         let decoded = self.get_account_state_typed(account, block).await?;
         Ok((decoded.account, decoded.shard_account))
@@ -342,7 +341,7 @@ impl LiteClient {
     pub async fn get_account_state_typed(
         &mut self,
         account: Address,
-        block: Option<BlockIdExt>,
+        block: Option<LiteBlockIdExt>,
     ) -> Result<DecodedAccountState> {
         let id = match block {
             Some(block) => block,
@@ -360,7 +359,7 @@ impl LiteClient {
     pub async fn run_smc_method(
         &mut self,
         mode: u32,
-        block: BlockIdExt,
+        block: LiteBlockIdExt,
         account: Address,
         method_id: u64,
         params: Vec<u8>,
@@ -379,7 +378,7 @@ impl LiteClient {
     pub async fn run_get_method(
         &mut self,
         mode: u32,
-        block: BlockIdExt,
+        block: LiteBlockIdExt,
         account: Address,
         method_id: u64,
         stack: TvmStack,
@@ -394,7 +393,7 @@ impl LiteClient {
     pub async fn run_get_method_typed(
         &mut self,
         mode: u32,
-        block: BlockIdExt,
+        block: LiteBlockIdExt,
         account: Address,
         method_id: u64,
         stack: TvmStack,
@@ -421,7 +420,7 @@ impl LiteClient {
     pub async fn run_get_method_by_name(
         &mut self,
         mode: u32,
-        block: BlockIdExt,
+        block: LiteBlockIdExt,
         account: Address,
         method: &str,
         stack: TvmStack,
@@ -432,7 +431,7 @@ impl LiteClient {
 
     pub async fn get_shard_info(
         &mut self,
-        block: BlockIdExt,
+        block: LiteBlockIdExt,
         workchain: i32,
         shard: u64,
         exact: bool,
@@ -449,7 +448,7 @@ impl LiteClient {
 
     pub async fn raw_get_shard_info(
         &mut self,
-        block: BlockIdExt,
+        block: LiteBlockIdExt,
         workchain: i32,
         shard: u64,
         exact: bool,
@@ -466,7 +465,7 @@ impl LiteClient {
         })
     }
 
-    pub async fn get_all_shards_info(&mut self, block: BlockIdExt) -> Result<AllShardsInfo> {
+    pub async fn get_all_shards_info(&mut self, block: LiteBlockIdExt) -> Result<AllShardsInfo> {
         let request = Request::GetAllShardsInfo(GetAllShardsInfo { id: block });
         let response: AllShardsInfo = self.send_request(request).await?;
         Ok(response)
@@ -474,7 +473,7 @@ impl LiteClient {
 
     pub async fn raw_get_all_shards_info(
         &mut self,
-        block: BlockIdExt,
+        block: LiteBlockIdExt,
     ) -> Result<DecodedAllShardsInfo> {
         let raw = self.get_all_shards_info(block).await?;
         let proof = decode_optional_boc(&raw.proof).map_err(decode_error)?;
@@ -484,8 +483,8 @@ impl LiteClient {
 
     pub async fn get_all_shards_info_typed(
         &mut self,
-        block: BlockIdExt,
-    ) -> Result<Vec<BlockIdExt>> {
+        block: LiteBlockIdExt,
+    ) -> Result<Vec<LiteBlockIdExt>> {
         let _ = self.raw_get_all_shards_info(block).await?;
         Err(LiteError::TlError(TlError::ParseError(
             "typed all-shards dictionary decode requires full ShardDescr/BinTree TL-B models"
@@ -495,8 +494,8 @@ impl LiteClient {
 
     pub async fn get_one_transaction(
         &mut self,
-        block: BlockIdExt,
-        account: AccountId,
+        block: LiteBlockIdExt,
+        account: LiteAccountId,
         lt: u64,
     ) -> Result<TransactionInfo> {
         let request = Request::GetOneTransaction(GetOneTransaction {
@@ -510,8 +509,8 @@ impl LiteClient {
 
     pub async fn get_one_transaction_typed(
         &mut self,
-        block: BlockIdExt,
-        account: AccountId,
+        block: LiteBlockIdExt,
+        account: LiteAccountId,
         lt: u64,
     ) -> Result<Option<Transaction>> {
         Ok(self
@@ -522,8 +521,8 @@ impl LiteClient {
 
     pub async fn get_one_transaction_decoded(
         &mut self,
-        block: BlockIdExt,
-        account: AccountId,
+        block: LiteBlockIdExt,
+        account: LiteAccountId,
         lt: u64,
     ) -> Result<DecodedTransactionInfo> {
         let raw = self.get_one_transaction(block, account, lt).await?;
@@ -543,9 +542,9 @@ impl LiteClient {
     pub async fn get_transactions(
         &mut self,
         count: u32,
-        account: AccountId,
+        account: LiteAccountId,
         lt: u64,
-        hash: Int256,
+        hash: TlInt256,
     ) -> Result<TransactionList> {
         let request = Request::GetTransactions(GetTransactions {
             count,
@@ -560,16 +559,15 @@ impl LiteClient {
     pub async fn raw_get_transactions(
         &mut self,
         count: u32,
-        account: AccountId,
+        account: LiteAccountId,
         lt: u64,
-        hash: Int256,
-    ) -> Result<(Vec<Transaction>, Vec<BlockIdExt>)> {
+        hash: TlInt256,
+    ) -> Result<(Vec<Transaction>, Vec<LiteBlockIdExt>)> {
         let raw = self.get_transactions(count, account, lt, hash).await?;
         let transactions = decode_transaction_list(&raw.transactions).map_err(decode_error)?;
         Ok((transactions, raw.ids))
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[expect(
         clippy::fn_params_excessive_bools,
         reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
@@ -577,7 +575,7 @@ impl LiteClient {
     pub async fn lookup_block(
         &mut self,
         mode: (),
-        id: BlockId,
+        id: LiteBlockId,
         seqno: Option<()>,
         lt: Option<u64>,
         utime: Option<u32>,
@@ -610,8 +608,8 @@ impl LiteClient {
     pub async fn lookup_block_with_proof(
         &mut self,
         mode: (),
-        id: BlockId,
-        mc_block_id: BlockIdExt,
+        id: LiteBlockId,
+        mc_block_id: LiteBlockIdExt,
         lt: Option<u64>,
         utime: Option<u32>,
     ) -> Result<LookupBlockResult> {
@@ -628,9 +626,9 @@ impl LiteClient {
 
     pub async fn list_block_transactions(
         &mut self,
-        id: BlockIdExt,
+        id: LiteBlockIdExt,
         count: u32,
-        after: Option<TransactionId3>,
+        after: Option<LiteTransactionId3>,
         reverse_order: bool,
         want_proof: bool,
     ) -> Result<BlockTransactions> {
@@ -648,9 +646,9 @@ impl LiteClient {
 
     pub async fn list_block_transactions_ext(
         &mut self,
-        id: BlockIdExt,
+        id: LiteBlockIdExt,
         count: u32,
-        after: Option<TransactionId3>,
+        after: Option<LiteTransactionId3>,
         reverse_order: bool,
         want_proof: bool,
     ) -> Result<BlockTransactionsExt> {
@@ -668,9 +666,9 @@ impl LiteClient {
 
     pub async fn raw_get_block_transactions_ext(
         &mut self,
-        id: BlockIdExt,
+        id: LiteBlockIdExt,
         count: u32,
-        after: Option<TransactionId3>,
+        after: Option<LiteTransactionId3>,
         reverse_order: bool,
         want_proof: bool,
     ) -> Result<Vec<Transaction>> {
@@ -682,9 +680,9 @@ impl LiteClient {
 
     pub async fn list_block_transactions_ext_decoded(
         &mut self,
-        id: BlockIdExt,
+        id: LiteBlockIdExt,
         count: u32,
-        after: Option<TransactionId3>,
+        after: Option<LiteTransactionId3>,
         reverse_order: bool,
         want_proof: bool,
     ) -> Result<DecodedBlockTransactionsExt> {
@@ -702,8 +700,8 @@ impl LiteClient {
 
     pub async fn get_block_proof(
         &mut self,
-        known_block: BlockIdExt,
-        target_block: Option<BlockIdExt>,
+        known_block: LiteBlockIdExt,
+        target_block: Option<LiteBlockIdExt>,
         allow_weak_target: bool,
         base_block_from_request: bool,
     ) -> Result<PartialBlockProof> {
@@ -722,14 +720,13 @@ impl LiteClient {
         Ok(response)
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[expect(
         clippy::fn_params_excessive_bools,
         reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
     )]
     pub async fn get_config_all(
         &mut self,
-        id: BlockIdExt,
+        id: LiteBlockIdExt,
         with_state_root: bool,
         with_libraries: bool,
         with_state_extra_root: bool,

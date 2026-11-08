@@ -361,7 +361,7 @@ pub(super) fn test_from_response_block_transactions_ext() {
         transactions: vec![1, 2],
         proof: vec![3, 4],
     });
-    assert!(BlockTransactionsExt::from_response(response).is_ok());
+    BlockTransactionsExt::from_response(response).unwrap();
     let unexpected =
         BlockTransactionsExt::from_response(Response::OutMsgQueueSizes(OutMsgQueueSizes {
             shards: vec![],
@@ -379,7 +379,7 @@ pub(super) fn test_from_response_library_result_with_proof() {
         state_proof: vec![1],
         data_proof: vec![2],
     });
-    assert!(LibraryResultWithProof::from_response(response).is_ok());
+    LibraryResultWithProof::from_response(response).unwrap();
     let unexpected =
         LibraryResultWithProof::from_response(Response::ShardBlockProof(ShardBlockProof {
             masterchain_id: sample_block_id_ext(5),
@@ -578,7 +578,7 @@ pub(super) fn test_int256_hash_consistency() {
     assert_eq!(map.get(&int1), Some(&"value2"));
 }
 
-pub(super) fn to_hex(bytes: &[u8]) -> std::string::String {
+pub(super) fn to_hex(bytes: &[u8]) -> String {
     hex::encode(bytes)
 }
 

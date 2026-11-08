@@ -5,7 +5,7 @@
 //! id with the shared transport, so channel packets keep reaching this
 //! session even after the peer changes its source address.
 
-use std::sync::atomic::Ordering;
+use std::{sync::atomic::Ordering, time};
 
 use crate::{
     adnl::{
@@ -199,7 +199,7 @@ impl SessionInner {
         {
             return None;
         }
-        state.channel_requested_at = Some(std::time::Instant::now());
+        state.channel_requested_at = Some(time::Instant::now());
         let date = now_i32();
         state.pending_channel = Some(date);
         log::debug!(

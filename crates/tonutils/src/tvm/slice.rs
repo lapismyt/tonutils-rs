@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(slice.load_uint_custom::<u8>(3).unwrap(), 0b101);
         assert_eq!(slice.load_uint_custom::<u16>(9).unwrap(), 0x01ff);
         assert_eq!(slice.load_uint_custom::<u32>(24).unwrap(), 0x00ab_cdef);
-        assert!(slice.load_uint_custom::<u8>(9).is_err());
+        slice.load_uint_custom::<u8>(9).unwrap_err();
     }
 
     #[test]

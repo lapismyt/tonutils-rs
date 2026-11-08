@@ -23,7 +23,7 @@ fn shard_ident_roundtrips_and_checks_bound() {
         workchain_id: 0,
         shard_prefix: 0,
     };
-    assert!(invalid.to_cell().is_err());
+    invalid.to_cell().unwrap_err();
 }
 
 #[test]
@@ -275,7 +275,7 @@ fn known_config_payloads_reject_wrong_constructor_or_trailing_data() {
         id: 20,
         value: ConfigParamValue::Param20(malformed_gas),
     };
-    assert!(param.decode_typed().is_err());
+    param.decode_typed().unwrap_err();
 
     let mut malformed_election_builder = Builder::new();
     malformed_election_builder.store_u32(1).unwrap();
@@ -288,7 +288,7 @@ fn known_config_payloads_reject_wrong_constructor_or_trailing_data() {
         id: 15,
         value: ConfigParamValue::Param15(malformed_election),
     };
-    assert!(param.decode_typed().is_err());
+    param.decode_typed().unwrap_err();
 }
 
 #[test]
@@ -329,7 +329,7 @@ fn merkle_wrappers_validate_exotic_kind_references_and_hashes() {
     ));
 
     let ordinary = Builder::new().build().unwrap();
-    assert!(MerkleProof::from_exotic_cell(ordinary).is_err());
+    MerkleProof::from_exotic_cell(ordinary).unwrap_err();
 }
 
 #[test]

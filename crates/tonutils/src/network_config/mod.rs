@@ -5,7 +5,13 @@ use std::{
     str::FromStr,
 };
 
-use base64::Engine;
+use base64::{
+    Engine,
+    engine::general_purpose::{
+        STANDARD as B64_STANDARD, STANDARD_NO_PAD as B64_STANDARD_NO_PAD, URL_SAFE as B64_URL_SAFE,
+        URL_SAFE_NO_PAD as B64_URL_SAFE_NO_PAD,
+    },
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, thiserror::Error)]
@@ -353,9 +359,9 @@ fn parse_public_key_value(value: &serde_json::Value) -> Option<[u8; 32]> {
         .get("key")
         .and_then(serde_json::Value::as_str)
         .or_else(|| value.as_str())?;
-    let decoded = base64::engine::general_purpose::STANDARD
+    let decoded = B64_STANDARD
         .decode(key)
-        .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(key))
+        .or_else(|_| B64_URL_SAFE_NO_PAD.decode(key))
         .ok()?;
     decoded.try_into().ok()
 }
@@ -451,10 +457,10 @@ fn decode_liteserver_id(value: &str) -> Result<Vec<u8>, LiteServerBlacklistParse
     }
 
     for engine in [
-        &base64::engine::general_purpose::STANDARD,
-        &base64::engine::general_purpose::STANDARD_NO_PAD,
-        &base64::engine::general_purpose::URL_SAFE,
-        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        &B64_STANDARD,
+        &B64_STANDARD_NO_PAD,
+        &B64_URL_SAFE,
+        &B64_URL_SAFE_NO_PAD,
     ] {
         if let Ok(bytes) = engine.decode(value) {
             return Ok(bytes);

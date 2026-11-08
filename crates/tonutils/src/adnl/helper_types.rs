@@ -1,7 +1,7 @@
 use crate::adnl::AdnlPublicKey;
 
 use sha2::{Digest, Sha256};
-use std::{array::TryFromSliceError, io::Error, time::Duration};
+use std::{array::TryFromSliceError, fmt, io::Error, time::Duration};
 use thiserror::Error;
 
 pub trait CryptoRandom: rand::RngCore + rand::CryptoRng {}
@@ -9,11 +9,11 @@ pub trait CryptoRandom: rand::RngCore + rand::CryptoRng {}
 impl<T> CryptoRandom for T where T: rand::RngCore + rand::CryptoRng {}
 
 /// Wrapper struct to hold ADNL address, which is a hash of public key
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct AdnlAddress([u8; 32]);
 
-impl std::fmt::Debug for AdnlAddress {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for AdnlAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("AdnlAddress")
             .field(&format!("{:02x?}", self.0))
             .finish()

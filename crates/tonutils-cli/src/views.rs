@@ -1,3 +1,17 @@
+use base64::engine::general_purpose::STANDARD as B64_STANDARD;
+use tonutils::{
+    liteclient::{
+        balancer::BalancerError,
+        boc::{
+            DecodedAllShardsInfo, DecodedBlockData, DecodedBlockHeader, DecodedConfigInfo,
+            DecodedLibrariesWithProof, DecodedShardInfo, SimpleAccount, SimpleAccountState,
+        },
+        tl::LiteServerAccountState,
+        types::LiteError,
+    },
+    tlb::Grams,
+};
+
 use super::{
     Account, AccountId, BTreeMap, BigInt, BlockIdExt, BlockIdExtView, Cell, ConfigModeFlags,
     Context, Engine, Int256, LiteBalancer, LiteClient, RawBytesView, Result, Serialize,
@@ -211,7 +225,7 @@ pub(super) fn block_id_ext_view(block: &BlockIdExt) -> BlockIdExtView {
 pub(super) fn raw_bytes_view(bytes: &[u8]) -> RawBytesView {
     RawBytesView {
         hex: hex::encode(bytes),
-        base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        base64: B64_STANDARD.encode(bytes),
         len: bytes.len(),
     }
 }
@@ -610,7 +624,7 @@ pub(super) fn transaction_value(tx: &tonutils::tlb::Transaction) -> Value {
     })
 }
 
-pub(super) fn simple_account_value(account: &tonutils::liteclient::boc::SimpleAccount) -> Value {
+pub(super) fn simple_account_value(account: &SimpleAccount) -> Value {
     json!({
         "block_id": block_id_ext_view(&account.block_id),
         "shard_block_id": block_id_ext_view(&account.shard_block_id),
@@ -677,7 +691,7 @@ pub(super) fn currency_collection_value(value: &tonutils::tlb::CurrencyCollectio
     })
 }
 
-pub(super) fn grams_decimal(value: &tonutils::tlb::Grams) -> String {
+pub(super) fn grams_decimal(value: &Grams) -> String {
     value.0.to_str_radix(10)
 }
 
@@ -690,14 +704,12 @@ pub(super) fn account_status_name(status: tonutils::tlb::AccountStatus) -> &'sta
     }
 }
 
-pub(super) fn simple_account_state_name(
-    state: &tonutils::liteclient::boc::SimpleAccountState,
-) -> &'static str {
+pub(super) fn simple_account_state_name(state: &SimpleAccountState) -> &'static str {
     match state {
-        tonutils::liteclient::boc::SimpleAccountState::None => "none",
-        tonutils::liteclient::boc::SimpleAccountState::Uninit => "uninit",
-        tonutils::liteclient::boc::SimpleAccountState::Frozen => "frozen",
-        tonutils::liteclient::boc::SimpleAccountState::Active => "active",
+        SimpleAccountState::None => "none",
+        SimpleAccountState::Uninit => "uninit",
+        SimpleAccountState::Frozen => "frozen",
+        SimpleAccountState::Active => "active",
     }
 }
 
@@ -715,9 +727,7 @@ pub(super) fn transaction_description_name(
     }
 }
 
-pub(super) fn decoded_block_data_value(
-    decoded: &tonutils::liteclient::boc::DecodedBlockData,
-) -> Value {
+pub(super) fn decoded_block_data_value(decoded: &DecodedBlockData) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
         "data": {
@@ -727,9 +737,7 @@ pub(super) fn decoded_block_data_value(
     })
 }
 
-pub(super) fn decoded_block_header_value(
-    decoded: &tonutils::liteclient::boc::DecodedBlockHeader,
-) -> Value {
+pub(super) fn decoded_block_header_value(decoded: &DecodedBlockHeader) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
         "mode": decoded.raw.mode,
@@ -737,9 +745,7 @@ pub(super) fn decoded_block_header_value(
     })
 }
 
-pub(super) fn decoded_shard_info_value(
-    decoded: &tonutils::liteclient::boc::DecodedShardInfo,
-) -> Value {
+pub(super) fn decoded_shard_info_value(decoded: &DecodedShardInfo) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
         "shardblk": block_id_ext_view(&decoded.raw.shardblk),
@@ -748,9 +754,7 @@ pub(super) fn decoded_shard_info_value(
     })
 }
 
-pub(super) fn decoded_all_shards_info_value(
-    decoded: &tonutils::liteclient::boc::DecodedAllShardsInfo,
-) -> Value {
+pub(super) fn decoded_all_shards_info_value(decoded: &DecodedAllShardsInfo) -> Value {
     json!({
         "id": block_id_ext_view(&decoded.raw.id),
         "proof": decoded.proof.as_ref().map(decoded_boc_view),
@@ -758,9 +762,7 @@ pub(super) fn decoded_all_shards_info_value(
     })
 }
 
-pub(super) fn decoded_config_info_value(
-    decoded: &tonutils::liteclient::boc::DecodedConfigInfo,
-) -> Value {
+pub(super) fn decoded_config_info_value(decoded: &DecodedConfigInfo) -> Value {
     json!({
         "mode": decoded.raw.mode,
         "id": block_id_ext_view(&decoded.raw.id),
@@ -808,9 +810,7 @@ pub(super) fn libraries_value(
     json!(stable)
 }
 
-pub(super) fn decoded_libraries_with_proof_value(
-    decoded: &tonutils::liteclient::boc::DecodedLibrariesWithProof,
-) -> Value {
+pub(super) fn decoded_libraries_with_proof_value(decoded: &DecodedLibrariesWithProof) -> Value {
     json!({
         "mode": decoded.raw.mode,
         "id": block_id_ext_view(&decoded.raw.id),
@@ -853,10 +853,7 @@ pub(super) async fn get_config_all_client(
     client: &mut LiteClient,
     block: BlockIdExt,
     flags: &ConfigModeFlags,
-) -> std::result::Result<
-    tonutils::liteclient::boc::DecodedConfigInfo,
-    tonutils::liteclient::types::LiteError,
-> {
+) -> Result<DecodedConfigInfo, LiteError> {
     client
         .get_config_all_typed(
             block,
@@ -880,10 +877,7 @@ pub(super) async fn get_config_params_client(
     block: BlockIdExt,
     params: Vec<i32>,
     flags: &ConfigModeFlags,
-) -> std::result::Result<
-    tonutils::liteclient::boc::DecodedConfigInfo,
-    tonutils::liteclient::types::LiteError,
-> {
+) -> Result<DecodedConfigInfo, LiteError> {
     client
         .get_config_params_typed(
             block,
@@ -907,10 +901,7 @@ pub(super) async fn get_config_all_balancer(
     balancer: &mut LiteBalancer,
     block: BlockIdExt,
     flags: &ConfigModeFlags,
-) -> std::result::Result<
-    tonutils::liteclient::boc::DecodedConfigInfo,
-    tonutils::liteclient::balancer::BalancerError,
-> {
+) -> Result<DecodedConfigInfo, BalancerError> {
     balancer
         .get_config_all_typed(
             block,
@@ -934,10 +925,7 @@ pub(super) async fn get_config_params_balancer(
     block: BlockIdExt,
     params: Vec<i32>,
     flags: &ConfigModeFlags,
-) -> std::result::Result<
-    tonutils::liteclient::boc::DecodedConfigInfo,
-    tonutils::liteclient::balancer::BalancerError,
-> {
+) -> Result<DecodedConfigInfo, BalancerError> {
     balancer
         .get_config_params_typed(
             block,
@@ -957,9 +945,7 @@ pub(super) async fn get_config_params_balancer(
         .await
 }
 
-pub(super) fn account_state_view(
-    state: &tonutils::liteclient::tl::LiteServerAccountState,
-) -> AccountStateView {
+pub(super) fn account_state_view(state: &LiteServerAccountState) -> AccountStateView {
     AccountStateView {
         block: block_id_ext_view(&state.id),
         shard_block: block_id_ext_view(&state.shardblk),

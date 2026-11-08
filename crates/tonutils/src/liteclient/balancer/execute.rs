@@ -72,17 +72,6 @@ impl LiteBalancer {
     }
 
     pub async fn start_up(&mut self) -> Result<()> {
-        let mut tasks = Vec::new();
-
-        for (i, client) in self.peers.iter_mut().enumerate() {
-            let result = Self::connect_to_peer(client).await;
-            if result {
-                self.alive_peers.write().await.insert(i);
-                self.peer_states.write().await.insert(i, PeerState::Healthy);
-            }
-            tasks.push(result);
-        }
-
         self.find_archives().await;
 
         // Start health checker
@@ -94,12 +83,6 @@ impl LiteBalancer {
         *self.inited.write().await = true;
 
         Ok(())
-    }
-
-    pub(super) fn connect_to_peer(_client: &mut LiteClient) -> std::future::Ready<bool> {
-        // Just return true - the client connection already succeeded in the CLI
-        // We'll verify health during actual requests
-        std::future::ready(true)
     }
 
     pub(super) fn spawn_health_checker() -> JoinHandle<()> {
@@ -892,10 +875,9 @@ impl LiteBalancer {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[expect(
         clippy::fn_params_excessive_bools,
-        reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
+        reason = "signature intentionally mirrors protocol flags and values moved across async task boundaries"
     )]
     pub async fn get_config_all_typed(
         &mut self,
@@ -930,7 +912,6 @@ impl LiteBalancer {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[expect(
         clippy::fn_params_excessive_bools,
         reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"

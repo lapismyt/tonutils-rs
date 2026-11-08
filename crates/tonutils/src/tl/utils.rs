@@ -1,3 +1,5 @@
+use std::fmt;
+
 use tl_proto::{TlRead, TlResult};
 
 /// Reads a TL value, returning `None` when decoding fails.
@@ -24,12 +26,8 @@ pub fn lossy_read<'tl, T: TlRead<'tl>>(packet: &'tl [u8]) -> TlResult<Option<T>>
 /// # Errors
 ///
 /// Returns the formatter's error when writing fails.
-pub fn fmt_string(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
-    write!(
-        f,
-        "{}",
-        std::string::String::from_utf8(bytes.to_vec()).unwrap()
-    )
+pub fn fmt_string(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), fmt::Error> {
+    write!(f, "{}", String::from_utf8(bytes.to_vec()).unwrap())
 }
 
 /// Formats bytes as hexadecimal.
@@ -37,7 +35,7 @@ pub fn fmt_string(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), std::
 /// # Errors
 ///
 /// Returns the formatter's error when writing fails.
-pub fn fmt_bytes(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+pub fn fmt_bytes(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), fmt::Error> {
     write!(f, "0x{}", hex::encode(bytes))
 }
 
@@ -48,8 +46,8 @@ pub fn fmt_bytes(bytes: &[u8], f: &mut std::fmt::Formatter) -> Result<(), std::f
 /// Returns the formatter's error when writing fails.
 pub fn fmt_opt_bytes<T: AsRef<[u8]>>(
     bytes: &Option<T>,
-    f: &mut std::fmt::Formatter,
-) -> Result<(), std::fmt::Error> {
+    f: &mut fmt::Formatter,
+) -> Result<(), fmt::Error> {
     if let Some(bytes) = bytes {
         write!(f, "Some(0x{})", hex::encode(bytes))
     } else {

@@ -360,7 +360,7 @@ fn storage_used_roundtrips_zero_and_non_zero_values() {
     let zero = StorageUsed::new(BigUint::from(0u8), BigUint::from(0u8));
     assert_eq!(roundtrip(&zero), zero);
 
-    let non_zero = StorageUsed::new(BigUint::from(123u8), BigUint::from(65_535u32));
+    let non_zero = StorageUsed::new(BigUint::from(123u8), BigUint::from(0xFFFFu32));
     assert_eq!(roundtrip(&non_zero), non_zero);
 }
 

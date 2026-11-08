@@ -36,7 +36,7 @@ async fn connect_accepts_loopback_adnl_handshake() {
 
     let _client = LiteClient::connect(address, server_public).await.unwrap();
 
-    assert!(server.await.unwrap().is_ok());
+    server.await.unwrap().unwrap();
 }
 
 #[tokio::test]

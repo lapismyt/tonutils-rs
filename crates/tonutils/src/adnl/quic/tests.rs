@@ -1,4 +1,11 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::{self, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
+
+use rand::rngs;
+use tokio::time;
 
 use crate::adnl::{
     AdnlError, AdnlKeyPair, QuicServer, QuicSession,
@@ -18,7 +25,7 @@ async fn connect_raw_client(
     remote_addr: SocketAddr,
     sni: &str,
 ) -> Result<quinn::Connection, AdnlError> {
-    let socket = std::net::UdpSocket::bind("127.0.0.1:0")?;
+    let socket = net::UdpSocket::bind("127.0.0.1:0")?;
     socket.set_nonblocking(true)?;
     let endpoint = quinn::Endpoint::new(
         quinn::EndpointConfig::default(),
@@ -36,9 +43,13 @@ async fn connect_raw_client(
 }
 
 #[test]
-#[allow(clippy::case_sensitive_file_extension_comparisons)]
 fn sni_for_public_key_produces_valid_format() {
-    let keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+    #![expect(
+        clippy::case_sensitive_file_extension_comparisons,
+        reason = "not file extension"
+    )]
+
+    let keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
     let sni = sni_for_public_key(&keypair.public_key);
     assert!(sni.ends_with(".adnl"));
     let parts: Vec<&str> = sni.trim_end_matches(".adnl").split('.').collect();
@@ -49,8 +60,8 @@ fn sni_for_public_key_produces_valid_format() {
 
 #[tokio::test]
 async fn quic_session_connects_and_exchanges_query() {
-    let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+    let server_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
+    let client_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
 
     let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair)
         .await
@@ -97,8 +108,8 @@ async fn quic_session_connects_and_exchanges_query() {
 
 #[tokio::test]
 async fn quic_server_accepts_connection_and_reports_short_id_sni() {
-    let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+    let server_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
+    let client_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
 
     let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair)
         .await
@@ -131,8 +142,8 @@ async fn quic_server_accepts_connection_and_reports_short_id_sni() {
 
 #[tokio::test]
 async fn quic_query_rejects_invalid_answer_frame() {
-    let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+    let server_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
+    let client_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
     let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair)
         .await
         .unwrap();
@@ -182,9 +193,9 @@ async fn quic_query_rejects_invalid_answer_frame() {
 
 #[tokio::test]
 async fn quic_client_rejects_mismatched_server_key() {
-    let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let wrong_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng).public_key;
+    let server_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
+    let client_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
+    let wrong_key = AdnlKeyPair::generate(&mut rngs::OsRng).public_key;
 
     let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair)
         .await
@@ -203,7 +214,7 @@ async fn quic_client_rejects_mismatched_server_key() {
 
     let (client_result, server_result) = tokio::join!(
         client_handle,
-        tokio::time::timeout(Duration::from_secs(10), server.accept())
+        time::timeout(Duration::from_secs(10), server.accept())
     );
     assert!(
         client_result.unwrap().is_err(),
@@ -218,7 +229,7 @@ async fn quic_client_rejects_mismatched_server_key() {
 
 #[tokio::test]
 async fn quic_server_rejects_client_without_raw_public_keys() {
-    let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+    let server_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
     let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair)
         .await
         .unwrap();
@@ -233,7 +244,7 @@ async fn quic_server_rejects_client_without_raw_public_keys() {
 
     let (client_result, server_result) = tokio::join!(
         client_handle,
-        tokio::time::timeout(Duration::from_secs(10), server.accept())
+        time::timeout(Duration::from_secs(10), server.accept())
     );
     assert!(
         client_result.unwrap().is_err(),
@@ -250,8 +261,8 @@ async fn quic_server_rejects_client_without_raw_public_keys() {
 
 #[tokio::test]
 async fn quic_server_rejects_mismatched_sni() {
-    let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
+    let server_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
+    let client_keypair = AdnlKeyPair::generate(&mut rngs::OsRng);
     let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair)
         .await
         .unwrap();
@@ -268,7 +279,7 @@ async fn quic_server_rejects_mismatched_sni() {
 
     let (client_result, server_result) = tokio::join!(
         client_handle,
-        tokio::time::timeout(Duration::from_secs(10), server.accept())
+        time::timeout(Duration::from_secs(10), server.accept())
     );
     assert!(
         client_result.unwrap().is_err(),

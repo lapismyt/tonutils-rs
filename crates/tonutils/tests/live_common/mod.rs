@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::{env, time::Duration};
 
 use anyhow::{Context, Result, bail};

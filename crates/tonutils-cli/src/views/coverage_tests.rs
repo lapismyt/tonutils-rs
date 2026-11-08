@@ -13,7 +13,10 @@ use super::{
     simple_account_state_name, simple_account_value,
 };
 use num_bigint::BigUint;
-use tonutils::wallet::WALLET_V5R1_MAINNET_DEFAULT_ID;
+use tonutils::{
+    liteclient::boc::{SimpleAccount, SimpleAccountState},
+    wallet::WALLET_V5R1_MAINNET_DEFAULT_ID,
+};
 
 fn block_view(seqno: i32) -> BlockIdExtView {
     BlockIdExtView {
@@ -272,18 +275,14 @@ fn parses_cli_value_helpers_and_errors() {
         9
     );
 
-    assert!(parse_block_id_ext("bad").is_err());
-    assert!(parse_int256("00").is_err());
-    assert!(parse_account_id("0:1:2").is_err());
-    assert!(parse_params("1,,2").is_err());
-    assert!(parse_after_transaction(Some(&"44".repeat(32)), None).is_err());
+    parse_block_id_ext("bad").unwrap_err();
+    parse_int256("00").unwrap_err();
+    parse_account_id("0:1:2").unwrap_err();
+    parse_params("1,,2").unwrap_err();
+    parse_after_transaction(Some(&"44".repeat(32)), None).unwrap_err();
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "The test intentionally checks every TL-B helper conversion in one exhaustive table"
-)]
 fn converts_tlb_helpers_to_json_values() {
     let cell = empty_cell();
     assert_eq!(cell_value(&cell)["refs"], 0);
@@ -343,19 +342,10 @@ fn converts_tlb_helpers_to_json_values() {
     }
 
     for (state, name) in [
-        (tonutils::liteclient::boc::SimpleAccountState::None, "none"),
-        (
-            tonutils::liteclient::boc::SimpleAccountState::Uninit,
-            "uninit",
-        ),
-        (
-            tonutils::liteclient::boc::SimpleAccountState::Frozen,
-            "frozen",
-        ),
-        (
-            tonutils::liteclient::boc::SimpleAccountState::Active,
-            "active",
-        ),
+        (SimpleAccountState::None, "none"),
+        (SimpleAccountState::Uninit, "uninit"),
+        (SimpleAccountState::Frozen, "frozen"),
+        (SimpleAccountState::Active, "active"),
     ] {
         assert_eq!(simple_account_state_name(&state), name);
     }
@@ -386,12 +376,12 @@ fn converts_tlb_helpers_to_json_values() {
     libraries.insert(Int256([0x55; 32]), None);
     assert_eq!(libraries_value(&libraries).as_object().unwrap().len(), 2);
 
-    let simple = tonutils::liteclient::boc::SimpleAccount {
+    let simple = SimpleAccount {
         block_id: block_id(1),
         shard_block_id: block_id(2),
         last_transaction_lt: Some(3),
         last_transaction_hash: Some([0x66; 32]),
-        state: tonutils::liteclient::boc::SimpleAccountState::None,
+        state: SimpleAccountState::None,
         account: Some(tonutils::tlb::Account::None),
     };
     assert_eq!(simple_account_value(&simple)["state"], "none");

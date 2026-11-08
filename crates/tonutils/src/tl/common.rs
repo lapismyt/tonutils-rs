@@ -34,6 +34,11 @@ impl TlString {
     pub fn new(value: String) -> Self {
         Self(value.into_bytes())
     }
+
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
 }
 
 /// TL schema declaration: `int256 8*[ int ] = Int256;`.

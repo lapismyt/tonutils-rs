@@ -1,22 +1,22 @@
 //! ADNL, DHT, and QUIC wire values owned by the ADNL module.
 
-use derivative::Derivative;
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use tl_proto::{TlRead, TlWrite};
-
-use crate::tl::common::TlInt256 as Int256;
-
 mod message;
 mod public_key;
 
+#[cfg(test)]
+mod tests;
+
+use derivative::Derivative;
+use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
 pub use message::AdnlMessage;
 pub use public_key::{AdnlTlPublicKeyOwned, AdnlTlPublicKeyRef};
+use tl_proto::{TlRead, TlWrite};
 
-use self::{AdnlNetAddress as Address, AdnlTlPublicKey as TlPublicKey};
+use crate::tl::TlInt256;
 
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
-pub struct Int128(pub i32, pub i32, pub i32, pub i32);
+pub struct TlInt128(pub i32, pub i32, pub i32, pub i32);
 
 /// adnl.id.short id:int256 = adnl.id.Short;
 ///
@@ -29,7 +29,7 @@ pub struct Int128(pub i32, pub i32, pub i32, pub i32);
 #[derive(TlRead, TlWrite, Derivative)]
 #[derivative(Debug, Clone, PartialEq, Eq)]
 pub struct AdnlIdShort {
-    pub id: Int256,
+    pub id: TlInt256,
 }
 
 impl AdnlIdShort {
@@ -48,10 +48,10 @@ impl AdnlIdShort {
 pub enum AdnlTlPublicKey {
     /// pub.ed25519 key:int256 = PublicKey;
     #[tl(id = 0x4813b4c6)]
-    Ed25519 { key: Int256 },
+    Ed25519 { key: TlInt256 },
     /// pub.aes key:int256 = PublicKey;
     #[tl(id = 0x2dbcadd4)]
-    Aes { key: Int256 },
+    Aes { key: TlInt256 },
     /// pub.unenc data:bytes = PublicKey;
     #[tl(id = 0xb61f450a)]
     Unencoded { data: Vec<u8> },
@@ -69,10 +69,13 @@ pub enum AdnlNetAddress {
     Udp { ip: i32, port: i32 },
     /// adnl.address.udp6 ip:int128 port:int = adnl.Address;
     #[tl(id = 0xe31d63fa)]
-    Udp6 { ip: Int128, port: i32 },
+    Udp6 { ip: TlInt128, port: i32 },
     /// adnl.address.tunnel to:int256 pubkey:PublicKey = adnl.Address;
     #[tl(id = 0x092b02eb)]
-    Tunnel { to: Int256, pubkey: TlPublicKey },
+    Tunnel {
+        to: TlInt256,
+        pubkey: AdnlTlPublicKey,
+    },
     /// adnl.address.reverse = adnl.Address;
     #[tl(id = 0x27795286)]
     Reverse,
@@ -104,7 +107,7 @@ pub struct PacketContents {
     #[tl(flags)]
     pub flags: (),
     #[tl(flags_bit = "flags.0")]
-    pub from: Option<TlPublicKey>,
+    pub from: Option<AdnlTlPublicKey>,
     #[tl(flags_bit = "flags.1")]
     pub from_short: Option<AdnlIdShort>,
     #[tl(flags_bit = "flags.2")]
@@ -137,7 +140,7 @@ pub struct PacketContents {
 pub struct AddressList {
     /// adnl.addressList addrs:(vector adnl.Address) version:int reinit_date:int
     /// priority:int expire_at:int = adnl.AddressList;
-    pub addrs: Vec<Address>,
+    pub addrs: Vec<AdnlNetAddress>,
     pub version: i32,
     pub reinit_date: i32,
     pub priority: i32,
@@ -148,7 +151,7 @@ pub struct AddressList {
 #[derivative(Debug, Clone, PartialEq, Eq)]
 #[tl(boxed, id = 0x2227e658)]
 pub struct AddressListBoxed {
-    pub addrs: Vec<Address>,
+    pub addrs: Vec<AdnlNetAddress>,
     pub version: i32,
     pub reinit_date: i32,
     pub priority: i32,
@@ -172,7 +175,7 @@ impl From<AddressListBoxed> for AddressList {
 #[tl(boxed, id = 0x6b561285)]
 pub struct AdnlNode {
     /// adnl.node id:PublicKey addr_list:adnl.addressList = adnl.Node;
-    pub id: TlPublicKey,
+    pub id: AdnlTlPublicKey,
     pub addr_list: AddressList,
 }
 
@@ -180,7 +183,7 @@ pub struct AdnlNode {
 #[derivative(Debug, Clone, PartialEq, Eq)]
 pub struct DhtNode {
     /// dht.node id:PublicKey addr_list:adnl.addressList version:int signature:bytes = dht.Node;
-    pub id: TlPublicKey,
+    pub id: AdnlTlPublicKey,
     pub addr_list: AddressList,
     pub version: i32,
     pub signature: Vec<u8>,
@@ -190,7 +193,7 @@ pub struct DhtNode {
 #[derivative(Debug, Clone, PartialEq, Eq)]
 #[tl(boxed, id = 0x84533248)]
 pub struct DhtNodeBoxed {
-    pub id: TlPublicKey,
+    pub id: AdnlTlPublicKey,
     pub addr_list: AddressList,
     pub version: i32,
     pub signature: Vec<u8>,
@@ -202,13 +205,13 @@ impl DhtNode {
         self.version > 0
             && !self.addr_list.addrs.is_empty()
             && (self.addr_list.expire_at == 0 || self.addr_list.expire_at > now)
-            && self.addr_list.addrs.iter().all(Address::is_valid)
+            && self.addr_list.addrs.iter().all(AdnlNetAddress::is_valid)
             && self.verify_signature()
     }
 
     #[must_use]
     pub fn verify_signature(&self) -> bool {
-        let TlPublicKey::Ed25519 { key } = &self.id else {
+        let AdnlTlPublicKey::Ed25519 { key } = &self.id else {
             return false;
         };
         let Ok(public_key) = VerifyingKey::from_bytes(&key.0) else {
@@ -256,7 +259,7 @@ pub struct DhtKey {
     /// BARE type — no constructor prefix on the wire.
     /// Use [`DhtKey::boxed_bytes`] for hashing and signing where the
     /// constructor prefix `0xf667de8f` is required.
-    pub id: Int256,
+    pub id: TlInt256,
     pub name: Vec<u8>,
     pub idx: i32,
 }
@@ -305,10 +308,10 @@ pub enum DhtMessage {
     Store { value: DhtValueBare },
     /// dht.findNode key:int256 k:int = dht.Nodes;
     #[tl(id = 0x6ce2ce6b)]
-    FindNode { key: Int256, k: i32 },
+    FindNode { key: TlInt256, k: i32 },
     /// dht.findValue key:int256 k:int = dht.ValueResult;
     #[tl(id = 0xae4b6011)]
-    FindValue { key: Int256, k: i32 },
+    FindValue { key: TlInt256, k: i32 },
 }
 
 pub type DhtLookup = DhtMessage;
@@ -323,7 +326,7 @@ pub struct DhtKeyDescription {
     /// Use [`DhtKeyDescription::to_sign_bytes`] for signing where the
     /// constructor prefix `0x281d4e05` is required.
     pub key: DhtKey,
-    pub id: TlPublicKey,
+    pub id: AdnlTlPublicKey,
     pub update_rule: DhtUpdateRule,
     pub signature: Vec<u8>,
 }
@@ -359,7 +362,7 @@ impl DhtKeyDescription {
     /// the 68-byte form some DHT nodes return.
     #[must_use]
     pub fn verify_signature(&self) -> bool {
-        let TlPublicKey::Ed25519 { key } = &self.id else {
+        let AdnlTlPublicKey::Ed25519 { key } = &self.id else {
             return false;
         };
         let Ok(public_key) = VerifyingKey::from_bytes(&key.0) else {
@@ -417,7 +420,7 @@ impl DhtValue {
     /// signature and the 68-byte form some DHT nodes return.
     #[must_use]
     pub fn verify_signature(&self) -> bool {
-        let TlPublicKey::Ed25519 { key } = &self.key.id else {
+        let AdnlTlPublicKey::Ed25519 { key } = &self.key.id else {
             return false;
         };
         let Ok(public_key) = VerifyingKey::from_bytes(&key.0) else {
@@ -533,304 +536,4 @@ pub struct QuicQuery {
 #[tl(boxed, id = 0xdea3fbb2)]
 pub struct QuicAnswer {
     pub data: Vec<u8>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        Address, AddressList, AddressListBoxed, AdnlIdShort, AdnlMessage, DhtKey,
-        DhtKeyDescription, DhtMessage, DhtNodes, DhtUpdateRule, DhtValue, DhtValueBare,
-        DhtValueResult, Int256, PacketContents, QuicAnswer, QuicMessage, QuicQuery, TlPublicKey,
-    };
-    use tl_proto::{deserialize, serialize};
-
-    #[test]
-    fn dht_find_node_has_canonical_constructor() {
-        let value = DhtMessage::FindNode {
-            key: Int256([7; 32]),
-            k: 8,
-        };
-        let bytes = serialize(value);
-        assert_eq!(&bytes[..4], &0x6ce2ce6bu32.to_le_bytes());
-        let decoded: DhtMessage = deserialize(&bytes).unwrap();
-        assert_eq!(
-            decoded,
-            DhtMessage::FindNode {
-                key: Int256([7; 32]),
-                k: 8
-            }
-        );
-    }
-
-    #[test]
-    fn dht_store_carries_the_bare_value() {
-        let value = DhtValue {
-            key: DhtKeyDescription {
-                key: DhtKey {
-                    id: Int256([1; 32]),
-                    name: b"address".to_vec(),
-                    idx: 0,
-                },
-                id: TlPublicKey::Ed25519 {
-                    key: Int256([2; 32]),
-                },
-                update_rule: DhtUpdateRule::Signature,
-                signature: vec![3; 64],
-            },
-            value: vec![4; 12],
-            ttl: 5,
-            signature: vec![6; 64],
-        };
-        let store = serialize(DhtMessage::Store {
-            value: DhtValueBare::from(&value),
-        });
-        // `dht.store value:dht.value = dht.Stored;` references the concrete
-        // `dht.value` constructor: upstream `dht_store::store` stores the
-        // value with `TlStoreObject::store(value_, s)`, i.e. the bare fields
-        // and no `0x90ad27cb` prefix after the query id.  A store query that
-        // adds the prefix does not parse on the receiving node.
-        assert_eq!(&store[..4], &0x34934212u32.to_le_bytes());
-        assert_ne!(&store[4..8], &0x90ad27cbu32.to_le_bytes());
-        assert_eq!(
-            &store[4..],
-            serialize(DhtValueBare::from(&value)).as_slice()
-        );
-        // The boxed `DhtValue` form is the bare fields behind the
-        // constructor id - the form `dht.valueFound` carries and the form
-        // the value signature covers.
-        assert_eq!(&serialize(value.clone())[..4], &0x90ad27cbu32.to_le_bytes());
-        assert_eq!(
-            &serialize(value.clone())[4..],
-            serialize(DhtValueBare::from(&value)).as_slice()
-        );
-        // The store query round-trips.
-        let decoded: DhtMessage = deserialize(&store).unwrap();
-        assert_eq!(
-            decoded,
-            DhtMessage::Store {
-                value: DhtValueBare::from(&value)
-            }
-        );
-    }
-
-    #[test]
-    fn dht_key_and_adnl_id_short_use_canonical_constructors() {
-        // DhtKey is BARE — serialize() produces raw fields without constructor prefix.
-        let bare_bytes = serialize(DhtKey {
-            id: Int256([1; 32]),
-            name: b"nodes".to_vec(),
-            idx: 0,
-        });
-        // The first 4 bytes must NOT be the constructor id (it's bare).
-        assert_ne!(
-            &bare_bytes[..4],
-            &0xf667de8fu32.to_le_bytes(),
-            "DhtKey::serialize must NOT include constructor prefix"
-        );
-        // boxed_bytes() DOES include the constructor prefix — used for hashing.
-        let boxed = DhtKey {
-            id: Int256([1; 32]),
-            name: b"nodes".to_vec(),
-            idx: 0,
-        }
-        .boxed_bytes();
-        assert_eq!(
-            &boxed[..4],
-            &0xf667de8fu32.to_le_bytes(),
-            "DhtKey::boxed_bytes must include constructor prefix"
-        );
-        // `adnl.id.short` is BARE in field position (see the type docs).
-        let id_short_wire = serialize(AdnlIdShort {
-            id: Int256([9; 32]),
-        });
-        assert_eq!(
-            &id_short_wire[..4],
-            &[9, 9, 9, 9],
-            "adnl.id.short must serialize bare, without a constructor id"
-        );
-        assert_eq!(
-            &AdnlIdShort {
-                id: Int256([9; 32])
-            }
-            .boxed_bytes()[..4],
-            &0x3e3f654fu32.to_le_bytes(),
-            "boxed_bytes must add the adnl.id.short constructor id"
-        );
-        assert_eq!(
-            &serialize(AddressListBoxed {
-                addrs: Vec::new(),
-                version: 1,
-                reinit_date: 2,
-                priority: 3,
-                expire_at: 4,
-            })[..4],
-            &0x2227e658u32.to_le_bytes()
-        );
-    }
-
-    #[test]
-    fn packet_contents_roundtrips_optional_channel_fields() {
-        let value = PacketContents {
-            rand1: vec![1, 2, 3],
-            flags: (),
-            from: Some(TlPublicKey::Ed25519 {
-                key: Int256([4; 32]),
-            }),
-            from_short: None,
-            message: Some(AdnlMessage::Custom {
-                data: vec![9, 8, 7],
-            }),
-            messages: None,
-            address: Some(AddressList {
-                addrs: vec![Address::Udp {
-                    ip: 0x7f000001,
-                    port: 30303,
-                }],
-                version: 1,
-                reinit_date: 2,
-                priority: 3,
-                expire_at: 4,
-            }),
-            priority_address: None,
-            seqno: Some(11),
-            confirm_seqno: Some(10),
-            recv_addr_list_version: None,
-            recv_priority_addr_list_version: None,
-            reinit_date: None,
-            dst_reinit_date: None,
-            signature: None,
-            rand2: vec![5, 6],
-        };
-        let bytes = serialize(value.clone());
-        assert_eq!(&bytes[..4], &0xd142cd89u32.to_le_bytes());
-        let decoded: PacketContents = deserialize(&bytes).unwrap();
-        assert_eq!(decoded, value);
-    }
-
-    #[test]
-    fn quic_framing_types_use_canonical_constructors() {
-        // Constructor ids are the CRC32 of the upstream ton_api.tl
-        // definitions (`quic.message/query data:bytes = quic.Request`,
-        // `quic.answer data:bytes = quic.Response`), verified by
-        // `schema_audit` and cross-SDK fixtures.
-        let msg = QuicMessage {
-            data: vec![1, 2, 3],
-        };
-        let bytes = serialize(msg.clone());
-        assert_eq!(&bytes[..4], &0xe003df31u32.to_le_bytes());
-        let decoded: QuicMessage = deserialize(&bytes).unwrap();
-        assert_eq!(decoded, msg);
-
-        let query = QuicQuery {
-            data: vec![4, 5, 6],
-        };
-        let bytes = serialize(query.clone());
-        assert_eq!(&bytes[..4], &0xe60b607eu32.to_le_bytes());
-        let decoded: QuicQuery = deserialize(&bytes).unwrap();
-        assert_eq!(decoded, query);
-
-        let answer = QuicAnswer {
-            data: vec![7, 8, 9],
-        };
-        let bytes = serialize(answer.clone());
-        assert_eq!(&bytes[..4], &0xdea3fbb2u32.to_le_bytes());
-        let decoded: QuicAnswer = deserialize(&bytes).unwrap();
-        assert_eq!(decoded, answer);
-    }
-
-    #[test]
-    fn dht_value_result_found_canonical_constructor() {
-        let value = DhtValue {
-            key: DhtKeyDescription {
-                key: DhtKey {
-                    id: Int256([0xAA; 32]),
-                    name: vec![0xBB; 32],
-                    idx: 0,
-                },
-                id: TlPublicKey::Ed25519 {
-                    key: Int256([0xCC; 32]),
-                },
-                update_rule: DhtUpdateRule::Signature,
-                signature: vec![],
-            },
-            value: vec![1, 2, 3],
-            ttl: 1000,
-            signature: vec![],
-        };
-        let result = DhtValueResult::Found {
-            value: value.clone(),
-        };
-        let bytes = serialize(result.clone());
-        assert_eq!(
-            &bytes[..4],
-            &0xe40cf774u32.to_le_bytes(),
-            "DhtValueResult::Found constructor ID mismatch: got {:08x}",
-            u32::from_le_bytes(bytes[..4].try_into().unwrap())
-        );
-        let decoded: DhtValueResult = deserialize(&bytes).unwrap();
-        assert_eq!(decoded, result);
-    }
-
-    #[test]
-    fn dht_value_result_not_found_canonical_constructor() {
-        let result = DhtValueResult::NotFound {
-            nodes: DhtNodes { nodes: vec![] },
-        };
-        let bytes = serialize(result.clone());
-        assert_eq!(&bytes[..4], &0xa2620568u32.to_le_bytes());
-        let decoded: DhtValueResult = deserialize(&bytes).unwrap();
-        assert_eq!(decoded, result);
-    }
-
-    #[test]
-    fn dht_value_result_found_deserializes_from_wire_bytes() {
-        let value = DhtValue {
-            key: DhtKeyDescription {
-                key: DhtKey {
-                    id: Int256([0xAA; 32]),
-                    name: vec![0xBB; 32],
-                    idx: 5,
-                },
-                id: TlPublicKey::Ed25519 {
-                    key: Int256([0xCC; 32]),
-                },
-                update_rule: DhtUpdateRule::Signature,
-                signature: vec![],
-            },
-            value: vec![0xDE, 0xAD],
-            ttl: 999,
-            signature: vec![],
-        };
-        let mut wire = Vec::new();
-        wire.extend_from_slice(&0xe40cf774u32.to_le_bytes());
-        wire.extend_from_slice(&serialize(value.clone()));
-        let decoded: DhtValueResult = deserialize(&wire).unwrap();
-        match decoded {
-            DhtValueResult::Found { value: v } => {
-                assert_eq!(v, value);
-            }
-            DhtValueResult::NotFound { .. } => panic!("Expected Found, got NotFound"),
-        }
-    }
-
-    #[test]
-    fn dht_value_result_found_from_real_dht_bytes() {
-        // Real bytes captured from a TON mainnet DHT node response.
-        // First 4 bytes: 74f70ce4 = 0xe40cf774 = DhtValueResult::Found
-        // Next 4 bytes: cb27ad90 = 0x90ad27cb = DhtValue
-        // The remaining bytes encode the DhtValue fields.
-        let hex_str = "74f70ce4cb27ad9012b8a83f098e15ea47fe76d0b0df0986ff6dda1980796b084b0d2a68b2558649056e6f646573000000000000cb45ba34209435c212dc0ec5";
-        let wire: Vec<u8> = (0..hex_str.len())
-            .step_by(2)
-            .map(|i| u8::from_str_radix(&hex_str[i..i + 2], 16).unwrap())
-            .collect();
-        assert_eq!(&wire[..4], &0xe40cf774u32.to_le_bytes());
-        assert_eq!(&wire[4..8], &0x90ad27cbu32.to_le_bytes());
-        // This should succeed — the constructors are correct.
-        let result: Result<DhtValueResult, _> = deserialize(&wire);
-        match &result {
-            Ok(v) => eprintln!("Deserialization OK: {v:?}"),
-            Err(e) => eprintln!("Deserialization FAILED: {e}"),
-        }
-    }
 }

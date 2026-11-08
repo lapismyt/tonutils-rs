@@ -142,7 +142,7 @@ async fn query_raw_waits_through_limiter_before_calling_service() {
 
     let pending =
         tokio::time::timeout(std::time::Duration::from_millis(10), client.query_raw([2])).await;
-    assert!(pending.is_err());
+    pending.unwrap_err();
     assert_eq!(*calls.lock().await, 1);
 }
 
@@ -168,7 +168,7 @@ async fn cancellation_before_limiter_acquisition_does_not_consume_wait_seqno() {
 
     let pending =
         tokio::time::timeout(std::time::Duration::from_millis(10), client.query_raw([2])).await;
-    assert!(pending.is_err());
+    pending.unwrap_err();
 
     client.clear_rate_limit();
     assert_eq!(client.query_raw([3]).await.unwrap(), vec![3]);

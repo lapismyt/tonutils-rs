@@ -29,7 +29,6 @@ use crate::{
 };
 
 impl LiteClient {
-    #[allow(clippy::too_many_arguments)]
     #[expect(
         clippy::fn_params_excessive_bools,
         reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
@@ -68,7 +67,6 @@ impl LiteClient {
         decode_config_info(raw).map_err(LiteError::from)
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[expect(
         clippy::fn_params_excessive_bools,
         reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
@@ -117,7 +115,6 @@ impl LiteClient {
         Ok(response)
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[expect(
         clippy::fn_params_excessive_bools,
         reason = "The signature intentionally mirrors protocol flags and values moved across async task boundaries"
@@ -293,7 +290,6 @@ impl LiteClient {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn get_dispatch_queue_messages(
         &mut self,
         id: BlockIdExt,

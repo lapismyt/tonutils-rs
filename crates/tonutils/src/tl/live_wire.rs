@@ -14,9 +14,11 @@
 //! Fixture provenance (harness, dates, per-case peers) lives in
 //! `fixtures/cross_sdk/manifest.json` and in each file's cases.
 
-use serde_json::Value;
+use std::collections::HashSet;
 
 use crate::adnl::tl::PacketContents;
+
+use serde_json::Value;
 
 /// Live wire fixtures bundled with the crate; the cross-SDK manifest
 /// test matches this list against `fixtures/cross_sdk/manifest.json`.
@@ -50,7 +52,7 @@ fn raw_of(file: &str, case: &Value) -> Vec<u8> {
 
 #[test]
 fn live_wire_cases_have_provenance_and_valid_hex() {
-    let mut names = std::collections::HashSet::new();
+    let mut names = HashSet::new();
     for (file, content) in LIVE_WIRE_FIXTURE_FILES {
         let fixture: Value = serde_json::from_str(content).expect("live wire fixture must parse");
         assert!(

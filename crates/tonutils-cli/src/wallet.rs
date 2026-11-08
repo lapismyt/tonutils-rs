@@ -1,3 +1,5 @@
+use base64::engine::general_purpose::STANDARD as B64_STANDARD;
+
 use super::{
     Address, BalancerCommand, BalancerStatusView, BestEffortAccountStateView, Cell, Cli, Context,
     Engine, FromStr, HighLevelCallView, HighLevelTransactionsView, KnownTlbType, OutputFormat,
@@ -473,10 +475,7 @@ impl Cli {
                 Ok(())
             }
             OutputFormat::Base64 => {
-                println!(
-                    "{}",
-                    base64::engine::general_purpose::STANDARD.encode(bytes)
-                );
+                println!("{}", B64_STANDARD.encode(bytes));
                 Ok(())
             }
             OutputFormat::Human | OutputFormat::Hex => {
@@ -580,7 +579,7 @@ pub(super) fn read_raw_input(
         (Some(value), None, None, false) => {
             hex::decode(value.trim()).context("failed to decode hex input")
         }
-        (None, Some(value), None, false) => base64::engine::general_purpose::STANDARD
+        (None, Some(value), None, false) => B64_STANDARD
             .decode(value.trim())
             .context("failed to decode base64 input"),
         (None, None, Some(path), false) => {

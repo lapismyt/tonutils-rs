@@ -10,7 +10,13 @@
 #[cfg(feature = "liteclient")]
 use crate::liteclient::tl::LiteAccountId as AccountId;
 use crate::tvm::{TvmError, TvmResult as Result, error::address_bail as bail};
-use base64::Engine;
+use base64::{
+    Engine,
+    engine::general_purpose::{
+        STANDARD as B64_STANDARD, STANDARD_NO_PAD as B64_STANDARD_NO_PAD, URL_SAFE as B64_URL_SAFE,
+        URL_SAFE_NO_PAD as B64_URL_SAFE_NO_PAD,
+    },
+};
 use std::fmt;
 #[cfg(feature = "liteclient")]
 use tonutils::tl::TlInt256 as Int256;
@@ -187,9 +193,9 @@ impl Address {
         data.extend_from_slice(&crc);
 
         if url_safe {
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&data)
+            B64_URL_SAFE_NO_PAD.encode(&data)
         } else {
-            base64::engine::general_purpose::STANDARD.encode(&data)
+            B64_STANDARD.encode(&data)
         }
     }
 
@@ -266,16 +272,16 @@ fn validate_workchain(workchain: i8) -> Result<()> {
 }
 
 fn decode_user_friendly(address: &str) -> Result<Vec<u8>> {
-    if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(address) {
+    if let Ok(decoded) = B64_URL_SAFE_NO_PAD.decode(address) {
         return Ok(decoded);
     }
-    if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE.decode(address) {
+    if let Ok(decoded) = B64_URL_SAFE.decode(address) {
         return Ok(decoded);
     }
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD_NO_PAD.decode(address) {
+    if let Ok(decoded) = B64_STANDARD_NO_PAD.decode(address) {
         return Ok(decoded);
     }
-    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(address) {
+    if let Ok(decoded) = B64_STANDARD.decode(address) {
         return Ok(decoded);
     }
 
@@ -346,6 +352,8 @@ impl fmt::Display for ExternalAddress {
 
 #[cfg(test)]
 mod tests {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64_URL_SAFE_NO_PAD;
+
     use super::{Address, Engine, ExternalAddress, crc16};
 
     struct AddressFixture {
@@ -526,12 +534,10 @@ mod tests {
     #[test]
     fn test_address_rejects_invalid_user_friendly_inputs() {
         let addr = Address::new(0, [0x11; 32]);
-        let mut decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(addr.to_base64())
-            .unwrap();
+        let mut decoded = B64_URL_SAFE_NO_PAD.decode(addr.to_base64()).unwrap();
 
         decoded[0] = 0x00;
-        let invalid_tag = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&decoded);
+        let invalid_tag = B64_URL_SAFE_NO_PAD.encode(&decoded);
         assert!(
             Address::from_base64(&invalid_tag)
                 .unwrap_err()
@@ -539,11 +545,9 @@ mod tests {
                 .contains("tag")
         );
 
-        decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(addr.to_base64())
-            .unwrap();
+        decoded = B64_URL_SAFE_NO_PAD.decode(addr.to_base64()).unwrap();
         decoded[10] ^= 1;
-        let invalid_crc = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&decoded);
+        let invalid_crc = B64_URL_SAFE_NO_PAD.encode(&decoded);
         assert!(
             Address::from_base64(&invalid_crc)
                 .unwrap_err()
@@ -551,13 +555,11 @@ mod tests {
                 .contains("CRC")
         );
 
-        decoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(addr.to_base64())
-            .unwrap();
+        decoded = B64_URL_SAFE_NO_PAD.decode(addr.to_base64()).unwrap();
         decoded[1] = 0xFE;
         let crc = crc16(&decoded[..34]);
         decoded[34..36].copy_from_slice(&crc);
-        let invalid_workchain = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&decoded);
+        let invalid_workchain = B64_URL_SAFE_NO_PAD.encode(&decoded);
         assert!(
             Address::from_base64(&invalid_workchain)
                 .unwrap_err()

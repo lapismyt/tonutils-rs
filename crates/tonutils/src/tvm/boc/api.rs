@@ -6,6 +6,7 @@ use crate::crc::CRC32;
 use crate::tvm::cell::Cell;
 use crate::tvm::{TvmError, TvmResult as Result, error::boc_bail as bail};
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as B64_STANDARD;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -560,7 +561,6 @@ pub(super) enum ParsedCellState {
     Done,
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn build_parsed_cell(
     index: usize,
     cell_refs: &[Vec<usize>],
@@ -777,13 +777,11 @@ pub fn boc_to_hex(cell: &Arc<Cell>, has_crc32: bool) -> Result<String> {
 /// Converts a BoC to base64
 pub fn boc_to_base64(cell: &Arc<Cell>, has_crc32: bool) -> Result<String> {
     let bytes = serialize_boc(cell, has_crc32)?;
-    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+    Ok(B64_STANDARD.encode(bytes))
 }
 
 /// Converts a base64 string to a BoC
 pub fn base64_to_boc(b64: &str) -> Result<Arc<Cell>> {
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(b64)
-        .map_err(TvmError::Base64)?;
+    let bytes = B64_STANDARD.decode(b64).map_err(TvmError::Base64)?;
     deserialize_boc(&bytes)
 }

@@ -27,17 +27,21 @@ mod tests;
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
+use quinn::crypto::rustls::HandshakeData;
+use tokio::{net, time};
+
 use crate::{
     adnl::{
         AdnlError, AdnlKeyPair, AdnlPublicKey,
-        quic::tls::{make_quinn_client_config, make_quinn_server_config, sni_for_public_key},
+        quic::tls::{make_quinn_client_config, make_quinn_server_config},
+        sni_for_public_key,
         tl::{DhtMessage, DhtNodesBoxed, DhtValueResult, QuicAnswer, QuicMessage, QuicQuery},
     },
-    tl::TlInt256 as Int256,
+    tl::TlInt256,
 };
 
 /// Default maximum QUIC stream buffer size (1 MiB).
-const MAX_FRAME_SIZE: usize = 1 << 20;
+pub const MAX_FRAME_SIZE: usize = 1 << 20;
 
 /// QUIC connection wrapper for TON protocol.
 pub struct QuicSession {
@@ -61,7 +65,7 @@ impl QuicSession {
 
         let quinn_config = make_quinn_client_config(&local_keypair, &remote_key)?;
 
-        let socket = tokio::net::UdpSocket::bind(local_addr).await?.into_std()?;
+        let socket = net::UdpSocket::bind(local_addr).await?.into_std()?;
         socket.set_nonblocking(true)?;
         let endpoint = quinn::Endpoint::new(
             quinn::EndpointConfig::default(),
@@ -104,7 +108,7 @@ impl QuicSession {
             .map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
 
         // Read quic.answer frame
-        let buf = tokio::time::timeout(timeout, recv.read_to_end(MAX_FRAME_SIZE))
+        let buf = time::timeout(timeout, recv.read_to_end(MAX_FRAME_SIZE))
             .await
             .map_err(|_| AdnlError::Timeout {
                 operation: "QUIC query",
@@ -139,7 +143,7 @@ impl QuicSession {
     /// Performs a DHT findNode query over QUIC.
     pub async fn dht_find_node(
         &self,
-        key: Int256,
+        key: TlInt256,
         count: i32,
         timeout: Duration,
     ) -> Result<DhtNodesBoxed, AdnlError> {
@@ -151,7 +155,7 @@ impl QuicSession {
     /// Performs a DHT findValue query over QUIC.
     pub async fn dht_find_value(
         &self,
-        key: Int256,
+        key: TlInt256,
         count: i32,
         timeout: Duration,
     ) -> Result<DhtValueResult, AdnlError> {
@@ -171,7 +175,7 @@ impl QuicSession {
     }
 }
 
-/// QUIC server that accepts incoming TON QUIC connections.
+// QUIC server that accepts incoming TON QUIC connections.
 ///
 /// The handshake is gated by the TLS profile: the server presents the node
 /// identity only for the node's own short-id SNI and requires the client to
@@ -189,7 +193,7 @@ impl QuicServer {
     ) -> Result<Self, AdnlError> {
         let server_config = make_quinn_server_config(&local_keypair)?;
 
-        let socket = tokio::net::UdpSocket::bind(local_addr).await?.into_std()?;
+        let socket = net::UdpSocket::bind(local_addr).await?.into_std()?;
         socket.set_nonblocking(true)?;
         let endpoint = quinn::Endpoint::new(
             quinn::EndpointConfig::default(),
@@ -234,7 +238,7 @@ impl QuicServer {
             .map_err(|e| AdnlError::TlsConfig(e.to_string()))?;
 
         let server_name = connection.handshake_data().as_ref().and_then(|data| {
-            data.downcast_ref::<quinn::crypto::rustls::HandshakeData>()
+            data.downcast_ref::<HandshakeData>()
                 .and_then(|hs| hs.server_name.clone())
         });
 

@@ -96,12 +96,13 @@ fn parse_schema() -> HashMap<String, SchemaCtor> {
         if line.is_empty() || line.starts_with("//") || line.starts_with("---") {
             continue;
         }
-        if buffer.is_empty() {
-            buffer.push_str(line);
-        } else {
+
+        if !buffer.is_empty() {
             buffer.push(' ');
-            buffer.push_str(line);
         }
+
+        buffer.push_str(line);
+
         if !buffer.contains('=') {
             continue;
         }

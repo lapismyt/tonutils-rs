@@ -28,7 +28,7 @@ use std::{
     sync::{
         OnceLock,
         atomic::{AtomicU64, Ordering},
-        mpsc::{SyncSender, TrySendError, sync_channel},
+        mpsc::{self, SyncSender, TrySendError, sync_channel},
     },
     thread::{self, JoinHandle},
 };
@@ -90,7 +90,7 @@ impl Capture {
     }
 }
 
-fn write_records(file: &mut File, receiver: std::sync::mpsc::Receiver<String>) {
+fn write_records(file: &mut File, receiver: mpsc::Receiver<String>) {
     for line in receiver {
         if writeln!(file, "{line}").is_err() {
             break;

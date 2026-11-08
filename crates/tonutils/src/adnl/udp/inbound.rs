@@ -27,7 +27,7 @@
 //! process lifetime, exactly like upstream's network manager thread, and
 //! an application that never completes a datagram never starts it.
 
-use std::sync::OnceLock;
+use std::sync::{OnceLock, mpsc};
 
 thread_local! {
     /// Set while executing on the inbound thread, so the shared-socket
@@ -57,7 +57,7 @@ static HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 /// shares it, matching upstream's one receive thread per node.
 pub(super) fn handle() -> &'static tokio::runtime::Handle {
     HANDLE.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         std::thread::Builder::new()
             .name("adnl-udp-inbound".to_owned())
             .spawn(move || {
@@ -79,6 +79,8 @@ pub(super) fn handle() -> &'static tokio::runtime::Handle {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+
     use super::{handle, on_inbound_thread};
 
     /// The marker distinguishes the inbound executor thread from every
@@ -93,7 +95,7 @@ mod tests {
         );
         // A task spawned on the handle runs on the inbound runtime's
         // own thread; `Handle::block_on` would run it here instead.
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = mpsc::channel();
         handle().spawn(async move {
             let _ = tx.send(on_inbound_thread());
         });

@@ -67,6 +67,32 @@ complexity = { level = "warn", priority = -1 }
 style = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 
+absolute_paths = {level = "warn"}
+alloc_instead_of_core = "warn"
+allow_attributes_without_reason = "warn"
+as_underscore = "warn"
+assert_is_empty = "warn"
+assertions_on_result_states = "warn"
+branches_sharing_code = "warn"
+cfg_not_test = "warn"
+checked_conversions = "warn"
+clear_with_drain = "warn"
+cloned_instead_of_copied = "warn"
+collapsible_else_if = "warn"
+collection_is_never_read = "warn"
+comparison_chain = "warn"
+create_dir = "warn"
+dbg_macro = "warn"
+debug_assert_with_mut_call = "warn"
+decimal_bitwise_operands = "warn"
+decimal_literal_representation = "warn"
+default_trait_access = "warn"
+default_union_representation = "warn"
+derive_partial_eq_without_eq = "warn"
+disallowed_script_idents = "warn"
+doc_broken_link = "warn"
+allow_attributes = "warn"
+
 doc_markdown = "allow"
 map_unwrap_or = "allow"
 missing_errors_doc = "allow"

@@ -12,6 +12,8 @@ use std::{
     time::Duration,
 };
 
+use tokio::sync::oneshot;
+
 use crate::{
     adnl::{
         AdnlError, AdnlPublicKey, decrypt_direct,
@@ -424,11 +426,8 @@ impl SessionInner {
     /// immediate answer can arrive before there is a waiter for it.
     /// The registration instant is stored with the waiter so a
     /// delivered answer can log its real age.
-    pub(super) fn register_pending(
-        &self,
-        query_id: &Int256,
-    ) -> tokio::sync::oneshot::Receiver<Vec<u8>> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+    pub(super) fn register_pending(&self, query_id: &Int256) -> oneshot::Receiver<Vec<u8>> {
+        let (tx, rx) = oneshot::channel();
         self.pending
             .lock()
             .unwrap()
@@ -515,7 +514,7 @@ impl SessionInner {
         query_id: Int256,
         timeout: Duration,
         operation: &'static str,
-        mut rx: tokio::sync::oneshot::Receiver<Vec<u8>>,
+        mut rx: oneshot::Receiver<Vec<u8>>,
     ) -> Result<Vec<u8>, AdnlError> {
         if matches!(self.source, Source::Solo(_)) {
             let deadline = tokio::time::Instant::now() + timeout;
@@ -525,11 +524,11 @@ impl SessionInner {
                         self.unregister_pending(&query_id.0);
                         return Ok(answer);
                     }
-                    Err(tokio::sync::oneshot::error::TryRecvError::Closed) => {
+                    Err(oneshot::error::TryRecvError::Closed) => {
                         self.unregister_pending(&query_id.0);
                         return Err(AdnlError::EndOfStream);
                     }
-                    Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
+                    Err(oneshot::error::TryRecvError::Empty) => {}
                 }
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining.is_zero() {

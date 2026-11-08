@@ -19,6 +19,7 @@ use crate::{
     tl::TlInt256 as Int256,
 };
 
+use tokio::sync::mpsc::channel;
 use tokio_util::bytes::Bytes;
 
 use super::{address_storing_peers, note_peer_holds_our_addr, raw_packet_flags};
@@ -41,7 +42,7 @@ fn roundtrip_and_reject_trailing_data() {
 
     let mut malformed = packet.to_vec();
     malformed.push(0);
-    assert!(server.decode(&malformed).is_err());
+    server.decode(&malformed).unwrap_err();
 }
 
 #[test]
@@ -63,7 +64,7 @@ fn channel_cipher_matches_direction_and_integrity_rules() {
 
     let (outbound, inbound) = ordered_channel_ciphers([1; 32], [2; 32], secret);
     let packet = outbound.encrypt(b"ordered");
-    assert!(inbound.decrypt(&packet).is_err());
+    inbound.decrypt(&packet).unwrap_err();
     let (_, receiver_inbound) = ordered_channel_ciphers([2; 32], [1; 32], secret);
     assert_eq!(
         receiver_inbound.decrypt(&packet).unwrap().as_ref(),
@@ -115,7 +116,7 @@ fn direct_packet_encryption_roundtrips_with_receiver_key() {
     let encrypted = encrypt_direct(&receiver.public_key, b"direct packet");
     let (_, plaintext) = decrypt_direct(&receiver, &encrypted).unwrap();
     assert_eq!(plaintext.as_ref(), b"direct packet");
-    assert!(decrypt_direct(&sender, &encrypted).is_err());
+    decrypt_direct(&sender, &encrypted).unwrap_err();
 }
 
 #[tokio::test]
@@ -705,8 +706,8 @@ async fn inbound_routing_survives_a_busy_runtime() {
     // assuming a wall-clock poll time.
     let stop = Arc::new(AtomicBool::new(false));
     let poll_ms = Arc::new(AtomicU64::new(BURN.as_millis() as u64));
-    let (tx_a, mut rx_a) = tokio::sync::mpsc::channel::<()>(1);
-    let (tx_b, mut rx_b) = tokio::sync::mpsc::channel::<()>(1);
+    let (tx_a, mut rx_a) = channel::<()>(1);
+    let (tx_b, mut rx_b) = channel::<()>(1);
     let busy_a = tokio::spawn({
         let stop = stop.clone();
         let poll_ms = poll_ms.clone();

@@ -1,7 +1,9 @@
+use std::fmt;
+
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek::scalar::{Scalar, clamp_integer};
 #[cfg(feature = "serde")]
-use serde::de::{Error, Visitor};
+use serde::de::{self, Error, Visitor};
 use sha2::{Digest, Sha512};
 
 use crate::adnl::tl::AdnlTlPublicKeyRef;
@@ -211,20 +213,20 @@ impl PartialEq for AdnlPublicKey {
 
 impl Eq for AdnlPublicKey {}
 
-impl std::fmt::Display for AdnlPublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl fmt::Display for AdnlPublicKey {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut output = [0u8; 64];
         hex::encode_to_slice(self.compressed.as_bytes(), &mut output).ok();
 
         // SAFETY: output is guaranteed to contain only [0-9a-f]
-        let output = unsafe { std::str::from_utf8_unchecked(&output) };
+        let output = unsafe { str::from_utf8_unchecked(&output) };
         f.write_str(output)
     }
 }
 
-impl std::fmt::Debug for AdnlPublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        std::fmt::Display::fmt(self, f)
+impl fmt::Debug for AdnlPublicKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }
 
@@ -253,7 +255,7 @@ impl<'de> serde::Deserialize<'de> for AdnlPublicKey {
         impl Visitor<'_> for BytesVisitor {
             type Value = [u8; 32];
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("hex-encoded public key")
             }
 
@@ -261,10 +263,7 @@ impl<'de> serde::Deserialize<'de> for AdnlPublicKey {
                 let mut result = [0; 32];
                 match hex::decode_to_slice(value, &mut result) {
                     Ok(()) => Ok(result),
-                    Err(_) => Err(Error::invalid_value(
-                        serde::de::Unexpected::Str(value),
-                        &self,
-                    )),
+                    Err(_) => Err(Error::invalid_value(de::Unexpected::Str(value), &self)),
                 }
             }
         }
@@ -307,7 +306,7 @@ impl ExpandedSecretKey {
         message: T,
         public_key: &AdnlPublicKey,
     ) -> [u8; 64] {
-        #![allow(non_snake_case)]
+        #![expect(non_snake_case, reason = "common naming")]
 
         let message = tl_proto::HashWrapper(message);
 
@@ -333,7 +332,7 @@ impl ExpandedSecretKey {
     }
 
     pub fn sign_raw(&self, message: &[u8], public_key: &AdnlPublicKey) -> [u8; 64] {
-        #![allow(non_snake_case)]
+        #![expect(non_snake_case, reason = "common naming")]
 
         let mut h = Sha512::new();
         h.update(self.nonce.as_slice());
@@ -371,7 +370,7 @@ impl From<&'_ SecretKey> for ExpandedSecretKey {
         let lower: [u8; 32] = hash[..32].try_into().unwrap();
         let nonce: [u8; 32] = hash[32..].try_into().unwrap();
 
-        let key_bytes = curve25519_dalek::scalar::clamp_integer(lower);
+        let key_bytes = clamp_integer(lower);
 
         Self {
             key: Scalar::from_bytes_mod_order(key_bytes),
