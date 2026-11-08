@@ -13,12 +13,6 @@
 //!   nothing.
 //! - `ADNL_UDP_CAPTURE_MAX`: the total number of records to write
 //!   (default [`DEFAULT_CAPTURE_MAX`]); later records are dropped.
-//!
-//! This exists for the wire fixtures in `fixtures/cross_sdk/` and for
-//! live diagnostics.  Each record carries only what the socket
-//! carried plus what this process already decrypted; `custom` records
-//! are the decrypted inner payload and therefore plaintext, which is
-//! why the capture is strictly opt-in and capped.
 
 use std::{
     fs::{File, OpenOptions},

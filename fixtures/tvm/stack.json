@@ -24,7 +24,6 @@
       "capture_command": "TON_GLOBAL_CONFIG_JSON=<json> TON_STACK_TEST_CONTRACT_ADDRESS=<addr> TON_STACK_TEST_METHOD=<method> TON_STACK_TEST_JSON='<stack-json>' cargo test --features network-config --lib live_non_empty_stack_run_get_method_smoke -- --ignored --nocapture"
     }
   ],
-  "cross_sdk_vectors": [],
   "vectors": [
     {
       "name": "scalar_non_empty",

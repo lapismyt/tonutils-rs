@@ -315,16 +315,6 @@ mod tests {
                 );
             }
         }
-        for vector in fixture["cross_sdk_vectors"].as_array().unwrap() {
-            let local = vector["params_boc_hex"].as_str().unwrap();
-            if let Some(reference) = vector["reference_params_boc_hex"].as_str() {
-                assert_eq!(local, reference, "{}", vector["name"]);
-            }
-            if let Some(result_boc) = vector["result_boc_hex"].as_str() {
-                let stack = TvmStack::from_boc(&hex::decode(result_boc).unwrap()).unwrap();
-                assert_eq!(hex::encode(stack.to_boc().unwrap()), result_boc);
-            }
-        }
 
         for vector in vectors {
             let name = vector["name"].as_str().unwrap();
