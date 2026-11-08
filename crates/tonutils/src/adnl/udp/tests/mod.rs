@@ -19,10 +19,6 @@ use crate::{
     tl::TlInt256 as Int256,
 };
 
-#[cfg(feature = "overlay")]
-use crate::overlay::tl::{OverlayNode, OverlayNodesBoxed, OverlayQuery};
-#[cfg(feature = "overlay")]
-use tl_proto::TlRead;
 use tokio_util::bytes::Bytes;
 
 use super::{address_storing_peers, note_peer_holds_our_addr, raw_packet_flags};
@@ -407,89 +403,6 @@ async fn channel_create_confirm_switches_to_directional_channel_packets() {
     );
 }
 
-#[cfg(feature = "overlay")]
-#[tokio::test]
-async fn overlay_random_peers_query_routes_boxed_response() {
-    let client_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let server_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let client_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let server_addr = tokio::net::UdpSocket::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap();
-    let client =
-        AdnlUdpSession::connect(client_addr, server_addr, client_key, server_key.public_key)
-            .await
-            .unwrap();
-    let server =
-        AdnlUdpSession::connect(server_addr, client_addr, server_key, client_key.public_key)
-            .await
-            .unwrap();
-    let response = async {
-        let packet = server.recv_timeout(Duration::from_secs(1)).await.unwrap();
-        // The session bundles `adnl.message.createChannel` with its first
-        // query, so the query can arrive as the packet's single `message` or
-        // as the second entry of `messages`.
-        let mut incoming = packet
-            .message
-            .into_iter()
-            .chain(packet.messages.into_iter().flatten());
-        let query = incoming.find_map(|message| match message {
-            AdnlMessage::Query { query_id, query } => Some((query_id, query)),
-            _ => None,
-        });
-        let Some((query_id, query)) = query else {
-            panic!("expected overlay query");
-        };
-        assert_eq!(&query[..4], &0xccfd8443u32.to_le_bytes());
-        let mut query = query.as_slice();
-        assert!(matches!(
-            OverlayQuery::read_from(&mut query),
-            Ok(OverlayQuery::Query { .. })
-        ));
-        let Ok(OverlayQuery::GetRandomPeers { peers }) = OverlayQuery::read_from(&mut query) else {
-            panic!("expected getRandomPeers query");
-        };
-        assert_eq!(peers.nodes.len(), 1);
-        assert_eq!(peers.nodes[0].signature.len(), 64);
-        assert_eq!(query, &[] as &[u8]);
-        server
-            .send_contents(PacketContents {
-                rand1: vec![0; 7],
-                flags: (),
-                from: None,
-                from_short: None,
-                message: Some(AdnlMessage::Answer {
-                    query_id,
-                    answer: tl_proto::serialize(OverlayNodesBoxed { nodes: Vec::new() }),
-                }),
-                messages: None,
-                address: None,
-                priority_address: None,
-                recv_addr_list_version: None,
-                recv_priority_addr_list_version: None,
-                seqno: None,
-                confirm_seqno: None,
-                reinit_date: None,
-                dst_reinit_date: None,
-                signature: None,
-                rand2: vec![0; 7],
-            })
-            .await
-            .unwrap();
-    };
-    let (result, ()) = tokio::join!(
-        client.overlay_get_random_peers(Int256([12; 32]), Duration::from_secs(1)),
-        response
-    );
-    assert_eq!(result.unwrap().nodes, [] as [OverlayNode; 0]);
-}
-
 /// Two directly connected sessions over loopback, sender first.
 async fn direct_pair() -> (AdnlUdpSession, AdnlUdpSession) {
     let sender_key = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
@@ -583,9 +496,9 @@ async fn address_version_is_restamped_on_every_packet() {
 /// A peer that echoes `recv_addr_list_version` holds a routable
 /// `adnl.addressList` for this node (`AdnlPeerPairImpl::send_packet` writes
 /// the version it keeps into every packet), and that echo - not the answered
-/// query - is what lets the peer originate `overlay.ping` and broadcasts.
-/// The counter tracks distinct echoing peers so a live overlay run can
-/// separate "the peer cannot reach us" from "the peer does not admit us",
+/// query - is what lets the peer initiate traffic towards this node.
+/// The counter tracks distinct echoing peers so a live run can separate
+/// "the peer cannot reach us" from "the peer does not initiate traffic",
 /// and each peer may move it only once.
 #[test]
 fn address_storing_counter_counts_each_peer_once() {

@@ -10,12 +10,6 @@ use crate::adnl::{
     tl::{QuicAnswer, QuicQuery},
 };
 
-#[cfg(feature = "overlay")]
-use crate::{
-    overlay::tl::{OverlayNodes, OverlayNodesBoxed, OverlayQuery},
-    tl::TlInt256 as Int256,
-};
-
 /// Connects a raw quinn client (caller-supplied config and SNI) to
 /// `remote_addr` so negative tests can dial with a deliberate TLS
 /// mismatch while keeping the transport identical to [`QuicSession::connect`].
@@ -99,80 +93,6 @@ async fn quic_session_connects_and_exchanges_query() {
 
     let (_server_result, response) = tokio::join!(server_fut, client_fut);
     assert_eq!(response, vec![42]);
-}
-
-#[cfg(feature = "overlay")]
-#[tokio::test]
-async fn overlay_get_random_peers_wraps_the_overlay_query_header() {
-    let server_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let client_keypair = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-
-    let server = QuicServer::bind("127.0.0.1:0".parse().unwrap(), server_keypair)
-        .await
-        .unwrap();
-    let server_addr = server.endpoint.local_addr().unwrap();
-
-    let client_handle = tokio::spawn({
-        let pk = server_keypair.public_key;
-        async move {
-            QuicSession::connect(
-                "127.0.0.1:0".parse().unwrap(),
-                server_addr,
-                client_keypair,
-                pk,
-            )
-            .await
-            .unwrap()
-        }
-    });
-
-    let (server_conn, _sni) = server.accept().await.unwrap();
-    let server_fut = async move {
-        let (mut send, mut recv) = server_conn.accept_bi().await.unwrap();
-        let buf = recv.read_to_end(MAX_FRAME_SIZE).await.unwrap();
-        let query: QuicQuery = tl_proto::deserialize(&buf).unwrap();
-
-        // Exact byte equality proves all four properties at once: the
-        // `overlay.query overlay:int256 = True` header (4-byte
-        // constructor + 32-byte overlay id, no length prefix), the
-        // overlay id value itself, the RAW unlength-prefixed suffix,
-        // and the inner `overlay.getRandomPeers` constructor with an
-        // empty `overlay.nodes`.
-        let mut expected = tl_proto::serialize(OverlayQuery::Query {
-            overlay: Int256([7; 32]),
-        });
-        expected.extend(tl_proto::serialize(OverlayQuery::GetRandomPeers {
-            peers: OverlayNodes { nodes: vec![] },
-        }));
-        assert_eq!(
-            query.data, expected,
-            "the quic.query payload must be the overlay.query header \
-         (constructor + overlay id) followed by the raw \
-         overlay.getRandomPeers query"
-        );
-
-        let answer = QuicAnswer {
-            data: tl_proto::serialize(OverlayNodesBoxed { nodes: vec![] }),
-        };
-        let answer_bytes = tl_proto::serialize(answer);
-        send.write_all(&answer_bytes).await.unwrap();
-        send.finish().unwrap();
-        server_conn.closed().await;
-    };
-
-    let client_fut = async {
-        let client = client_handle.await.unwrap();
-        client
-            .overlay_get_random_peers(Int256([7; 32]), Duration::from_secs(5))
-            .await
-            .unwrap()
-    };
-
-    let ((), nodes) = tokio::join!(server_fut, client_fut);
-    assert!(
-        nodes.nodes.is_empty(),
-        "the loopback answer must round-trip as zero overlay nodes"
-    );
 }
 
 #[tokio::test]

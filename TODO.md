@@ -9,23 +9,13 @@ evidence.
 **NEW RELEASE SHALL NOT BE PUBLISHED UNTIL EVERYTHING DOWN BELOW IS DONE**
 
 ## `tonutils::tl`
-- [x] Migrate TL schemes specific for ADNL, LiteAPI, Overlay, etc. to their respectful modules. Module `tonutils::tl` should remain only for TL types and protocol implementation. Make sure there is no duplicate names anywhere in the library afterwards.
+- [x] Migrate TL schemes specific for ADNL, LiteAPI, etc. to their respectful modules. Module `tonutils::tl` should remain only for TL types and protocol implementation. Make sure there is no duplicate names anywhere in the library afterwards.
 
 ## `tonutils::contracts`
 - [ ] Just fix it. Make it work. 
 
-## `tonutils::mempool`
-- [x] Looks like some part of Overlay-communication implementation is there. Move EVERYTHING Overlay-related to the `tonutils::overlay`. `tonutils::overlay` must contain everyting to build Overlay clients and servers. And `tonutils::mempool` must be just implementation of client+server that can send and receive external messages from public Overlay.
-
 ## `tonutils::overlay`
-- [x] Use Plumtree as the public-overlay broadcast path; keep signed simple/FEC broadcasting only for external-message compatibility.
-- [x] Gate PRs on real mainnet DHT, UDP, QUIC, testnet liteserver, and public overlay receive evidence through exact single-test invocations; zero-test matches and network-unavailable skips are failures.
-- [x] Keep DHT address publication on the bootstrap DHT resolver seeds (explicit seeds and config `dht.static_nodes`); discovered overlay members are dial targets, never DHT store or verification candidates.
-- [x] Publish public-overlay membership as `overlay.<id>.nodes` with `dht.updateRule.overlayNodes` through the bootstrap DHT seeds, and verify `findValue` returns this node's signed record; address publication alone is insufficient.
-- [x] Place DHT values on the ten closest successful `findNode` responders (`k = 10`, upstream responsibility window `k + 10`) with a `2k`-wide bounded iterative lookup and a publisher-scoped routing cache. Treat `dht.stored` as store-request acknowledgement only; verification must reserve a real deadline and use `findValue(k = 10)` over the union of resolver seeds, valid learned routes, cached routes, and acknowledged targets, returning the local signed record.
-- [x] Keep the public delivery gate at three 300-second attempts with at most 256 peers and no soft-skip. It accepts legacy/FEC or Plumtree completion but still requires a real `subscribe_packets()` payload; runtime delivery remains best effort, not a library guarantee.
-- [ ] Restore the strict testnet DHT gate to PRs once the canonical testnet seeds answer; it currently runs in the scheduled/manual `live-testnet-dht` workflow and stays red.
-- [ ] Add upstream Plumtree statistics exchange and private-overlay authorized-key sets after their wire behavior is verified.
+- [ ] Reimplement from scratch.
 
 ## `tonutils::provider`
 - [ ] Make high-level provider abstractions that will open possibilities to connect to custom providers, i.e. Toncenter or TonAPI. Providers must be defined not by one big trait, but with separate trait for each feature, because some providers can miss some functionality and some providers can have extra functionality - i want to be able to check it on type-system level, not with runtime panics. It must replace ContractProvider.

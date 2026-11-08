@@ -36,9 +36,6 @@ use crate::{
     tl::TlInt256 as Int256,
 };
 
-#[cfg(feature = "overlay")]
-use crate::overlay::tl::{OverlayNodes, OverlayNodesBoxed, OverlayQuery};
-
 /// Default maximum QUIC stream buffer size (1 MiB).
 const MAX_FRAME_SIZE: usize = 1 << 20;
 
@@ -85,16 +82,6 @@ impl QuicSession {
             connection,
             remote_key,
         })
-    }
-
-    /// Wraps a connection accepted by [`QuicServer`] for in-process tests.
-    #[cfg(all(test, feature = "overlay"))]
-    pub(crate) fn from_accepted(connection: quinn::Connection, remote_key: AdnlPublicKey) -> Self {
-        Self {
-            _endpoint: None,
-            connection,
-            remote_key,
-        }
     }
 
     /// Sends a `quic.query` on a fresh bidirectional stream and waits for the
@@ -169,49 +156,6 @@ impl QuicSession {
         timeout: Duration,
     ) -> Result<DhtValueResult, AdnlError> {
         let query = tl_proto::serialize(DhtMessage::FindValue { key, k: count });
-        let response = self.send_query(query, timeout).await?;
-        tl_proto::deserialize(&response).map_err(|e| AdnlError::TlsConfig(e.to_string()))
-    }
-
-    /// Sends an overlay getRandomPeers query over QUIC.
-    ///
-    /// `quic.query.data` must carry the `overlay.query{overlay}` header -
-    /// upstream `ton_api.tl` defines `overlay.query overlay:int256 = True;`
-    /// as a 4-byte constructor plus the 32-byte overlay id, with the inner
-    /// query bytes appended RAW (no `bytes` length prefix) - because the
-    /// member dispatches on that prefix: `OverlayManager` subscribes only
-    /// `overlay.query`/`overlay.queryWithExtra` (plus the two message
-    /// constructors) on the member's NODE id, and a bare inner query
-    /// matches no prefix, so it is dropped with "no callbacks for custom
-    /// query" and `QuicSender::on_inbound_query` has no error branch - no
-    /// `quic.answer` is sent and the client just times out. That was the
-    /// recorded pre-fix symptom: 4/4 completed mainnet handshakes never
-    /// answered `overlay.getRandomPeers` within 15s. The retained evidence
-    /// and protocol notes live in `docs/reference/README.md`.
-    ///
-    /// The framing matches the proven UDP path
-    /// (`AdnlUdpSession::send_overlay_get_random_peers_with_id`) and
-    /// upstream's `OverlayManager::send_query_via`.
-    ///
-    /// `peers` stays empty: the QUIC session has no signed local overlay
-    /// node (the UDP client builds one from its channel address list), and
-    /// that is safe because upstream `OverlayImpl::process_query` answers
-    /// `overlay.getRandomPeers` regardless of the list - `add_peers` of an
-    /// empty `overlay.nodes` is a no-op. The only cost is peer admission,
-    /// not the answer: an outgoing query with an empty `peers` list does
-    /// not queue this node in the member's `pending_peers_` (see
-    /// the overlay protocol notes in `docs/reference/README.md`), so ping-back
-    /// visibility is left to the UDP path that carries the signed record.
-    #[cfg(feature = "overlay")]
-    pub async fn overlay_get_random_peers(
-        &self,
-        overlay: Int256,
-        timeout: Duration,
-    ) -> Result<OverlayNodesBoxed, AdnlError> {
-        let mut query = tl_proto::serialize(OverlayQuery::Query { overlay });
-        query.extend(tl_proto::serialize(OverlayQuery::GetRandomPeers {
-            peers: OverlayNodes { nodes: Vec::new() },
-        }));
         let response = self.send_query(query, timeout).await?;
         tl_proto::deserialize(&response).map_err(|e| AdnlError::TlsConfig(e.to_string()))
     }

@@ -1,6 +1,6 @@
 #![expect(
     clippy::cast_possible_truncation,
-    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+    reason = "TON and ADNL wire fields are intentionally represented at protocol widths"
 )]
 //! TVM stack values used by smart-contract get-method calls.
 

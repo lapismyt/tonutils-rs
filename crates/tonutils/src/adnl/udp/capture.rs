@@ -4,8 +4,8 @@
 //! JSONL file: raw datagrams as read off the socket by the receive
 //! thread (`datagram`), the decoded `adnl.packetContents` bodies
 //! sessions dispatch (`packetContents`), and the payload of
-//! `adnl.message.custom` messages (`custom`) - the wrapper that overlay
-//! broadcasts and mempool external messages ride in.  The capture is
+//! `adnl.message.custom` messages (`custom`) - plaintext custom payloads.
+//! The capture is
 //! armed by environment variables, read once on first use:
 //!
 //! - `ADNL_UDP_CAPTURE_FILE`: the JSONL file to append to; while

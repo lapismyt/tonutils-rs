@@ -1,7 +1,7 @@
 //! State machine for one authenticated ADNL session over UDP.
 //!
-//! The transport half lives here; the query half (`dht_find_node`,
-//! `overlay_get_random_peers`, and friends) is a second inherent block in
+//! The transport half lives here; the query half (DHT lookups and
+//! friends) is a second inherent block in
 //! [`session::query`] so both files stay readable.  The receive, send,
 //! and channel-control halves are [`session::receive`],
 //! [`session::send`], and [`session::control`].
@@ -108,7 +108,7 @@ pub(crate) struct SessionInner {
     remote: AdnlPublicKey,
     remote_addr: Mutex<SocketAddr>,
     /// Whether this session may establish ADNL channels.  One-shot
-    /// sessions (DHT/overlay lookups) disable it: they are dropped
+    /// sessions (DHT lookups) disable it: they are dropped
     /// right after the query, and a peer that keeps the negotiated
     /// channel for as long as it holds our ADNL node id.  Every later
     /// session would then receive channel packets it cannot decrypt.
@@ -151,7 +151,7 @@ pub(crate) struct SessionInner {
     /// [`AdnlUdpSession::send_answer`] removes the entry, so its log
     /// line reports how long the peer's query waited inside this
     /// process before the answer left - the leg a peer's
-    /// `overlay.ping` deadline is measured against.
+    /// liveness-probe deadline is measured against.
     inbound_queries: Mutex<VecDeque<InboundQuery>>,
     /// Synchronous answers for inbound queries, by the query's outer TL
     /// constructor word, registered through
@@ -395,13 +395,11 @@ impl AdnlUdpSession {
     /// Sends an answer to an inbound query and logs how long that
     /// query waited inside this process since its datagram was read.
     ///
-    /// A peer's `overlay.ping`/`dht.ping` answer is what grants this
-    /// node liveness on that peer (upstream allows five seconds, see
-    /// `OverlayImpl::check_pending_peer` in `overlay/overlay-peers.cpp`)
-    /// and what admits it into the peer's broadcast fan-out, so this
-    /// latency decides whether pushes ever arrive.  The value is
-    /// logged even when the send itself fails: it measures the wait,
-    /// not the outcome.
+    /// A peer measures this node's liveness by the time its query
+    /// takes to answer (upstream allows five seconds for the pending-peer
+    /// check), so this latency decides whether the peer keeps the node
+    /// reachable.  The value is logged even when the send itself fails:
+    /// it measures the wait, not the outcome.
     pub async fn send_answer(&self, query_id: Int256, answer: Vec<u8>) -> Result<usize, AdnlError> {
         self.inner.send_answer_to(&query_id, answer).await
     }
@@ -432,10 +430,10 @@ impl AdnlUdpSession {
     /// The closure must not call back into this session.
     ///
     /// This exists because a peer's liveness probes are answered on a
-    /// deadline (five seconds, `OverlayImpl::check_pending_peer`), and
-    /// an answer the consumer builds can queue behind application work
-    /// for longer than that: the live gate measured `overlay.ping`
-    /// answers taking seconds while the application runtime was busy.
+    /// deadline (five seconds), and an answer the consumer builds can
+    /// queue behind application work for longer than that: live runs
+    /// measured answers taking seconds while the application runtime was
+    /// busy.
     /// The receive loop keeps servicing these registrations even while
     /// the consumer's inbox is applying backpressure (see
     /// [`Self::inbox_drops`]).

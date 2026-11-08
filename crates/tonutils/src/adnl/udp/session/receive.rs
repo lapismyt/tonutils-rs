@@ -392,13 +392,12 @@ impl SessionInner {
     /// Logs the in-process wait of one answered query and drops its
     /// record.
     ///
-    /// The peer measures its `overlay.ping` round trip against a
-    /// deadline before marking this node alive and admitting it into
-    /// its broadcast fan-out (upstream `OverlayImpl::check_pending_peer`
-    /// allows five seconds), so this value is what decides whether
-    /// pushes ever arrive.  It is stamped at the socket read, not at
-    /// the session's turn, so a stalled demultiplexer or session task
-    /// shows up in full.
+    /// The peer measures a liveness-probe round trip against a deadline
+    /// before marking this node alive (upstream's pending-peer check
+    /// allows five seconds), so this value is what decides whether the
+    /// peer keeps the node reachable.  It is stamped at the socket read,
+    /// not at the session's turn, so a stalled demultiplexer or session
+    /// task shows up in full.
     pub(super) fn log_answer_latency(&self, query_id: &Int256) {
         let at = {
             let mut inbound = self.inbound_queries.lock().unwrap();

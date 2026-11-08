@@ -1,10 +1,10 @@
 //! Differential audit of hand-written network TL types against the pinned
 //! upstream `ton_api.tl` schema.
 //!
-//! This is an offline protocol-divergence detector for the DHT, ADNL,
-//! overlay, and QUIC surfaces. It checks, without any network access:
+//! This is an offline protocol-divergence detector for the DHT, ADNL, and
+//! QUIC surfaces. It checks, without any network access:
 //!
-//! 1. every constructor id hard-coded in the ADNL and overlay wire modules must be a
+//! 1. every constructor id hard-coded in the ADNL wire modules must be a
 //!    constructor id computed from the upstream schema, so invented or stale
 //!    ids fail the test;
 //! 2. every schema-shaped doc comment must match the upstream definition
@@ -20,13 +20,13 @@
 //! upstream TON TL parser output for the audited constructors; the
 //! calibration table pins it to ids verified on real wire traffic.
 //!
-//! Scope is `adnl::tl` and `overlay::tl` (network protocol types). LiteAPI
-//! types in `liteclient::tl` are audited by `schema_check.rs`.
+//! Scope is `adnl::tl` (network protocol types). LiteAPI types in
+//! `liteclient::tl` are audited by `schema_check.rs`.
 
 use std::collections::{HashMap, HashSet};
 
 const SCHEMA: &str = include_str!("../schemas/ton_api.tl");
-const SOURCES: [(&str, &str); 5] = [
+const SOURCES: [(&str, &str); 3] = [
     ("adnl/tl/mod.rs", include_str!("../../adnl/tl/mod.rs")),
     (
         "adnl/tl/message.rs",
@@ -35,11 +35,6 @@ const SOURCES: [(&str, &str); 5] = [
     (
         "adnl/tl/public_key.rs",
         include_str!("../../adnl/tl/public_key.rs"),
-    ),
-    ("overlay/tl/mod.rs", include_str!("../../overlay/tl/mod.rs")),
-    (
-        "overlay/tl/fullnode.rs",
-        include_str!("../../overlay/tl/fullnode.rs"),
     ),
 ];
 
@@ -51,10 +46,7 @@ const WIRE_CALIBRATION: &[(&str, u32)] = &[
     ("dht.findNode", 0x6ce2ce6b),
     ("adnl.packetContents", 0xd142cd89),
     ("adnl.addressList", 0x2227e658),
-    ("overlay.nodes", 0xe487290e),
-    ("overlay.getRandomPeersV2", 0xa58e7ecc),
     ("adnl.message.nop", 0x17f8dfda),
-    ("overlay.emptyCertificate", 0x32dabccf),
 ];
 
 #[derive(Debug)]
@@ -268,7 +260,7 @@ fn hardcoded_constructor_ids_exist_in_upstream_schema() {
         }
     }
     assert!(
-        audited >= 60,
+        audited >= 45,
         "only {audited} hard-coded ids audited; the source parser regressed"
     );
 }

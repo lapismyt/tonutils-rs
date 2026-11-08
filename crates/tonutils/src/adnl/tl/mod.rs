@@ -21,7 +21,7 @@ pub struct Int128(pub i32, pub i32, pub i32, pub i32);
 /// adnl.id.short id:int256 = adnl.id.Short;
 ///
 /// Written BARE when it appears as a field type: `ton_api.tl` spells those
-/// fields with the constructor name (`overlay.node.toSign id:adnl.id.short`,
+/// fields with the constructor name (`dht.node id:PublicKey`,
 /// `packetContents from_short:flags.1?adnl.id.short`), which the reference
 /// SDKs encode without the constructor prefix.  Use
 /// [`AdnlIdShort::boxed_bytes`] when a top-level object needs
@@ -384,10 +384,10 @@ pub struct DhtStored;
 
 /// dht.pong random_id:long = dht.Pong;
 ///
-/// The `dht.ping` answer.  pytoniq nodes ping their overlay peers with
-/// `dht.ping` (not `overlay.ping`) and drop a peer whose pings go
-/// unanswered four times (`Node.ping` in `pytoniq/adnl/adnl.py`), so
-/// answering this constructor is what keeps a peer in their peer list.
+/// The `dht.ping` answer.  pytoniq nodes ping their peers with `dht.ping`
+/// and drop a peer whose pings go unanswered four times (`Node.ping` in
+/// `pytoniq/adnl/adnl.py`), so answering this constructor is what keeps a
+/// peer in their peer list.
 #[derive(TlRead, TlWrite, Debug, Clone, Copy, PartialEq, Eq)]
 #[tl(boxed, id = 0x5a8aef81)]
 pub struct DhtPong {
@@ -542,10 +542,6 @@ mod tests {
         DhtKeyDescription, DhtMessage, DhtNodes, DhtUpdateRule, DhtValue, DhtValueBare,
         DhtValueResult, Int256, PacketContents, QuicAnswer, QuicMessage, QuicQuery, TlPublicKey,
     };
-    #[cfg(feature = "overlay")]
-    use crate::overlay::tl::{
-        OverlayNodeToSign, TonNodeExternalMessage, TonNodeExternalMessageBroadcast,
-    };
     use tl_proto::{deserialize, serialize};
 
     #[test]
@@ -672,21 +668,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "overlay")]
-    #[test]
-    fn overlay_node_to_sign_uses_canonical_constructor() {
-        assert_eq!(
-            &serialize(OverlayNodeToSign {
-                id: AdnlIdShort {
-                    id: Int256([2; 32])
-                },
-                overlay: Int256([3; 32]),
-                version: 4,
-            })[..4],
-            &0x03d8a8e1u32.to_le_bytes()
-        );
-    }
-
     #[test]
     fn packet_contents_roundtrips_optional_channel_fields() {
         let value = PacketContents {
@@ -724,19 +705,6 @@ mod tests {
         assert_eq!(&bytes[..4], &0xd142cd89u32.to_le_bytes());
         let decoded: PacketContents = deserialize(&bytes).unwrap();
         assert_eq!(decoded, value);
-    }
-
-    #[cfg(feature = "overlay")]
-    #[test]
-    fn external_message_broadcast_uses_canonical_constructor() {
-        let bytes = serialize(TonNodeExternalMessageBroadcast {
-            message: TonNodeExternalMessage {
-                data: vec![0xb5, 0xee, 0x9c, 0x72],
-            },
-        });
-        assert_eq!(&bytes[..4], &0x3d1b1867u32.to_le_bytes());
-        let decoded: TonNodeExternalMessageBroadcast = deserialize(&bytes).unwrap();
-        assert_eq!(decoded.message.data, vec![0xb5, 0xee, 0x9c, 0x72]);
     }
 
     #[test]

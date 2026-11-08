@@ -1,8 +1,7 @@
-//! Shared-socket transport policy: probe addressing and demux isolation.
+//! Shared-socket transport policy: session addressing and demux isolation.
 //!
-//! Both tests guard what a shared `AdnlUdpTransport` must not do: a
-//! dial must not repoint an established session, and one saturated
-//! session must not stall the socket's other sessions.
+//! The tests guard what a shared `AdnlUdpTransport` must not do: one
+//! saturated session must not stall the socket's other sessions.
 
 use std::time::Duration;
 
@@ -10,54 +9,6 @@ use crate::adnl::{
     AdnlKeyPair, AdnlUdpSession, AdnlUdpTransport,
     tl::{AdnlMessage, PacketContents},
 };
-
-#[cfg(feature = "overlay")]
-use crate::tl::TlInt256 as Int256;
-
-/// One peer advertises several endpoints; a probe of one of them must
-/// not repoint the session at it.
-#[cfg(feature = "overlay")]
-#[tokio::test]
-async fn probe_sessions_keep_the_adopted_address() {
-    let transport = AdnlUdpTransport::bind(
-        "127.0.0.1:0".parse().unwrap(),
-        AdnlKeyPair::generate(&mut rand::rngs::OsRng),
-    )
-    .await
-    .expect("transport must bind");
-    let peer = AdnlKeyPair::generate(&mut rand::rngs::OsRng);
-    let established: std::net::SocketAddr = "127.0.0.1:41001".parse().unwrap();
-    let candidate: std::net::SocketAddr = "127.0.0.1:41002".parse().unwrap();
-
-    let session = transport.session_for_peer(peer.public_key, established);
-    assert_eq!(session.remote_addr(), established);
-
-    // A dial-only caller gets the same session and must not repoint it:
-    // a concurrent sweep over candidate endpoints used to strand the
-    // manager's keepalives on whichever candidate adopted last.
-    let probe = transport.session_for_probe(peer.public_key, candidate);
-    assert_eq!(
-        probe.remote_addr(),
-        established,
-        "a probe must not adopt a candidate endpoint"
-    );
-
-    // An addressed send keeps the adopted address too: the destination
-    // rides on that packet only.
-    probe
-        .send_overlay_get_random_peers_to(candidate, Int256([7; 32]))
-        .await
-        .expect("an addressed send must reach the socket layer");
-    assert_eq!(
-        session.remote_addr(),
-        established,
-        "an addressed send must not adopt its destination"
-    );
-
-    // The deliberate adopt path keeps working for the manager.
-    transport.session_for_peer(peer.public_key, candidate);
-    assert_eq!(session.remote_addr(), candidate);
-}
 
 /// A session whose consumer stalls must not block the shared socket's
 /// demultiplexer.

@@ -109,15 +109,6 @@ def dht_value(value: dict) -> dict:
     }
 
 
-def overlay_node(node: dict) -> dict:
-    return {
-        "id": pubkey(node["id"]),
-        "overlay": node["overlay"],
-        "version": node["version"],
-        "signature": bytes.fromhex(node["signature"]),
-    }
-
-
 def payload(constructor: str, fields: dict) -> dict:
     if constructor == "dht.findNode":
         return {"key": fields["key"], "k": fields["k"]}
@@ -135,12 +126,6 @@ def payload(constructor: str, fields: dict) -> dict:
         return {"value": dht_value(fields["value"])}
     if constructor == "dht.valueNotFound":
         return {"nodes": {"nodes": [dht_node(node) for node in fields["nodes"]]}}
-    if constructor == "overlay.getRandomPeers":
-        return {"peers": {"nodes": [overlay_node(node) for node in fields["peers"]]}}
-    if constructor == "overlay.ping":
-        return {}
-    if constructor == "overlay.query":
-        return {"overlay": fields["overlay"]}
     if constructor == "adnl.message.query":
         return {"query_id": fields["query_id"], "query": bytes.fromhex(fields["query"])}
     if constructor == "adnl.message.answer":

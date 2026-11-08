@@ -86,15 +86,15 @@ jobs:
         run: python3 scripts/cross_sdk/gen_py.py
 
       - name: Verify fixtures against tonutils-rs
-        run: cargo test -p tonutils --features tl,adnl,overlay,liteclient --lib tl::tests::cross_sdk
+        run: cargo test -p tonutils --features tl,adnl,liteclient --lib tl::tests::cross_sdk
 
   live-tests:
-    name: Live mainnet DHT, UDP, QUIC, and liteserver gates
+    name: Live mainnet DHT and liteserver gates
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
       RUST_LOG: tonutils=debug
-      TON_LIVE_FEATURES: liteclient,mempool,overlay-config
+      TON_LIVE_FEATURES: liteclient
       TON_LIVE_LOG_DIR: ${{ github.workspace }}/live-logs
     steps:
       - name: Checkout
@@ -135,14 +135,6 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/run-live-test.sh live_probe mainnet_dht_find_node_returns_valid_nodes
 
-      - name: Run UDP overlay.getRandomPeers gate
-        if: ${{ !cancelled() }}
-        run: ./scripts/run-live-test.sh live_probe mainnet_udp_overlay_get_random_peers_returns_valid_nodes
-
-      - name: Run QUIC handshake and overlay.getRandomPeers gate
-        if: ${{ !cancelled() }}
-        run: ./scripts/run-live-test.sh live_probe mainnet_quic_overlay_get_random_peers_returns_valid_nodes
-
       - name: Run liteserver masterchain info gate
         if: ${{ !cancelled() }}
         run: ./scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_get_masterchain_info_smoke
@@ -160,57 +152,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: live-probe-logs
-          path: ${{ github.workspace }}/live-logs
-          retention-days: 7
-          if-no-files-found: warn
-
-  live-delivery:
-    name: Live public overlay payload gate
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      RUST_LOG: tonutils=debug
-      TON_LIVE_FEATURES: mempool,overlay-config
-      TON_LIVE_LOG_DIR: ${{ github.workspace }}/live-logs
-      TON_MEMPOOL_LIVE_OVERLAY_MAX_PEERS: '256'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      - name: Cache Cargo
-        uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-live-delivery-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-live-delivery-
-            ${{ runner.os }}-cargo-live-
-            ${{ runner.os }}-cargo-
-
-      - name: Load public TON global config
-        run: |
-          {
-            echo 'TON_GLOBAL_CONFIG_JSON<<TON_GLOBAL_CONFIG_JSON_EOF'
-            curl --fail --silent --show-error --location \
-              --retry 5 --retry-all-errors --retry-delay 2 \
-              https://ton.org/global.config.json
-            echo 'TON_GLOBAL_CONFIG_JSON_EOF'
-          } >> "$GITHUB_ENV"
-
-      - name: Run public overlay delivery gate
-        if: ${{ !cancelled() }}
-        run: ./scripts/run-live-test.sh live_delivery mainnet_public_overlay_delivers_payload
-
-      - name: Upload delivery log
-        if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: live-delivery-logs
           path: ${{ github.workspace }}/live-logs
           retention-days: 7
           if-no-files-found: warn

@@ -1,6 +1,6 @@
 #![expect(
     clippy::cast_possible_truncation,
-    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+    reason = "TON and ADNL wire fields are intentionally represented at protocol widths"
 )]
 use super::{
     load_maybe_anycast, load_maybe_ref_cell, load_maybe_tick_tock, load_message_body,

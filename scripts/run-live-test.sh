@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   echo "usage: $0 <test-target|lib> <exact-test-name>" >&2
-  echo "  TON_LIVE_FEATURES  cargo features (default: liteclient,mempool,overlay-config)" >&2
+  echo "  TON_LIVE_FEATURES  cargo features (default: liteclient)" >&2
   echo "  TON_LIVE_LOG_DIR   evidence log directory (default: target/live-test-logs)" >&2
 }
 
@@ -14,7 +14,7 @@ fi
 
 target="$1"
 test_name="$2"
-features="${TON_LIVE_FEATURES:-liteclient,mempool,overlay-config}"
+features="${TON_LIVE_FEATURES:-liteclient}"
 log_dir="${TON_LIVE_LOG_DIR:-target/live-test-logs}"
 log_name="${target//\//_}-${test_name//:/_}.log"
 log_path="$log_dir/$log_name"

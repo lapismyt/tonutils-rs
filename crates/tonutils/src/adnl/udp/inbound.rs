@@ -1,26 +1,21 @@
 //! The process-wide executor that runs the inbound ADNL datagram path.
 //!
 //! Latency on this path is not a quality-of-service detail: a peer keeps a
-//! node it learned about in a pending set, verifies it with `overlay.ping`
-//! on a five second deadline, and only promotes a node whose `overlay.pong`
-//! arrives in time to a verified member that receives broadcast fan-out
-//! (`OverlayImpl::check_pending_peer` in `overlay/overlay-peers.cpp`).
-//! Upstream reads the socket and dispatches inbound datagrams on the
-//! network manager's own receive thread (`AdnlNetworkManager` in
+//! node it learned about in a pending set, verifies it with a liveness probe
+//! on a five second deadline, and only promotes a node whose answer arrives
+//! in time. Upstream reads the socket and dispatches inbound datagrams on
+//! the network manager's own receive thread (`AdnlNetworkManager` in
 //! `adnl/adnl-network-manager.cpp`) for the same reason: the application's
 //! threads must not be able to delay an answer that gates liveness.
 //!
 //! Running the demultiplexer and the session receive loops as ordinary
 //! tasks on the caller's runtime ties every inbound datagram to that
-//! runtime's task queue.  On the live delivery gate each of the eight
-//! samples is a single-threaded runtime whose ready queue regularly holds
-//! seconds of scanner work: run 39114243866 measured 15-50 % of inbound
-//! datagrams waiting over a second in a session queue, up to 15 s, and
-//! every session of a process stalled at the same instant (several
-//! sessions logging 10.1 s waits together), while the same build answered
-//! `overlay.ping` in milliseconds on an idle host and was pushed a
-//! broadcast within a second.  The ping answer itself was not slow; it
-//! queued behind unrelated task polls.
+//! runtime's task queue.  On a busy single-threaded runtime whose ready
+//! queue regularly holds seconds of application work, 15-50 % of inbound
+//! datagrams waited over a second in a session queue, up to 15 s, and
+//! every session of a process stalled at the same instant.  The same build
+//! answered a liveness probe in milliseconds on an idle host.  The answer
+//! itself was not slow; it queued behind unrelated task polls.
 //!
 //! Inbound work therefore gets a thread of its own: one current-thread
 //! runtime for the whole process, parked unless a datagram arrives, so a

@@ -17,17 +17,12 @@
 //!   to a lookup socket that is about to be dropped.
 //! * **What did the peer ask?**  A query that lands on a one-shot lookup socket
 //!   is never answered - the wait loop only looks for a matching `Answer` - so
-//!   an `overlay.ping` received there leaves no trace in the overlay counters.
+//!   such a query leaves no trace in the session diagnostics.
 
 use crate::adnl::{
     tl::{AdnlMessage, PacketContents},
     udp::{note_our_addr_version, note_peer_holds_our_addr, our_addr_view, session::SessionInner},
 };
-
-#[cfg(feature = "overlay")]
-use crate::overlay::tl::OverlayQuery;
-#[cfg(feature = "overlay")]
-use tl_proto::TlRead;
 
 impl SessionInner {
     /// Logs every receive-side signal that explains a silent peer.
@@ -107,10 +102,6 @@ impl SessionInner {
 
     /// Logs every inbound `adnl.message.query` together with its TL ids.
     ///
-    /// The overlay wraps its queries in `overlay.query overlay:int256`, so the
-    /// inner id - `overlay.ping`, `overlay.getRandomPeers`,
-    /// `overlay.getRandomPeersV2` - is what identifies the traffic.
-    ///
     /// Answers are logged as well, keyed by peer, because a query and an
     /// answer exercise different directions of the same pair: comparing who
     /// answers us with who holds an address list for us separates "the peer
@@ -132,32 +123,13 @@ impl SessionInner {
             let AdnlMessage::Query { query_id, query } = message else {
                 continue;
             };
-            #[cfg(feature = "overlay")]
-            let wrapped = {
-                let mut rest: &[u8] = query;
-                if let Ok(OverlayQuery::Query { overlay }) = OverlayQuery::read_from(&mut rest) {
-                    peek_u32(rest).map(|id| (id, hex::encode(overlay.0)))
-                } else {
-                    None
-                }
-            };
-            #[cfg(not(feature = "overlay"))]
-            let wrapped: Option<(u32, String)> = None;
-            match wrapped {
-                Some((inner, overlay)) => log::debug!(
-                    "ADNL inbound overlay query: peer={:?} query_id={} inner=0x{inner:08x} overlay={overlay} len={}",
-                    self.remote_id,
-                    query_id.to_hex(),
-                    query.len(),
-                ),
-                None => log::debug!(
-                    "ADNL inbound query: peer={:?} query_id={} id={} len={}",
-                    self.remote_id,
-                    query_id.to_hex(),
-                    peek_u32(query).map_or_else(|| "?".into(), |id| format!("0x{id:08x}")),
-                    query.len(),
-                ),
-            }
+            log::debug!(
+                "ADNL inbound query: peer={:?} query_id={} id={} len={}",
+                self.remote_id,
+                query_id.to_hex(),
+                peek_u32(query).map_or_else(|| "?".into(), |id| format!("0x{id:08x}")),
+                query.len(),
+            );
         }
     }
 }

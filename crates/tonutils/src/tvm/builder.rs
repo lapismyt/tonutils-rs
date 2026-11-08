@@ -1,7 +1,7 @@
 #![expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
-    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+    reason = "TON and ADNL wire fields are intentionally represented at protocol widths"
 )]
 //! Enhanced Builder for constructing cells with convenient methods
 //!

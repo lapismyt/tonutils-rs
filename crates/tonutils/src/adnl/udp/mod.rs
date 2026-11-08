@@ -1,6 +1,6 @@
 #![expect(
     clippy::cast_possible_truncation,
-    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+    reason = "TON and ADNL wire fields are intentionally represented at protocol widths"
 )]
 //! Datagram framing for ADNL sessions.
 //!
@@ -56,9 +56,9 @@ const REQUEST_CHANNEL_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Query ids one socket keeps for the stray-answer diagnostic.
 ///
-/// A live session sends one `overlay.getRandomPeers` per keepalive interval, so
-/// this window covers many multiples of that interval; a lookup socket sends
-/// far fewer.  Ids fall off the front, which can only turn a diagnostic line
+/// A live session sends keepalive queries periodically, so this window covers
+/// many multiples of that interval; a lookup socket sends far fewer.  Ids
+/// fall off the front, which can only turn a diagnostic line
 /// into silence, never into a wrong answer.
 const MAX_TRACKED_QUERIES: usize = 128;
 
@@ -104,7 +104,7 @@ pub fn local_reinit_date() -> i32 {
 /// keeps validating the *same* pair state for every one of them.  A second
 /// session that restarts `seqno` at 1 therefore has all of its packets
 /// rejected as replays by the peer, which shows up as unanswered queries and
-/// `overlay_packets: 0`.
+/// a silent peer.
 ///
 /// The counters that the peer validates across the whole pair are kept here
 /// keyed by the remote ADNL id.  Replay-window bookkeeping (`received`) stays
@@ -261,10 +261,10 @@ fn our_addr_view(remote_id: &[u8; 32]) -> (i32, u16) {
 /// every outgoing packet (`AdnlPeerPairImpl::send_packet` in
 /// `adnl/adnl-peer.cpp`), so the first echo is the observable moment the peer
 /// stored a routable address for this node - the precondition for it to
-/// originate `overlay.ping` and broadcasts.  Live overlay runs show the
-/// peers that ping this node are exactly the ones that echo the version, so
-/// this counter separates "the peer cannot reach us" from "the peer does not
-/// implement the pending-drain admission".
+/// originate liveness probes.  Live runs show the peers that probe this node
+/// are exactly the ones that echo the version, so this counter separates
+/// "the peer cannot reach us" from "the peer does not implement the
+/// pending-drain admission".
 pub fn address_storing_peers() -> u64 {
     ADDRESS_STORING_PEERS.load(Ordering::Relaxed)
 }
@@ -420,7 +420,7 @@ impl AdnlUdpSocket {
 /// cannot tell a bit that was genuinely absent from the wire apart from one the
 /// field mapping failed to surface.  For `recv_addr_list_version` those two
 /// readings are opposites: absent means the peer holds no address for this node
-/// and therefore cannot originate an `overlay.ping`, while present-but-ignored
+/// and therefore cannot originate a liveness probe, while present-but-ignored
 /// would point at this crate's TL mapping instead.  Upstream always answers from
 /// a connection it holds an address on
 /// (`AdnlPeerPairImpl::get_conn` returns `no active connections` otherwise), so

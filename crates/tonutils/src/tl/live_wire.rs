@@ -1,6 +1,6 @@
 #![expect(
     clippy::cast_possible_truncation,
-    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+    reason = "TON and ADNL wire fields are intentionally represented at protocol widths"
 )]
 //! Live mainnet wire fixtures: bytes captured from official TON nodes
 //! through the opt-in ADNL capture facility (`tonutils::adnl`'s
@@ -8,25 +8,19 @@
 //!
 //! Unlike the cross-SDK fixtures these are not reproducible reference
 //! serializations - they are what real nodes actually sent.  The tests
-//! pin three properties: the ADNL datagram envelope framing, that our
+//! pin two properties: the ADNL datagram envelope framing, and that our
 //! `adnl.packetContents` decoder maps every observed constructor to the
-//! variant that re-serializes to the same bytes, and that our overlay
-//! decoders round-trip verbatim peer broadcast frames byte-for-byte.
+//! variant that re-serializes to the same bytes.
 //! Fixture provenance (harness, dates, per-case peers) lives in
 //! `fixtures/cross_sdk/manifest.json` and in each file's cases.
 
 use serde_json::Value;
 
-use crate::{
-    adnl::tl::PacketContents,
-    overlay::tl::{
-        OverlayBroadcast, OverlayBroadcastFec, OverlayMessage, TonNodeExternalMessageBroadcast,
-    },
-};
+use crate::adnl::tl::PacketContents;
 
 /// Live wire fixtures bundled with the crate; the cross-SDK manifest
 /// test matches this list against `fixtures/cross_sdk/manifest.json`.
-pub(super) const LIVE_WIRE_FIXTURE_FILES: [(&str, &str); 3] = [
+pub(super) const LIVE_WIRE_FIXTURE_FILES: [(&str, &str); 2] = [
     (
         "live_adnl_udp_datagrams.json",
         include_str!("../../../../fixtures/cross_sdk/live_adnl_udp_datagrams.json"),
@@ -34,10 +28,6 @@ pub(super) const LIVE_WIRE_FIXTURE_FILES: [(&str, &str); 3] = [
     (
         "live_packet_contents.json",
         include_str!("../../../../fixtures/cross_sdk/live_packet_contents.json"),
-    ),
-    (
-        "live_overlay_broadcasts.json",
-        include_str!("../../../../fixtures/cross_sdk/live_overlay_broadcasts.json"),
     ),
 ];
 
@@ -152,105 +142,6 @@ fn live_packet_contents_cases_decode_and_reserialize_byte_exactly() {
             (Some(label), None) => {
                 panic!("case {name}: label {label} but no decoded message");
             }
-        }
-    }
-}
-
-/// Overlay broadcast frames ride as verbatim `adnl.message.custom`
-/// payloads: `[overlay.message][overlay id][inner TL]`.  These bytes
-/// are the peer's own serialization, so the byte-exact round-trip
-/// asserts our decoders against unmodified mainnet wire bytes.
-#[test]
-fn live_overlay_broadcast_cases_roundtrip_verbatim_peer_bytes() {
-    for case in cases_of("live_overlay_broadcasts.json", LIVE_WIRE_FIXTURE_FILES[2].1) {
-        let name = case["name"].as_str().expect("case name");
-        let raw = raw_of("live_overlay_broadcasts.json", &case);
-        let decoded: OverlayMessage = tl_proto::deserialize(&raw)
-            .unwrap_or_else(|error| panic!("case {name} must decode: {error}"));
-        let OverlayMessage::Message { overlay } = &decoded else {
-            panic!("case {name}: the wrapper must be overlay.message");
-        };
-        assert_eq!(
-            hex::encode(overlay.0),
-            case["overlay_id_hex"]
-                .as_str()
-                .expect("case overlay_id_hex"),
-            "case {name}: the overlay id must round-trip"
-        );
-        // The wrapper is a bare `[overlay.message][overlay id]` prefix of the
-        // custom payload; the inner frame follows without a length prefix
-        // (the `adnl.message.custom` `bytes` field carries the length one
-        // layer up), mirroring `unwrap_overlay_payload` in tonutils-mempool.
-        let wrapper = tl_proto::serialize(&decoded);
-        assert_eq!(
-            wrapper.len(),
-            36,
-            "case {name}: the wrapper must serialize to ctor + overlay id"
-        );
-        assert_eq!(
-            wrapper,
-            raw[..36],
-            "case {name}: the wrapper must match the peer's prefix bytes"
-        );
-        let inner = &raw[36..];
-        let label = case["inner_ctor_hex"]
-            .as_str()
-            .expect("case inner_ctor_hex");
-        match label {
-            // overlay.broadcastFec (0xbad7c36a)
-            "6ac3d7ba" => {
-                let fec: OverlayBroadcastFec = tl_proto::deserialize(inner)
-                    .unwrap_or_else(|error| panic!("case {name} FEC must decode: {error}"));
-                assert!(
-                    fec.data_size > 0,
-                    "case {name}: FEC data_size must be positive"
-                );
-                assert!(
-                    !fec.data.is_empty(),
-                    "case {name}: FEC symbols must be present"
-                );
-                assert!(
-                    fec.date > 1_700_000_000,
-                    "case {name}: FEC date must be a mainnet unix timestamp"
-                );
-                assert_eq!(
-                    tl_proto::serialize(&fec),
-                    inner,
-                    "case {name}: the inner FEC frame must round-trip byte-exactly"
-                );
-            }
-            // overlay.broadcast (0xb15a2b6b)
-            "6b2b5ab1" => {
-                let broadcast: OverlayBroadcast = tl_proto::deserialize(inner)
-                    .unwrap_or_else(|error| panic!("case {name} broadcast must decode: {error}"));
-                let OverlayBroadcast::Broadcast { data, date, .. } = &broadcast else {
-                    panic!("case {name}: the inner frame must be overlay.broadcast");
-                };
-                assert!(
-                    !data.is_empty(),
-                    "case {name}: broadcast data must be present"
-                );
-                assert!(
-                    *date > 1_700_000_000,
-                    "case {name}: broadcast date must be a mainnet unix timestamp"
-                );
-                assert_eq!(
-                    tl_proto::serialize(&broadcast),
-                    inner,
-                    "case {name}: the inner broadcast must round-trip byte-exactly"
-                );
-            }
-            // tonNode.externalMessageBroadcast (0x3d1b1867)
-            "67181b3d" => {
-                let wrapped: TonNodeExternalMessageBroadcast = tl_proto::deserialize(inner)
-                    .unwrap_or_else(|error| panic!("case {name} wrapper must decode: {error}"));
-                assert_eq!(
-                    &wrapped.message.data[..4],
-                    &[0xb5, 0xee, 0x9c, 0x72],
-                    "case {name}: the external message payload must start with the BoC magic"
-                );
-            }
-            other => panic!("case {name}: unsupported inner constructor {other}"),
         }
     }
 }

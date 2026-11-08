@@ -1,7 +1,7 @@
 #![expect(
     clippy::cast_lossless,
     clippy::cast_possible_truncation,
-    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+    reason = "TON and ADNL wire fields are intentionally represented at protocol widths"
 )]
 use crate::tvm::{Builder, Cell, HashmapE, Slice, TvmError};
 use num_bigint::BigUint;

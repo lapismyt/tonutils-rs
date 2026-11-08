@@ -1,4 +1,4 @@
-//! Cross-SDK byte comparison for DHT, overlay, ADNL, and QUIC wire values.
+//! Cross-SDK byte comparison for DHT, ADNL, and QUIC wire values.
 //!
 //! `fixtures/cross_sdk/*.json` records canonical logical fields plus the
 //! reference `raw_hex` bytes produced by tonutils-go (every case) and
@@ -14,11 +14,10 @@
 //! property that matters. Reference bytes are regenerated and verified by
 //! `scripts/cross_sdk/gen_go` and `scripts/cross_sdk/gen_py.py`, which CI
 //! runs alongside this test. Cases without `fields` are live captures (raw
-//! mainnet bytes recorded by the ignored
-//! `tonutils::mempool::tests::live::capture_cross_sdk_dht_answer_from_mainnet`
-//! test): they have no canonical input, so only the roundtrip property is
-//! asserted for them. The `note`/`references` fields mark cases a reference
-//! cannot cover because its pinned schema lacks the constructor.
+//! mainnet bytes recorded by the opt-in ADNL capture facility): they have no
+//! canonical input, so only the roundtrip property is asserted for them. The
+//! `note`/`references` fields mark cases a reference cannot cover because its
+//! pinned schema lacks the constructor.
 
 use crate::{
     adnl::tl::{
@@ -26,7 +25,6 @@ use crate::{
         DhtKey, DhtKeyDescription, DhtMessage, DhtNode, DhtNodeBoxed, DhtNodes, DhtNodesBoxed,
         DhtUpdateRule, DhtValue, DhtValueResult, QuicAnswer, QuicMessage, QuicQuery,
     },
-    overlay::tl::{OverlayNode, OverlayNodes, OverlayQuery},
     tl::TlInt256 as Int256,
 };
 
@@ -35,7 +33,7 @@ use tl_proto::{TlRead, TlWrite};
 
 use super::live_wire::LIVE_WIRE_FIXTURE_FILES;
 
-const FIXTURE_FILES: [(&str, &str); 6] = [
+const FIXTURE_FILES: [(&str, &str); 5] = [
     (
         "dht_queries.json",
         include_str!("../../../../../fixtures/cross_sdk/dht_queries.json"),
@@ -43,10 +41,6 @@ const FIXTURE_FILES: [(&str, &str); 6] = [
     (
         "dht_responses.json",
         include_str!("../../../../../fixtures/cross_sdk/dht_responses.json"),
-    ),
-    (
-        "overlay_queries.json",
-        include_str!("../../../../../fixtures/cross_sdk/overlay_queries.json"),
     ),
     (
         "quic_frames.json",
@@ -122,8 +116,8 @@ fn cross_sdk_fixtures_match_reference_serialization() {
         }
     }
     assert!(
-        total >= 18,
-        "expected at least 18 cross-SDK fixture cases, found {total}"
+        total >= 17,
+        "expected at least 17 cross-SDK fixture cases, found {total}"
     );
 }
 
@@ -221,28 +215,6 @@ fn run_case(case: &Value) {
                 nodes: DhtNodes {
                     nodes: dht_node_list(fields, "nodes"),
                 },
-            },
-            &expected,
-        ),
-        "overlay.getRandomPeers" => check(
-            name,
-            constructor,
-            OverlayQuery::GetRandomPeers {
-                peers: OverlayNodes {
-                    nodes: arr_field(fields, "peers")
-                        .iter()
-                        .map(overlay_node)
-                        .collect(),
-                },
-            },
-            &expected,
-        ),
-        "overlay.ping" => check(name, constructor, OverlayQuery::Ping, &expected),
-        "overlay.query" => check(
-            name,
-            constructor,
-            OverlayQuery::Query {
-                overlay: int256_field(fields, "overlay"),
             },
             &expected,
         ),
@@ -453,15 +425,6 @@ fn dht_value(value: &Value) -> DhtValue {
         },
         value: bytes_field(value, "value"),
         ttl: i32_field(value, "ttl"),
-        signature: bytes_field(value, "signature"),
-    }
-}
-
-fn overlay_node(value: &Value) -> OverlayNode {
-    OverlayNode {
-        id: ed25519_key(str_field(value, "id")),
-        overlay: int256_field(value, "overlay"),
-        version: i32_field(value, "version"),
         signature: bytes_field(value, "signature"),
     }
 }

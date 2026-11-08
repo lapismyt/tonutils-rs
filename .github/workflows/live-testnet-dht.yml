@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 20
     env:
       RUST_LOG: tonutils=debug
-      TON_LIVE_FEATURES: mempool,overlay-config
+      TON_LIVE_FEATURES: liteclient
       TON_LIVE_LOG_DIR: ${{ github.workspace }}/live-logs
     steps:
       - name: Checkout

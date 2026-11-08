@@ -70,7 +70,7 @@ Check the individual public features when changing feature gates, imports, or
 error types:
 
 ```bash
-for feature in adnl tl tvm tlb network-config metadata liteclient contracts wallet overlay overlay-config mempool crc serde; do
+for feature in adnl tl tvm tlb network-config metadata liteclient contracts wallet crc serde; do
   cargo check -p tonutils --no-default-features --features "$feature"
 done
 ```
@@ -118,8 +118,8 @@ visible in `TODO.md`.
 
 ## Tests And Live Networks
 
-Deterministic offline tests are the default. Live liteserver, ADNL, overlay, and
-mempool tests are opt-in and must not run during a routine offline test pass.
+Deterministic offline tests are the default. Live liteserver and ADNL tests are
+opt-in and must not run during a routine offline test pass.
 Their required environment variables are documented in the live-test workflow
 and in the relevant ignored test's module-level documentation.
 

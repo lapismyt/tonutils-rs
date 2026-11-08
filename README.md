@@ -2,7 +2,7 @@
 
 `tonutils` is a pure-Rust SDK for The Open Network (TON). It implements TON
 cells, Bag of Cells (BoC), TL-B structures, TL/LiteAPI wire types, ADNL,
-overlay transport, wallets, and a direct liteserver client without depending on
+wallets, and a direct liteserver client without depending on
 a third-party TON SDK or a runtime native library.
 
 Features are opt-in and the default feature set is empty. Enable only the
@@ -75,14 +75,11 @@ It is intentionally not a proof that a liteserver answered honestly.
 | `adnl` | ADNL identity, encrypted UDP transport, QUIC transport, and ADNL TL wire types | Yes for transport |
 | `liteclient` | LiteAPI types, direct client, balancer, and typed BoC decode helpers | Yes |
 | `contracts` | Provider traits, account-state reads, and get-method stack helpers | Yes for reads |
-| `overlay` | ADNL UDP/QUIC overlay sessions, discovery, peer management and persistence, inbound serving, Plumtree public-overlay broadcasts, legacy signed simple/FEC broadcasts, DHT publication, STUN, and protocol statistics | Yes for transport |
-| `overlay-config` | Global-config bootstrap download and parsing for `OverlayNodeBuilder`; implies `overlay` and `network-config` | Yes for download |
-| `mempool` | External-message validation, deduplication, events, and client/server submission through a caller-supplied overlay client | Yes, through `overlay` |
 | `serde` | Serde support for enabled public types that expose it, currently ADNL public keys | No |
 
 `tl` owns the snapshots and shared primitives, not every TON protocol schema.
-Handwritten ADNL, LiteAPI, and overlay wire types live in `adnl::tl`,
-`liteclient::tl`, and `overlay::tl` respectively. The ownership map and wire
+Handwritten ADNL and LiteAPI wire types live in `adnl::tl` and
+`liteclient::tl` respectively. The ownership map and wire
 invariants are documented in [docs/reference/README.md](docs/reference/README.md).
 
 ## Workspace

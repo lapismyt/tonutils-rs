@@ -25,14 +25,10 @@ pub mod contracts;
 pub mod crc;
 #[cfg(feature = "liteclient")]
 pub mod liteclient;
-#[cfg(feature = "mempool")]
-pub mod mempool;
 #[cfg(feature = "metadata")]
 pub mod metadata;
 #[cfg(feature = "network-config")]
 pub mod network_config;
-#[cfg(feature = "overlay")]
-pub mod overlay;
 #[cfg(feature = "tl")]
 pub mod tl;
 #[cfg(feature = "tlb")]

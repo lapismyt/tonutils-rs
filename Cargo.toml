@@ -43,7 +43,6 @@ quinn = { version = "0.11", default-features = false, features = ["rustls-ring",
 rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pki-types = "1"
 quote = "1.0"
-raptorq = "1.7"
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }

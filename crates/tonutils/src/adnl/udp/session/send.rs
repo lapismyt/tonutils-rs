@@ -67,27 +67,6 @@ impl SessionInner {
         result
     }
 
-    /// Encodes and sends one packet to `dest` instead of the session's
-    /// adopted address.
-    ///
-    /// A probe dials candidate endpoints of a peer whose steady-state
-    /// traffic must keep the established address: the peer keys its
-    /// answers to the source address it saw last, so adopting a
-    /// candidate would repoint the manager's keepalives and broadcasts
-    /// at an endpoint that may be stale, and one concurrent sweep over
-    /// the recorded endpoints could leave the whole session pinned to a
-    /// dead one.  Everything else matches [`Self::send_contents`]; the
-    /// adopted address is left untouched.
-    #[cfg(feature = "overlay")]
-    pub(super) async fn send_contents_to(
-        &self,
-        contents: PacketContents,
-        dest: SocketAddr,
-    ) -> Result<usize, AdnlError> {
-        let mut state = self.state.lock().await;
-        self.send_locked(&mut state, contents, Some(dest)).await
-    }
-
     /// Encodes and sends a packet with the session state lock held.
     ///
     /// `dest` carries this packet to an explicit address; `None` sends
@@ -187,9 +166,8 @@ impl SessionInner {
     /// an initialized but address-less `adnl.addressList` makes the
     /// receiver record the datagram's source address implicitly.  A peer
     /// that never learns our address cannot route anything *it* initiates
-    /// to us - neither the `overlay.ping` that turns us into a verified
-    /// overlay member nor the overlay broadcasts - which leaves the node
-    /// invisible to the overlay even though its own queries are answered.
+    /// to us, which leaves the node invisible to peers even though its own
+    /// queries are answered.
     ///
     /// `version` is the current wall-clock time, not a value frozen at
     /// connect time.  The receiver keeps a single source address per peer

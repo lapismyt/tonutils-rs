@@ -57,7 +57,7 @@
 
 - **C++ (Upstream):** `ton-blockchain/ton`
 - **Go:** `xssnick/tonutils-go`, `xssnick/gton`, `tonkeeper/tongo`, `tonstack/lite-client`
-- **Rust:** `ston-fi/ton-rs`, `ston-fi/tonlib-rs`, `RSquad/ton-rust-node`, `nessshon/tonutils`, `getgems-io/ton-grpc`, `yungwine/ton-mempool`
+- **Rust:** `ston-fi/ton-rs`, `ston-fi/tonlib-rs`, `RSquad/ton-rust-node`, `nessshon/tonutils`, `getgems-io/ton-grpc`
 - **Java:** `ton-blockchain/ton4j`
 - **Python:** `yungwine/pytoniq`, `yungwine/pytoniq-core`, `yungwine/pytvm`
 - **Docs:** `docs.ton.org/llms.txt`

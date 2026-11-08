@@ -3,8 +3,8 @@
 //! This module is available with the `tl` feature and owns common identifiers,
 //! serialization helpers, checked-in schema snapshots, generated constructor
 //! metadata, and cross-schema tests. Handwritten protocol wire types live with
-//! their owning modules: `crate::adnl::tl`, `crate::liteclient::tl`, and
-//! `crate::overlay::tl`. Serialization is backed by `tl-proto`; local tests check
+//! their owning modules: `crate::adnl::tl` and `crate::liteclient::tl`.
+//! Serialization is backed by `tl-proto`; local tests check
 //! constructor ids against the checked-in schema snapshots.
 //!
 //! TL constructor ids are 32-bit little-endian values on the wire. When adding

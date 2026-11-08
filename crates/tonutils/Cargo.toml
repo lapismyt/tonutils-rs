@@ -36,12 +36,6 @@ contracts = ["liteclient", "tlb", "tl", "tvm", "dep:async-trait",
              "dep:num-bigint", "dep:thiserror"]
 wallet = ["tlb", "tvm", "dep:bip39", "dep:ed25519-dalek", "dep:hex", "dep:hmac",
           "dep:num-bigint", "dep:pbkdf2", "dep:rand", "dep:sha2", "dep:thiserror"]
-overlay = ["adnl", "tl", "dep:derivative", "dep:ed25519-dalek", "dep:futures",
-           "dep:hex", "dep:log", "dep:rand", "dep:raptorq", "dep:serde",
-           "dep:serde_json", "dep:sha2", "dep:thiserror", "dep:tl-proto", "dep:tokio"]
-overlay-config = ["overlay", "network-config", "dep:reqwest"]
-mempool = ["overlay", "tlb", "tvm", "dep:futures", "dep:hex", "dep:log",
-           "dep:sha2", "dep:thiserror", "dep:tl-proto", "dep:tokio"]
 crc = ["dep:crc"]
 serde = ["dep:serde"]
 
@@ -70,8 +64,6 @@ num-bigint = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tokio-tower = { workspace = true, optional = true }
 tonutils-macros = { workspace = true, optional = true }
-raptorq = { workspace = true, optional = true }
-reqwest = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 crc = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }

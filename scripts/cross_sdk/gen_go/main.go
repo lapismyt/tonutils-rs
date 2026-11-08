@@ -1,6 +1,6 @@
 // Command gen_go produces reference wire bytes for the cross-SDK TL fixture
-// cases using tonutils-go's TL engine and its production DHT, overlay, ADNL,
-// and message types (quic frames are registered from the upstream schema
+// cases using tonutils-go's TL engine and its production DHT, ADNL, and
+// message types (quic frames are registered from the upstream schema
 // strings; see localMessageQuery below for the rationale).
 //
 // Modes:
@@ -29,7 +29,6 @@ import (
 	"github.com/xssnick/tonutils-go/adnl/address"
 	"github.com/xssnick/tonutils-go/adnl/dht"
 	"github.com/xssnick/tonutils-go/adnl/keys"
-	"github.com/xssnick/tonutils-go/adnl/overlay"
 	"github.com/xssnick/tonutils-go/tl"
 )
 
@@ -219,16 +218,6 @@ func buildValue(constructor string, fields json.RawMessage) (any, error) {
 			return nil, err
 		}
 		return dht.ValueNotFoundResult{Nodes: dht.NodesList{List: nodes}}, nil
-	case "overlay.getRandomPeers":
-		peers, err := buildOverlayNodes(arrField(f, "peers"))
-		if err != nil {
-			return nil, err
-		}
-		return overlay.GetRandomPeers{List: overlay.NodesList{List: peers}}, nil
-	case "overlay.ping":
-		return overlay.Ping{}, nil
-	case "overlay.query":
-		return overlay.Query{Overlay: hexField(f, "overlay")}, nil
 	case "quic.query":
 		return localQuicQuery{Data: hexField(f, "data")}, nil
 	case "quic.answer":
@@ -348,20 +337,6 @@ func buildUpdateRule(name string) (any, error) {
 	default:
 		return nil, fmt.Errorf("unsupported update rule %q", name)
 	}
-}
-
-func buildOverlayNodes(items []any) ([]overlay.Node, error) {
-	nodes := make([]overlay.Node, 0, len(items))
-	for _, item := range items {
-		f := asObject(item)
-		nodes = append(nodes, overlay.Node{
-			ID:        keys.PublicKeyED25519{Key: ed25519Key(strField(f, "id"))},
-			Overlay:   hexField(f, "overlay"),
-			Version:   int32Field(f, "version"),
-			Signature: hexField(f, "signature"),
-		})
-	}
-	return nodes, nil
 }
 
 func decodeFields(raw json.RawMessage) (map[string]any, error) {

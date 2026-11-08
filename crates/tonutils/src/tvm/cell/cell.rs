@@ -1,6 +1,6 @@
 #![expect(
     clippy::cast_possible_truncation,
-    reason = "TON, ADNL, and overlay wire fields are intentionally represented at protocol widths"
+    reason = "TON and ADNL wire fields are intentionally represented at protocol widths"
 )]
 use crate::tvm::uint::UnsignedInteger;
 use crate::tvm::{TvmError, TvmResult as Result, error::cell_bail as bail};
