@@ -1,0 +1,60 @@
+name: Live testnet DHT
+
+on:
+  schedule:
+    # Weekly strict probe. The canonical testnet DHT seeds are currently
+    # unreachable; this workflow stays red until upstream recovers.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  testnet-dht:
+    name: Testnet DHT findNode gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUST_LOG: tonutils=debug
+      TON_LIVE_FEATURES: liteclient
+      TON_LIVE_LOG_DIR: ${{ github.workspace }}/live-logs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache Cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-live-testnet-dht-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-live-testnet-dht-
+            ${{ runner.os }}-cargo-live-
+
+      - name: Load testnet TON global config
+        run: |
+          {
+            echo 'TON_TESTNET_GLOBAL_CONFIG_JSON<<TON_TESTNET_GLOBAL_CONFIG_JSON_EOF'
+            curl --fail --silent --show-error --location \
+              --retry 5 --retry-all-errors --retry-delay 2 \
+              https://ton.org/testnet-global.config.json
+            echo 'TON_TESTNET_GLOBAL_CONFIG_JSON_EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Run testnet DHT findNode gate
+        run: ./scripts/run-live-test.sh live_probe testnet_dht_find_node_returns_valid_nodes
+
+      - name: Upload live probe log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-testnet-dht-logs
+          path: ${{ github.workspace }}/live-logs
+          retention-days: 7
+          if-no-files-found: warn

@@ -1,12 +1,12 @@
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion};
 use ed25519_dalek::VerifyingKey;
-use rand::{SeedableRng, rngs::StdRng};
+use rand::{rngs::StdRng, SeedableRng};
 use std::time::Duration;
-use tonutils_tvm::{Address, Builder};
-use tonutils_wallet::{
-    MAINNET_GLOBAL_ID, TonMnemonic, WALLET_V4R2_DEFAULT_ID, WALLET_V5R1_MAINNET_DEFAULT_ID,
-    WalletMessage, WalletV4R2, WalletV5R1, WalletV5R1WalletId, ton_mnemonic_seed, wallet_v4r2_code,
-    wallet_v5r1_code,
+use tonutils::tvm::{Address, Builder};
+use tonutils::wallet::{
+    ton_mnemonic_seed, wallet_v4r2_code, wallet_v5r1_code, TonMnemonic, WalletMessage, WalletV4R2,
+    WalletV5R1, WalletV5R1WalletId, MAINNET_GLOBAL_ID, WALLET_V4R2_DEFAULT_ID,
+    WALLET_V5R1_MAINNET_DEFAULT_ID,
 };
 
 const FIXTURE_MNEMONIC: &str = "open price dish charge law skirt alien churn fire swap number brass outdoor diamond lesson april remain puzzle title elbow valley grant champion staff";
