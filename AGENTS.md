@@ -34,6 +34,7 @@
 - [ ] `cargo fmt` - formatted
 - [ ] Tests added for new behavior
 - [ ] Docs updated if needed
+- [ ] CHANGELOG.md updated if needed
 
 ## 4. Git & Versioning
 - **Branches:** Dedicated branch per task. NO pushing without explicit approval. Report final branch & commit hash.
@@ -56,10 +57,10 @@
 *Use for protocol research and behavior comparison. Do not add as dependencies.*
 
 - **C++ (Upstream):** `ton-blockchain/ton`
-- **Go:** `xssnick/tonutils-go`, `xssnick/gton`, `tonkeeper/tongo`, `tonstack/lite-client`
-- **Rust:** `ston-fi/ton-rs`, `ston-fi/tonlib-rs`, `RSquad/ton-rust-node`, `nessshon/tonutils`, `getgems-io/ton-grpc`
+- **Go:** `xssnick/tonutils-go`, `xssnick/gton`, `tonkeeper/tongo`
+- **Rust:** `ston-fi/ton-rs`, `ston-fi/tonlib-rs`, `RSquad/ton-rust-node`, `getgems-io/ton-grpc`, `tonstack/lite-client`
 - **Java:** `ton-blockchain/ton4j`
-- **Python:** `yungwine/pytoniq`, `yungwine/pytoniq-core`, `yungwine/pytvm`
+- **Python:** `yungwine/pytoniq`, `yungwine/pytoniq-core`, `yungwine/pytvm`, `nessshon/tonutils`
 - **Docs:** `docs.ton.org/llms.txt`
 
 ## 8. AI Execution Hacks
