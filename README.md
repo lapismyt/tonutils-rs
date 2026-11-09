@@ -21,14 +21,14 @@ For offline cells, TL-B structures, and wallet construction:
 
 ```toml
 [dependencies]
-tonutils = { version = "2", features = ["tvm", "tlb", "wallet"] }
+tonutils = { version = "2.0", features = ["tvm", "tlb", "wallet"] }
 ```
 
 For a direct liteserver client, add the network layers you need:
 
 ```toml
 [dependencies]
-tonutils = { version = "2", features = ["liteclient"] }
+tonutils = { version = "2.0", features = ["liteclient"] }
 ```
 
 ### Offline Cell Example
