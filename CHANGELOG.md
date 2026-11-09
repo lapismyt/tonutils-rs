@@ -7,69 +7,89 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-This section describes the breaking changes being prepared for `2.0.0`. It is
+Planned as `2.0.0`. This section describes the net changes since `1.1.0` and is
 not a release tag or release date.
 
 ### Added
 
-- Added a pinned upstream TON TL/TL-B schema snapshot at commit
-  `3d478cbde854be03a18ab2a59f8fc3c565cf7d14`, complete constructor inventory,
-  generated-output hashes, canonical block schema parsing, and payload-hashed
-  compatibility fixtures.
-- Added independent `tonutils-*` crates for ADNL, contracts, CRC, jettons,
-  LiteClient, metadata, network configuration, NFTs, TL, TL-B, TVM, wallets,
-  macros, and deterministic schema generation.
-- Added provider-focused contract and wrapper boundaries, including dedicated
-  provider APIs for contract, wallet, jetton, NFT, and LiteClient workflows.
-- Added `tonutils-schema-gen`, a deterministic TL/TL-B source inventory tool
-  with SHA-256 drift checks and checked-in generated constructor metadata.
-- Added generated metadata for the tracked `lite_api.tl`, `ton_api.tl`,
-  `tonlib_api.tl`, and block TL-B schema snapshots.
+- Added an encrypted ADNL UDP transport with sessions, channel ciphers,
+  query/receive paths, and capture helpers, alongside the existing TCP peer.
+- Added ADNL wire types under `adnl::tl` and typed LiteAPI request/response
+  types under `liteclient::tl`.
+- Added `tonutils-schema-gen`, a deterministic TL/TL-B inventory tool with a
+  pinned upstream schema snapshot, constructor inventory, SHA-256 drift checks,
+  and checked-in generated metadata.
+- Added typed TL-B coverage for blocks, shard state, accounts, transactions,
+  messages, and proof structures, including compatibility fixtures.
+- Added live liteserver CI coverage and populated get-method result stacks.
 
 ### Changed
 
-- Replaced the monolithic `tonutils` library with a modular workspace of
-  independently consumable `tonutils-*` crates, all currently prepared at
-  workspace version `2.0.0`.
-- Updated examples, documentation, package manifests, release automation, and
-  CI to use the modular crate boundaries and workspace feature checks.
-- Updated workspace dependency versions and the lockfile after `v1.1.0`.
+- Consolidated the SDK into one feature-gated `tonutils` crate with opt-in
+  modules (`tvm`, `tl`, `tlb`, `wallet`, `crc`, `metadata`, `network-config`,
+  `adnl`, `liteclient`, `contracts`, `serde`); the default feature set is now
+  empty. `tonutils-cli`, `tonutils-macros`, and `tonutils-schema-gen` remain
+  separate packages.
+- Replaced the previous feature model (`std`, `adnl-tcp`, `tlb-derive`,
+  `contract-derive`, `abi-json`, `cli`, `full`) with the per-module features.
+- Bumped the workspace to `2.0.0`, edition 2024, and MSRV 1.85, with major
+  dependency upgrades (`ed25519-dalek` 3, `curve25519-dalek` 5, `syn` 3,
+  `num-bigint` 0.5, `base64` 0.23).
+- Refresh crate documentation, README, and CLI layout for the new feature and
+  crate boundaries.
 
 ### Removed
 
-- Removed the ABI API, ABI documentation, ABI fixtures, and ABI-specific CLI
-  commands from the workspace.
-- Removed the monolithic crate entry points and compatibility layout that
-  previously exposed those APIs.
+- Removed the ABI API, documentation, fixtures, and ABI-specific CLI commands.
+- Removed the jetton and NFT modules.
+- Removed the `contract-derive`/`Contract` derive and the legacy `utils`
+  helpers.
+- Removed the unreleased overlay/mempool scanner, DHT, and QUIC transport work.
 
 ### Migration
 
-- Replace the `tonutils` dependency with the specialized `tonutils-*` crates
-  needed by your application; use their public crate roots rather than the
-  former monolithic module paths.
-- Applications using the removed ABI API or CLI commands must retain a local
-  implementation or wait for a future, separately scoped ABI initiative.
+- Enable every module your application uses explicitly; no features are enabled
+  by default.
+- Replace `adnl-tcp` with `adnl`, `tlb-derive` with `tlb`, and remove `abi-json`
+  and `cli` from library features. Use the separate `tonutils-cli` package for
+  the binary.
+- Applications relying on ABI, jetton, or NFT modules must retain a local
+  implementation or wait for a separately scoped release.
 
 ## [1.1.0] - 2026-06-02
 
 ### Added
 
-- Added public ABI payload component helpers for selector-free payload encode
-  and exact decode.
+- Added public ABI payload component helpers for selector-free payload encoding
+  and exact decoding.
 - Added ABI event payload encode/decode helpers using the same local wire policy
   as message bodies.
 - Added synthetic event payload fixture coverage and opt-in ABI workflow
   acceptance coverage for wallet `seqno` and TEP-74 `get_wallet_address`.
 
+### Changed
+
+- Allowed the release workflow to publish the current version.
+- Improved offline test coverage, README badges, and published documentation.
+
 ## [1.0.0] - 2026-05-19
 
 ### Added
 
-- Added GitHub Actions automation for ignored live-network tests.
-- Added GitHub Release publishing automation for crates.io releases.
+- First stable release: TVM cells, slices, builders, BoC, addresses,
+  dictionaries, and stacks; TL/TL-B types and derive support; ADNL primitives
+  and TCP transport; LiteClient and LiteBalancer; network configuration;
+  contracts and provider boundaries; Wallet V4R2/V5R1; metadata parsing; jetton
+  and NFT payload builders; ABI; and the `tonutils` CLI.
+- Added GitHub Actions automation for ignored live-network tests and GitHub
+  Release publishing for crates.io releases.
 
 ### Changed
 
 - Set the `tonutils` and `tonutils-tlb-derive` crate versions to `1.0.0`.
 - Made `tonutils-tlb-derive` publishable and versioned the root crate's optional
   path dependency for crates.io packaging.
+
+[Unreleased]: https://github.com/lapismyt/tonutils-rs/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/lapismyt/tonutils-rs/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/lapismyt/tonutils-rs/releases/tag/v1.0.0
