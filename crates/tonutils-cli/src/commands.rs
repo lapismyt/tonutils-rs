@@ -6,6 +6,12 @@ use tonutils::{
         },
         tl::{LiteServerAccountState, MasterchainInfo, RunMethodResult},
     },
+    provider::{
+        AccountState as ProviderAccountState, BlockId, GetAccountStateExt, GetMasterchainInfoExt,
+        GetTransactionsExt, MethodRef, RunGetMethodExt, RunMethodResult as ProviderRunMethodResult,
+        SendExternalMessageExt, SendMessageResult, TonApi, ToncenterV2, ToncenterV3,
+        TransactionList as ProviderTransactionList,
+    },
     tlb::{Account, AccountState},
 };
 
@@ -65,30 +71,61 @@ pub(super) fn network_name(network: Network) -> &'static str {
     }
 }
 
+pub(super) enum HttpBackend {
+    TonApi(TonApi),
+    ToncenterV2(ToncenterV2),
+    ToncenterV3(ToncenterV3),
+}
+
 pub(super) enum HighLevelBackend {
     Single(LiteClient),
     Balanced(LiteBalancer),
+    Http(HttpBackend),
 }
 
 impl HighLevelBackend {
+    pub(super) fn provider_name(&self) -> &'static str {
+        match self {
+            HighLevelBackend::Single(_) | HighLevelBackend::Balanced(_) => "lite",
+            HighLevelBackend::Http(HttpBackend::TonApi(_)) => "tonapi",
+            HighLevelBackend::Http(HttpBackend::ToncenterV2(_)) => "toncenter-v2",
+            HighLevelBackend::Http(HttpBackend::ToncenterV3(_)) => "toncenter-v3",
+        }
+    }
+
+    pub(super) fn is_lite(&self) -> bool {
+        matches!(
+            self,
+            HighLevelBackend::Single(_) | HighLevelBackend::Balanced(_)
+        )
+    }
+
     pub(super) fn view(&self, cli: &Cli) -> BackendView {
         match self {
             HighLevelBackend::Single(_) => BackendView {
                 mode: "single",
+                provider: "lite",
                 ls_index: Some(cli.ls_index),
                 num_servers: None,
             },
             HighLevelBackend::Balanced(_) => BackendView {
                 mode: "balancer",
+                provider: "lite",
                 ls_index: None,
                 num_servers: Some(cli.num_servers),
+            },
+            HighLevelBackend::Http(_) => BackendView {
+                mode: "http",
+                provider: self.provider_name(),
+                ls_index: None,
+                num_servers: None,
             },
         }
     }
 
     pub(super) async fn close(self) -> Result<()> {
         match self {
-            HighLevelBackend::Single(_) => Ok(()),
+            HighLevelBackend::Single(_) | HighLevelBackend::Http(_) => Ok(()),
             HighLevelBackend::Balanced(mut balancer) => {
                 balancer.close_all().await?;
                 Ok(())
@@ -96,10 +133,173 @@ impl HighLevelBackend {
         }
     }
 
+    pub(super) async fn provider_masterchain_info(
+        &mut self,
+    ) -> Result<tonutils::provider::MasterchainInfo> {
+        match self {
+            HighLevelBackend::Single(client) => {
+                Ok(<LiteClient as GetMasterchainInfoExt>::get_masterchain_info(client).await?)
+            }
+            HighLevelBackend::Balanced(balancer) => {
+                Ok(<LiteBalancer as GetMasterchainInfoExt>::get_masterchain_info(balancer).await?)
+            }
+            HighLevelBackend::Http(HttpBackend::TonApi(provider)) => {
+                Ok(<TonApi as GetMasterchainInfoExt>::get_masterchain_info(provider).await?)
+            }
+            HighLevelBackend::Http(HttpBackend::ToncenterV2(provider)) => {
+                Ok(<ToncenterV2 as GetMasterchainInfoExt>::get_masterchain_info(provider).await?)
+            }
+            HighLevelBackend::Http(HttpBackend::ToncenterV3(provider)) => {
+                Ok(<ToncenterV3 as GetMasterchainInfoExt>::get_masterchain_info(provider).await?)
+            }
+        }
+    }
+
+    pub(super) async fn provider_account_state(
+        &mut self,
+        block: Option<BlockId>,
+        address: Address,
+    ) -> Result<ProviderAccountState> {
+        match self {
+            HighLevelBackend::Single(client) => Ok(
+                <LiteClient as GetAccountStateExt>::get_account_state(client, address, block)
+                    .await?,
+            ),
+            HighLevelBackend::Balanced(balancer) => Ok(
+                <LiteBalancer as GetAccountStateExt>::get_account_state(balancer, address, block)
+                    .await?,
+            ),
+            HighLevelBackend::Http(HttpBackend::TonApi(provider)) => Ok(
+                <TonApi as GetAccountStateExt>::get_account_state(provider, address, block).await?,
+            ),
+            HighLevelBackend::Http(HttpBackend::ToncenterV2(provider)) => Ok(
+                <ToncenterV2 as GetAccountStateExt>::get_account_state(provider, address, block)
+                    .await?,
+            ),
+            HighLevelBackend::Http(HttpBackend::ToncenterV3(provider)) => Ok(
+                <ToncenterV3 as GetAccountStateExt>::get_account_state(provider, address, block)
+                    .await?,
+            ),
+        }
+    }
+
+    pub(super) async fn provider_run_get_method(
+        &mut self,
+        block: Option<BlockId>,
+        address: Address,
+        method: MethodRef<'_>,
+        stack: TvmStack,
+    ) -> Result<ProviderRunMethodResult> {
+        match self {
+            HighLevelBackend::Single(client) => {
+                Ok(<LiteClient as RunGetMethodExt>::run_get_method(
+                    client, address, method, stack, block,
+                )
+                .await?)
+            }
+            HighLevelBackend::Balanced(balancer) => {
+                Ok(<LiteBalancer as RunGetMethodExt>::run_get_method(
+                    balancer, address, method, stack, block,
+                )
+                .await?)
+            }
+            HighLevelBackend::Http(HttpBackend::TonApi(provider)) => {
+                Ok(<TonApi as RunGetMethodExt>::run_get_method(
+                    provider, address, method, stack, block,
+                )
+                .await?)
+            }
+            HighLevelBackend::Http(HttpBackend::ToncenterV2(provider)) => {
+                Ok(<ToncenterV2 as RunGetMethodExt>::run_get_method(
+                    provider, address, method, stack, block,
+                )
+                .await?)
+            }
+            HighLevelBackend::Http(HttpBackend::ToncenterV3(provider)) => {
+                Ok(<ToncenterV3 as RunGetMethodExt>::run_get_method(
+                    provider, address, method, stack, block,
+                )
+                .await?)
+            }
+        }
+    }
+
+    pub(super) async fn provider_transactions(
+        &mut self,
+        count: u32,
+        address: Address,
+        lt: u64,
+        hash: Int256,
+    ) -> Result<ProviderTransactionList> {
+        match self {
+            HighLevelBackend::Single(client) => {
+                Ok(<LiteClient as GetTransactionsExt>::get_transactions(
+                    client, count, address, lt, hash,
+                )
+                .await?)
+            }
+            HighLevelBackend::Balanced(balancer) => {
+                Ok(<LiteBalancer as GetTransactionsExt>::get_transactions(
+                    balancer, count, address, lt, hash,
+                )
+                .await?)
+            }
+            HighLevelBackend::Http(HttpBackend::TonApi(provider)) => {
+                Ok(<TonApi as GetTransactionsExt>::get_transactions(
+                    provider, count, address, lt, hash,
+                )
+                .await?)
+            }
+            HighLevelBackend::Http(HttpBackend::ToncenterV2(provider)) => {
+                Ok(<ToncenterV2 as GetTransactionsExt>::get_transactions(
+                    provider, count, address, lt, hash,
+                )
+                .await?)
+            }
+            HighLevelBackend::Http(HttpBackend::ToncenterV3(provider)) => {
+                Ok(<ToncenterV3 as GetTransactionsExt>::get_transactions(
+                    provider, count, address, lt, hash,
+                )
+                .await?)
+            }
+        }
+    }
+
+    pub(super) async fn provider_send_message(
+        &mut self,
+        body: Vec<u8>,
+    ) -> Result<SendMessageResult> {
+        match self {
+            HighLevelBackend::Single(client) => Ok(
+                <LiteClient as SendExternalMessageExt>::send_external_message_boc(client, body)
+                    .await?,
+            ),
+            HighLevelBackend::Balanced(balancer) => Ok(
+                <LiteBalancer as SendExternalMessageExt>::send_external_message_boc(balancer, body)
+                    .await?,
+            ),
+            HighLevelBackend::Http(HttpBackend::TonApi(provider)) => Ok(
+                <TonApi as SendExternalMessageExt>::send_external_message_boc(provider, body)
+                    .await?,
+            ),
+            HighLevelBackend::Http(HttpBackend::ToncenterV2(provider)) => Ok(
+                <ToncenterV2 as SendExternalMessageExt>::send_external_message_boc(provider, body)
+                    .await?,
+            ),
+            HighLevelBackend::Http(HttpBackend::ToncenterV3(provider)) => Ok(
+                <ToncenterV3 as SendExternalMessageExt>::send_external_message_boc(provider, body)
+                    .await?,
+            ),
+        }
+    }
+
     pub(super) async fn get_masterchain_info(&mut self) -> Result<MasterchainInfo> {
         match self {
             HighLevelBackend::Single(client) => Ok(client.get_masterchain_info().await?),
             HighLevelBackend::Balanced(balancer) => Ok(balancer.get_masterchain_info().await?),
+            HighLevelBackend::Http(_) => {
+                anyhow::bail!("this command requires the lite provider; pass --provider lite")
+            }
         }
     }
 
@@ -115,6 +315,9 @@ impl HighLevelBackend {
             HighLevelBackend::Balanced(balancer) => {
                 Ok(balancer.get_account_state(block, account).await?)
             }
+            HighLevelBackend::Http(_) => {
+                anyhow::bail!("this command requires the lite provider; pass --provider lite")
+            }
         }
     }
 
@@ -125,6 +328,9 @@ impl HighLevelBackend {
         match self {
             HighLevelBackend::Single(client) => Ok(client.raw_get_block_data(block).await?),
             HighLevelBackend::Balanced(balancer) => Ok(balancer.raw_get_block_data(block).await?),
+            HighLevelBackend::Http(_) => {
+                anyhow::bail!("this command requires the lite provider; pass --provider lite")
+            }
         }
     }
 
@@ -154,6 +360,9 @@ impl HighLevelBackend {
                     stack,
                 )
                 .await?),
+            HighLevelBackend::Http(_) => {
+                anyhow::bail!("this command requires the lite provider; pass --provider lite")
+            }
         }
     }
 
@@ -171,13 +380,9 @@ impl HighLevelBackend {
             HighLevelBackend::Balanced(balancer) => Ok(balancer
                 .raw_get_transactions(count, account, lt, hash)
                 .await?),
-        }
-    }
-
-    pub(super) async fn send_external_message_boc(&mut self, body: Vec<u8>) -> Result<u32> {
-        match self {
-            HighLevelBackend::Single(client) => Ok(client.send_message(body).await?),
-            HighLevelBackend::Balanced(balancer) => Ok(balancer.send_message(body).await?),
+            HighLevelBackend::Http(_) => {
+                anyhow::bail!("this command requires the lite provider; pass --provider lite")
+            }
         }
     }
 
@@ -192,6 +397,9 @@ impl HighLevelBackend {
             }
             HighLevelBackend::Balanced(balancer) => {
                 Ok(get_config_all_balancer(balancer, block, flags).await?)
+            }
+            HighLevelBackend::Http(_) => {
+                anyhow::bail!("config commands require the lite provider; pass --provider lite")
             }
         }
     }
@@ -208,6 +416,9 @@ impl HighLevelBackend {
             }
             HighLevelBackend::Balanced(balancer) => {
                 Ok(get_config_params_balancer(balancer, block, params, flags).await?)
+            }
+            HighLevelBackend::Http(_) => {
+                anyhow::bail!("config commands require the lite provider; pass --provider lite")
             }
         }
     }
@@ -439,15 +650,8 @@ pub(super) fn valid_until_from_timeout(timeout: u32) -> Result<u32> {
     u32::try_from(valid_until).context("valid_until does not fit into uint32")
 }
 
-pub(super) fn seqno_from_stack(result: &RunMethodResult) -> Result<u32> {
-    let stack = match result.result_stack_lossless() {
-        DecodedRunMethodResult::Decoded(stack) => stack,
-        DecodedRunMethodResult::Missing => anyhow::bail!("seqno get-method returned no stack"),
-        DecodedRunMethodResult::Undecodable { error, .. } => {
-            anyhow::bail!("failed to decode seqno stack: {error}")
-        }
-    };
-    let Some(TvmStackEntry::Int(value)) = stack.entries().first() else {
+pub(super) fn seqno_from_stack(result: &ProviderRunMethodResult) -> Result<u32> {
+    let Some(TvmStackEntry::Int(value)) = result.stack.entries().first() else {
         anyhow::bail!("seqno get-method did not return an integer at stack[0]");
     };
     value
@@ -457,15 +661,10 @@ pub(super) fn seqno_from_stack(result: &RunMethodResult) -> Result<u32> {
 }
 
 pub(super) fn seqno_from_stack_or_deploy_zero(
-    result: &RunMethodResult,
+    result: &ProviderRunMethodResult,
     deploy: bool,
 ) -> Result<u32> {
-    if deploy
-        && matches!(
-            result.result_stack_lossless(),
-            DecodedRunMethodResult::Missing
-        )
-    {
+    if deploy && result.stack.entries().is_empty() {
         return Ok(0);
     }
     seqno_from_stack(result)

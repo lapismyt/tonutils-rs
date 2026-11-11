@@ -40,26 +40,26 @@ mod views;
 mod wallet;
 
 use commands::{
-    HighLevelBackend, best_effort_account_state_view, build_wallet_transfer, download_config,
-    masterchain_info_view, network_name, read_mnemonic_password, read_mnemonic_phrase,
-    run_get_method_view, seqno_from_stack, seqno_from_stack_or_deploy_zero, wallet_address_view,
-    wallet_id_for_cli,
+    HighLevelBackend, HttpBackend, best_effort_account_state_view, build_wallet_transfer,
+    download_config, masterchain_info_view, network_name, read_mnemonic_password,
+    read_mnemonic_phrase, run_get_method_view, seqno_from_stack, seqno_from_stack_or_deploy_zero,
+    wallet_address_view, wallet_id_for_cli,
 };
 use views::{
     BackendView, BalancerStatusView, BestEffortAccountStateView, BocDecodeView, HighLevelCallView,
     HighLevelTransactionsView, NetworkView, RunGetMethodView, SchemaCheckView, StatusView,
     TvmStackView, WalletAddressView, WalletGenerateView, WalletPreparedTransferView,
-    WalletSendView, WalletSeqnoView, account_state_view, account_value, block_id_ext_view,
-    block_value, cell_value, cell_view, config_params_value, decoded_all_shards_info_value,
-    decoded_block_data_value, decoded_block_header_value, decoded_boc_view,
-    decoded_config_info_value, decoded_libraries_with_proof_value, decoded_shard_info_value,
-    get_config_all_balancer, get_config_all_client, get_config_params_balancer,
-    get_config_params_client, grams_decimal, latest_or_explicit_block, libraries_value,
-    parse_account_id, parse_after_transaction, parse_block_id_ext, parse_int256, parse_libraries,
-    parse_method_ref, parse_params, parse_stack_input, parse_u64_decimal_or_hex, print_block_human,
-    raw_bytes_view, shard_account_value, shard_state_value, simple_account_state_name,
-    simple_account_value, stack_entry_human, stack_entry_view, stack_view, transaction_value,
-    transactions_value,
+    WalletSendView, WalletSeqnoView, account_value, block_id_ext_view, block_value, cell_value,
+    cell_view, config_params_value, decoded_all_shards_info_value, decoded_block_data_value,
+    decoded_block_header_value, decoded_boc_view, decoded_config_info_value,
+    decoded_libraries_with_proof_value, decoded_shard_info_value, get_config_all_balancer,
+    get_config_all_client, get_config_params_balancer, get_config_params_client, grams_decimal,
+    latest_or_explicit_block, libraries_value, parse_account_id, parse_after_transaction,
+    parse_block_id_ext, parse_int256, parse_libraries, parse_method_ref, parse_params,
+    parse_stack_input, parse_u64_decimal_or_hex, print_block_human, provider_account_state_view,
+    provider_run_method_view, provider_transaction_value, raw_bytes_view, shard_account_value,
+    shard_state_value, simple_account_state_name, simple_account_value, stack_entry_human,
+    stack_entry_view, stack_view, transaction_value, transactions_value,
 };
 use wallet::{decode_known_tlb, read_raw_input};
 
@@ -70,7 +70,7 @@ pub use args::{
     BalancerLibrariesWithProofArgs, BalancerOneTransactionArgs, BalancerRunGetMethodArgs,
     BalancerShardInfoArgs, BalancerTransactionsArgs, BlockCommand, BocCommand, Cli, Commands,
     ConfigCommand, ConfigModeFlags, ContractCommand, HighLevelAccountArgs, HighLevelCallArgs,
-    HighLevelTransactionsArgs, KnownTlbType, LiteClientCommand, Network, OutputFormat,
+    HighLevelTransactionsArgs, KnownTlbType, LiteClientCommand, Network, OutputFormat, ProviderArg,
     SchemaCommand, TvmCommand, WalletAddressArgs, WalletCommand, WalletTransferArgs,
     WalletVersionArg,
 };

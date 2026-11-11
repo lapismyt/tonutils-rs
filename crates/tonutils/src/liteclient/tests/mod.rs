@@ -36,7 +36,10 @@ use crate::{
 };
 
 #[cfg(feature = "contracts")]
-use crate::contracts::{Contract, RUN_METHOD_MODE_RETURN_RESULT};
+use crate::{
+    contracts::{Contract, RUN_METHOD_MODE_RETURN_RESULT},
+    provider::MethodRef,
+};
 
 use tokio::sync::Mutex;
 use tower::service_fn;
@@ -243,7 +246,11 @@ async fn contract_get_method_requests_result_stack() {
     let mut contract = Contract::new(&mut client, Address::new(0, [0; 32]));
 
     contract
-        .run_get_method(test_block_id(), 1, TvmStack::empty())
+        .run_get_method(
+            Some(test_block_id().into()),
+            MethodRef::Id(1),
+            TvmStack::empty(),
+        )
         .await
         .unwrap();
 

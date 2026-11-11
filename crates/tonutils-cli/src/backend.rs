@@ -1,26 +1,30 @@
-use tonutils::tlb::schema::{BLOCK_TLB, generate_block_summary, parse_schema};
+use tonutils::{
+    provider::BlockId,
+    tlb::schema::{BLOCK_TLB, generate_block_summary, parse_schema},
+};
 
 use super::{
     Address, BalancerStatusView, BlockCommand, BocCommand, BocDecodeView, Cli, Commands,
     ConfigCommand, ConfigGlobal, ConfigLiteServer, Context, Contract, ContractCommand,
     DecodedRunMethodResult, Duration, FromStr, HighLevelAccountArgs, HighLevelBackend,
     HighLevelCallArgs, HighLevelCallView, HighLevelTransactionsArgs, HighLevelTransactionsView,
-    LiteBalancer, LiteClient, LiteClientCommand, LiteServerBlacklist, NetworkView, OutputFormat,
-    Parser, RequestRateLimit, Result, RunMethodResultExt, SchemaCheckView, SchemaCommand,
-    StatusView, TimeView, TonMnemonic, TvmCommand, TvmStack, TvmStackView, VersionView,
-    WalletCommand, WalletGenerateView, WalletSendView, WalletSeqnoView, WalletVersionArg,
-    account_state_view, account_value, best_effort_account_state_view, block_id_ext_view,
+    HttpBackend, LiteBalancer, LiteClient, LiteClientCommand, LiteServerBlacklist, Network,
+    NetworkView, OutputFormat, Parser, ProviderArg, RequestRateLimit, Result, RunMethodResultExt,
+    SchemaCheckView, SchemaCommand, StatusView, TimeView, TonMnemonic, TvmCommand, TvmStack,
+    TvmStackView, VersionView, WalletCommand, WalletGenerateView, WalletSendView, WalletSeqnoView,
+    WalletVersionArg, account_value, best_effort_account_state_view, block_id_ext_view,
     build_wallet_transfer, cell_view, decode_known_tlb, decoded_all_shards_info_value,
     decoded_block_data_value, decoded_block_header_value, decoded_boc_view,
     decoded_config_info_value, decoded_libraries_with_proof_value, decoded_shard_info_value,
     download_config, fs, get_config_all_client, get_config_params_client, json,
     latest_or_explicit_block, libraries_value, masterchain_info_view, network_name,
     parse_account_id, parse_after_transaction, parse_block_id_ext, parse_int256, parse_libraries,
-    parse_method_ref, parse_params, parse_stack_input, parse_u64_decimal_or_hex, raw_bytes_view,
-    read_mnemonic_password, read_mnemonic_phrase, read_raw_input, run_get_method_view,
-    seqno_from_stack, seqno_from_stack_or_deploy_zero, shard_account_value, simple_account_value,
-    stack_entry_view, stack_view, transaction_value, transactions_value, wallet_address_view,
-    wallet_id_for_cli,
+    parse_method_ref, parse_params, parse_stack_input, parse_u64_decimal_or_hex,
+    provider_account_state_view, provider_run_method_view, provider_transaction_value,
+    raw_bytes_view, read_mnemonic_password, read_mnemonic_phrase, read_raw_input,
+    run_get_method_view, seqno_from_stack, seqno_from_stack_or_deploy_zero, shard_account_value,
+    simple_account_value, stack_entry_view, stack_view, transaction_value, transactions_value,
+    wallet_address_view, wallet_id_for_cli,
 };
 
 impl Cli {
@@ -102,15 +106,83 @@ impl Cli {
     }
 
     pub(super) async fn create_high_level_backend(&self) -> Result<HighLevelBackend> {
-        if self.single {
-            Ok(HighLevelBackend::Single(
-                self.create_client(self.ls_index).await?,
-            ))
-        } else {
-            Ok(HighLevelBackend::Balanced(
-                self.create_balancer(self.num_servers).await?,
-            ))
+        match self.provider {
+            ProviderArg::Lite => {
+                if self.single {
+                    Ok(HighLevelBackend::Single(
+                        self.create_client(self.ls_index).await?,
+                    ))
+                } else {
+                    Ok(HighLevelBackend::Balanced(
+                        self.create_balancer(self.num_servers).await?,
+                    ))
+                }
+            }
+            ProviderArg::Tonapi => {
+                let endpoint = self.provider_endpoint.clone().unwrap_or_else(|| {
+                    match self.network {
+                        Network::Mainnet => "https://tonapi.io",
+                        Network::Testnet => "https://testnet.tonapi.io",
+                    }
+                    .to_owned()
+                });
+                let mut builder = tonutils::provider::TonApi::builder().endpoint(endpoint);
+                if let Some(token) = &self.provider_api_key {
+                    builder = builder.token(token.clone());
+                }
+                if let Some(timeout) = self.provider_timeout {
+                    builder = builder.timeout(Duration::from_secs(timeout));
+                }
+                Ok(HighLevelBackend::Http(HttpBackend::TonApi(
+                    builder.build()?,
+                )))
+            }
+            ProviderArg::ToncenterV2 => {
+                let endpoint = self.provider_endpoint.clone().unwrap_or_else(|| {
+                    match self.network {
+                        Network::Mainnet => "https://toncenter.com/api/v2",
+                        Network::Testnet => "https://testnet.toncenter.com/api/v2",
+                    }
+                    .to_owned()
+                });
+                let mut builder = tonutils::provider::ToncenterV2::builder().endpoint(endpoint);
+                if let Some(key) = &self.provider_api_key {
+                    builder = builder.api_key(key.clone());
+                }
+                if let Some(timeout) = self.provider_timeout {
+                    builder = builder.timeout(Duration::from_secs(timeout));
+                }
+                Ok(HighLevelBackend::Http(HttpBackend::ToncenterV2(
+                    builder.build()?,
+                )))
+            }
+            ProviderArg::ToncenterV3 => {
+                let endpoint = self.provider_endpoint.clone().unwrap_or_else(|| {
+                    match self.network {
+                        Network::Mainnet => "https://toncenter.com/api/v3",
+                        Network::Testnet => "https://testnet.toncenter.com/api/v3",
+                    }
+                    .to_owned()
+                });
+                let mut builder = tonutils::provider::ToncenterV3::builder().endpoint(endpoint);
+                if let Some(key) = &self.provider_api_key {
+                    builder = builder.api_key(key.clone());
+                }
+                if let Some(timeout) = self.provider_timeout {
+                    builder = builder.timeout(Duration::from_secs(timeout));
+                }
+                Ok(HighLevelBackend::Http(HttpBackend::ToncenterV3(
+                    builder.build()?,
+                )))
+            }
         }
+    }
+
+    pub(super) fn require_lite_provider(&self, command: &str) -> Result<()> {
+        if self.provider != ProviderArg::Lite {
+            anyhow::bail!("{command} requires --provider lite");
+        }
+        Ok(())
     }
 
     pub async fn execute(&self) -> Result<()> {
@@ -121,9 +193,18 @@ impl Cli {
             Commands::Transactions(args) => self.execute_transactions(args).await,
             Commands::Block { command } => self.execute_block(command).await,
             Commands::Config { command } => self.execute_config(command).await,
-            Commands::Liteclient { command } => self.execute_liteclient(command).await,
-            Commands::Balancer { command } => self.execute_balancer(command).await,
-            Commands::Contract { command } => self.execute_contract(command).await,
+            Commands::Liteclient { command } => {
+                self.require_lite_provider("liteclient")?;
+                self.execute_liteclient(command).await
+            }
+            Commands::Balancer { command } => {
+                self.require_lite_provider("balancer")?;
+                self.execute_balancer(command).await
+            }
+            Commands::Contract { command } => {
+                self.require_lite_provider("contract")?;
+                self.execute_contract(command).await
+            }
             Commands::Wallet { command } => self.execute_wallet(command).await,
             Commands::Tvm { command } => self.execute_tvm(command),
         }
@@ -133,11 +214,11 @@ impl Cli {
         let mut backend = self.create_high_level_backend().await?;
         let backend_view = backend.view(self);
         let info = backend
-            .get_masterchain_info()
+            .provider_masterchain_info()
             .await
             .context("status: failed to get latest masterchain block")?;
         let peers = match &backend {
-            HighLevelBackend::Single(_) => None,
+            HighLevelBackend::Single(_) | HighLevelBackend::Http(_) => None,
             HighLevelBackend::Balanced(balancer) => Some(BalancerStatusView {
                 total_peers: balancer.peers_num(),
                 alive_peers: balancer.alive_peers_num().await,
@@ -150,7 +231,7 @@ impl Cli {
                 name: network_name(self.network),
             },
             backend: backend_view,
-            latest: block_id_ext_view(&info.last),
+            latest: block_id_ext_view(&info.last.into()),
             peers,
         })
     }
@@ -158,6 +239,35 @@ impl Cli {
     pub(super) async fn execute_account(&self, args: &HighLevelAccountArgs) -> Result<()> {
         let mut backend = self.create_high_level_backend().await?;
         let address = Address::from_str(&args.address).context("account: invalid address")?;
+        if !backend.is_lite() {
+            let latest = backend
+                .provider_masterchain_info()
+                .await
+                .with_context(|| format!("account {}: failed to get latest block", args.address))?
+                .last;
+            let requested = args
+                .block
+                .as_ref()
+                .map(|block| parse_block_id_ext(block).map(BlockId::from))
+                .transpose()?;
+            let block = requested.clone().unwrap_or(latest);
+            let state = backend
+                .provider_account_state(requested, address)
+                .await
+                .with_context(|| {
+                    format!(
+                        "account {}: failed to fetch account state using {} provider",
+                        args.address,
+                        backend.provider_name()
+                    )
+                })?;
+            backend.close().await?;
+            return self.print_account(&provider_account_state_view(
+                &args.address,
+                &state,
+                &block.into(),
+            ));
+        }
         let latest = backend
             .get_masterchain_info()
             .await
@@ -181,14 +291,46 @@ impl Cli {
     pub(super) async fn execute_call(&self, args: &HighLevelCallArgs) -> Result<()> {
         let mut backend = self.create_high_level_backend().await?;
         let address = Address::from_str(&args.address).context("call: invalid address")?;
+        let (method, method_id) = parse_method_ref(&args.method);
+        let stack = parse_stack_input(&args.args, args.stack_json.as_deref())?;
+        if !backend.is_lite() {
+            let latest = backend
+                .provider_masterchain_info()
+                .await
+                .with_context(|| format!("call {}: failed to get latest block", args.address))?
+                .last;
+            let requested = args
+                .block
+                .as_ref()
+                .map(|block| parse_block_id_ext(block).map(BlockId::from))
+                .transpose()?;
+            let block = requested.clone().unwrap_or(latest);
+            let method_ref = match &method {
+                Some(name) => tonutils::provider::MethodRef::Name(name),
+                None => tonutils::provider::MethodRef::Id(method_id),
+            };
+            let result = backend
+                .provider_run_get_method(requested, address, method_ref, stack)
+                .await
+                .with_context(|| {
+                    format!(
+                        "call {} {}: failed using {} provider",
+                        args.address,
+                        args.method,
+                        backend.provider_name()
+                    )
+                })?;
+            backend.close().await?;
+            let mut view = provider_run_method_view(&result, &block.into(), method, method_id)?;
+            view.address.clone_from(&args.address);
+            return self.print_call(&view);
+        }
         let latest = backend
             .get_masterchain_info()
             .await
             .with_context(|| format!("call {}: failed to get latest block", args.address))?
             .last;
         let block = latest_or_explicit_block(args.block.as_ref(), latest)?;
-        let (method, method_id) = parse_method_ref(&args.method);
-        let stack = parse_stack_input(&args.args, args.stack_json.as_deref())?;
         let result = backend
             .run_get_method(block, address, method_id, stack)
             .await
@@ -218,12 +360,75 @@ impl Cli {
         })
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "The provider and lite paths share one transactions output mapping"
+    )]
     pub(super) async fn execute_transactions(
         &self,
         args: &HighLevelTransactionsArgs,
     ) -> Result<()> {
         let mut backend = self.create_high_level_backend().await?;
         let address = Address::from_str(&args.address).context("transactions: invalid address")?;
+        if !backend.is_lite() {
+            let state = backend
+                .provider_account_state(None, address.clone())
+                .await
+                .with_context(|| {
+                    format!(
+                        "transactions {}: failed to fetch account state",
+                        args.address
+                    )
+                })?;
+            let lt = state.last_transaction_lt;
+            let hash = state.last_transaction_hash.clone();
+            let Some(lt) = lt else {
+                backend.close().await?;
+                return self.print_transactions(&HighLevelTransactionsView {
+                    address: args.address.clone(),
+                    count: args.count,
+                    start_lt: None,
+                    start_hash: None,
+                    ids: Vec::new(),
+                    transactions: Vec::new(),
+                    decode_errors: Vec::new(),
+                });
+            };
+            let Some(hash) = hash else {
+                backend.close().await?;
+                return self.print_transactions(&HighLevelTransactionsView {
+                    address: args.address.clone(),
+                    count: args.count,
+                    start_lt: Some(lt),
+                    start_hash: None,
+                    ids: Vec::new(),
+                    transactions: Vec::new(),
+                    decode_errors: vec![
+                        "provider did not return the last transaction hash".to_owned(),
+                    ],
+                });
+            };
+            let list = backend
+                .provider_transactions(args.count, address, lt, hash)
+                .await
+                .with_context(|| {
+                    format!("transactions {}: failed to fetch history", args.address)
+                })?;
+            backend.close().await?;
+            return self.print_transactions(&HighLevelTransactionsView {
+                address: args.address.clone(),
+                count: args.count,
+                start_lt: Some(lt),
+                start_hash: None,
+                ids: Vec::new(),
+                transactions: list
+                    .transactions
+                    .iter()
+                    .map(provider_transaction_value)
+                    .collect(),
+                decode_errors: Vec::new(),
+            });
+        }
         let latest = backend
             .get_masterchain_info()
             .await
@@ -303,6 +508,16 @@ impl Cli {
         let mut backend = self.create_high_level_backend().await?;
         match command {
             BlockCommand::Latest => {
+                if !backend.is_lite() {
+                    let info = backend
+                        .provider_masterchain_info()
+                        .await
+                        .context("block latest: failed to get masterchain info")?;
+                    backend.close().await?;
+                    return self.print_structured(&json!({
+                        "last": block_id_ext_view(&info.last.into()),
+                    }));
+                }
                 let info = backend
                     .get_masterchain_info()
                     .await
@@ -721,10 +936,11 @@ impl Cli {
         match command {
             ContractCommand::State { ls_index, address } => {
                 let mut client = self.create_client(*ls_index).await?;
-                let address = Address::from_str(address)?;
-                let mut contract = Contract::new(&mut client, address);
+                let block = client.get_masterchain_info().await?.last;
+                let address_value = Address::from_str(address)?;
+                let mut contract = Contract::new(&mut client, address_value);
                 let state = contract.get_state_latest().await?;
-                self.print_structured(&account_state_view(&state))
+                self.print_structured(&provider_account_state_view(address, &state, &block))
             }
             ContractCommand::RunGetMethod {
                 ls_index,
@@ -735,14 +951,32 @@ impl Cli {
                 stack_json,
             } => {
                 let mut client = self.create_client(*ls_index).await?;
+                let block = client.get_masterchain_info().await?.last;
                 let address = Address::from_str(address)?;
-                let method_id = method_id
-                    .or_else(|| method.as_deref().map(tonutils::tvm::method_name_to_id))
-                    .context("run-get-method requires --method or --method-id")?;
+                let (method_name, method_id) = match (method.as_deref(), method_id) {
+                    (Some(name), None) => (
+                        Some(name.to_owned()),
+                        tonutils::tvm::method_name_to_id(name),
+                    ),
+                    (None, Some(id)) => (None, *id),
+                    (Some(name), Some(id)) => (Some(name.to_owned()), *id),
+                    (None, None) => {
+                        anyhow::bail!("run-get-method requires --method or --method-id")
+                    }
+                };
                 let stack = parse_stack_input(args, stack_json.as_deref())?;
                 let mut contract = Contract::new(&mut client, address);
-                let result = contract.run_get_method_latest(method_id, stack).await?;
-                self.print_structured(&run_get_method_view(&result, method.clone(), method_id)?)
+                let method_ref = match &method_name {
+                    Some(name) => tonutils::provider::MethodRef::Name(name),
+                    None => tonutils::provider::MethodRef::Id(method_id),
+                };
+                let result = contract.run_get_method_latest(method_ref, stack).await?;
+                self.print_structured(&provider_run_method_view(
+                    &result,
+                    &block,
+                    method_name,
+                    method_id,
+                )?)
             }
         }
     }
@@ -798,15 +1032,15 @@ impl Cli {
             WalletCommand::Seqno { address } => {
                 let mut backend = self.create_high_level_backend().await?;
                 let latest = backend
-                    .get_masterchain_info()
+                    .provider_masterchain_info()
                     .await
                     .context("wallet seqno: failed to get latest block")?
                     .last;
                 let result = backend
-                    .run_get_method(
-                        latest.clone(),
+                    .provider_run_get_method(
+                        None,
                         Address::from_str(address).context("wallet seqno: invalid address")?,
-                        tonutils::tvm::method_name_to_id("seqno"),
+                        tonutils::provider::MethodRef::Name("seqno"),
                         TvmStack::empty(),
                     )
                     .await
@@ -815,7 +1049,7 @@ impl Cli {
                 self.print_wallet_seqno(&WalletSeqnoView {
                     address: address.clone(),
                     seqno: seqno_from_stack(&result)?,
-                    block: block_id_ext_view(&latest),
+                    block: block_id_ext_view(&latest.into()),
                 })
             }
             WalletCommand::PrepareTransfer(args) => {
@@ -846,19 +1080,14 @@ impl Cli {
                 let wallet_address =
                     wallet_address_view(args.version, args.workchain, wallet_id, public_key)?;
                 let mut backend = self.create_high_level_backend().await?;
-                let latest = backend
-                    .get_masterchain_info()
-                    .await
-                    .context("wallet send: failed to get latest block")?
-                    .last;
                 let seqno = if let Some(seqno) = args.seqno {
                     seqno
                 } else {
                     let result = backend
-                        .run_get_method(
-                            latest,
+                        .provider_run_get_method(
+                            None,
                             Address::from_str(&wallet_address.address)?,
-                            tonutils::tvm::method_name_to_id("seqno"),
+                            tonutils::provider::MethodRef::Name("seqno"),
                             TvmStack::empty(),
                         )
                         .await
@@ -867,13 +1096,17 @@ impl Cli {
                 };
                 let (boc, view) = build_wallet_transfer(self.network, args, &mnemonic, seqno)?;
                 let status = backend
-                    .send_external_message_boc(boc)
+                    .provider_send_message(boc)
                     .await
                     .context("wallet send: failed to submit external message BoC")?;
                 backend.close().await?;
                 self.print_wallet_send(&WalletSendView {
                     prepared: view,
-                    status,
+                    status: status.status_code,
+                    message_hash: status
+                        .message_hash
+                        .as_ref()
+                        .map(tonutils::tl::TlInt256::to_hex),
                 })
             }
         }

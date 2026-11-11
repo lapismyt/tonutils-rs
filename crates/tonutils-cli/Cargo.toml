@@ -31,4 +31,4 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 reqwest.workspace = true
-tonutils = { workspace = true, features = ["contracts", "tvm", "tlb", "liteclient", "wallet"] }
+tonutils = { workspace = true, features = ["contracts", "provider", "tvm", "tlb", "liteclient", "wallet"] }

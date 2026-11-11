@@ -31,6 +31,23 @@ For a direct liteserver client, add the network layers you need:
 tonutils = { version = "2.0", features = ["liteclient"] }
 ```
 
+For provider-neutral reads across liteservers, TonAPI, and Toncenter:
+
+```toml
+[dependencies]
+tonutils = { version = "2", features = ["provider"] }
+```
+
+```rust
+use tonutils::provider::{GetMasterchainInfoExt, TonApi};
+
+async fn latest_seqno() -> Result<i32, Box<dyn std::error::Error>> {
+    let mut provider = TonApi::mainnet();
+    let info = provider.get_masterchain_info().await?;
+    Ok(info.last.seqno)
+}
+```
+
 ### Offline Cell Example
 
 ```rust
@@ -81,8 +98,18 @@ It is intentionally not a proof that a liteserver answered honestly.
 | `network-config` | Global network configuration parsing and liteserver selection | No |
 | `adnl` | ADNL identity, encrypted UDP transport, QUIC transport, and ADNL TL wire types | Yes for transport |
 | `liteclient` | LiteAPI types, direct client, balancer, and typed BoC decode helpers | Yes |
-| `contracts` | Provider traits, account-state reads, and get-method stack helpers | Yes for reads |
+| `provider` | Capability traits for liteservers, TonAPI, Toncenter v2/v3, and their HTTP/lite adapters | Yes |
+| `contracts` | Provider-neutral contract reads, account-state views, and get-method stack helpers | Yes for reads |
 | `serde` | Serde support for enabled public types that expose it, currently ADNL public keys | No |
+
+The `provider` feature exposes separate `GetMasterchainInfoExt`, `GetAccountStateExt`,
+`RunGetMethodExt`, `SendExternalMessageExt`, and `GetTransactionsExt` traits. HTTP
+providers trust the remote service and do not verify Merkle proofs; liteserver
+adapters also return responses without validating proof roots. The CLI selects a
+provider with `--provider lite|tonapi|toncenter-v2|toncenter-v3`, and accepts
+`--provider-endpoint`, `--provider-api-key`, and `--provider-timeout` for
+self-hosted instances. Raw `liteclient`, `balancer`, and `contract` commands
+require `--provider lite`.
 
 `tl` owns the snapshots and shared primitives, not every TON protocol schema.
 Handwritten ADNL and LiteAPI wire types live in `adnl::tl` and

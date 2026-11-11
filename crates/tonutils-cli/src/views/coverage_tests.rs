@@ -1,6 +1,6 @@
 use super::{
-    AccountStateView, Address, Arc, BackendView, BalancerStatusView, BestEffortAccountStateView,
-    BlockIdExt, BlockIdExtView, BocDecodeView, Builder, Cell, CellView, HighLevelCallView,
+    Address, Arc, BackendView, BalancerStatusView, BestEffortAccountStateView, BlockIdExt,
+    BlockIdExtView, BocDecodeView, Builder, Cell, CellView, HighLevelCallView,
     HighLevelTransactionsView, Int256, MasterchainInfoView, NetworkView, RawBytesView,
     RunGetMethodView, SchemaCheckView, StatusView, TimeView, TvmStackEntryView, TvmStackView,
     Value, VersionView, WALLET_V4R2_DEFAULT_ID, WalletAddressView, WalletGenerateView,
@@ -102,13 +102,6 @@ fn serializes_cli_view_shapes() {
             decoded_stack: Some(stack),
             result_decode_error: None,
         }),
-        json!(AccountStateView {
-            block: block_view(3),
-            shard_block: block_view(4),
-            shard_proof_len: 5,
-            proof_len: 6,
-            state: raw.clone(),
-        }),
         json!(BalancerStatusView {
             total_peers: 3,
             alive_peers: 2,
@@ -118,6 +111,7 @@ fn serializes_cli_view_shapes() {
             network: NetworkView { name: "testnet" },
             backend: BackendView {
                 mode: "single",
+                provider: "lite",
                 ls_index: Some(0),
                 num_servers: None,
             },
@@ -203,6 +197,7 @@ fn serializes_cli_view_shapes() {
             block: block_view(11),
         }),
         json!(WalletSendView {
+            message_hash: None,
             prepared: WalletPreparedTransferView {
                 version: WalletVersionArg::V5R1,
                 address: WalletAddressView {
@@ -220,7 +215,7 @@ fn serializes_cli_view_shapes() {
                 deploy: true,
                 boc: raw,
             },
-            status: 1,
+            status: Some(1),
         }),
         json!(MasterchainInfoView {
             last: block,

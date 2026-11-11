@@ -22,13 +22,19 @@ not a release tag or release date.
 - Added typed TL-B coverage for blocks, shard state, accounts, transactions,
   messages, and proof structures, including compatibility fixtures.
 - Added live liteserver CI coverage and populated get-method result stacks.
+- Added the `provider` feature with capability traits for masterchain info,
+  account state, get-methods, external messages, and transaction history.
+- Added TonAPI, Toncenter v2, Toncenter v3, LiteClient, and LiteBalancer
+  provider adapters with configurable endpoints and credentials.
+- Added CLI provider selection (`--provider`), self-hosted endpoint, API key,
+  and timeout flags for high-level commands.
 
 ### Changed
 
 - Consolidated the SDK into one feature-gated `tonutils` crate with opt-in
   modules (`tvm`, `tl`, `tlb`, `wallet`, `crc`, `metadata`, `network-config`,
-  `adnl`, `liteclient`, `contracts`, `serde`); the default feature set is now
-  empty. `tonutils-cli`, `tonutils-macros`, and `tonutils-schema-gen` remain
+  `adnl`, `liteclient`, `provider`, `contracts`, `serde`); the default feature
+  set is now empty. `tonutils-cli`, `tonutils-macros`, and `tonutils-schema-gen` remain
   separate packages.
 - Replaced the previous feature model (`std`, `adnl-tcp`, `tlb-derive`,
   `contract-derive`, `abi-json`, `cli`, `full`) with the per-module features.

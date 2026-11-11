@@ -21,7 +21,7 @@ pub use cli::{
     BalancerLibrariesWithProofArgs, BalancerOneTransactionArgs, BalancerRunGetMethodArgs,
     BalancerShardInfoArgs, BalancerTransactionsArgs, BlockCommand, BocCommand, Cli, Commands,
     ConfigCommand, ConfigModeFlags, ContractCommand, HighLevelAccountArgs, HighLevelCallArgs,
-    HighLevelTransactionsArgs, KnownTlbType, LiteClientCommand, Network, OutputFormat,
+    HighLevelTransactionsArgs, KnownTlbType, LiteClientCommand, Network, OutputFormat, ProviderArg,
     SchemaCommand, TvmCommand, WalletAddressArgs, WalletCommand, WalletTransferArgs,
     WalletVersionArg,
 };
