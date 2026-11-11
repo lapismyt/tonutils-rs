@@ -6,7 +6,6 @@ use tonutils::{
             DecodedAllShardsInfo, DecodedBlockData, DecodedBlockHeader, DecodedConfigInfo,
             DecodedLibrariesWithProof, DecodedShardInfo, SimpleAccount, SimpleAccountState,
         },
-        tl::LiteServerAccountState,
         types::LiteError,
     },
     tlb::Grams,
@@ -66,15 +65,6 @@ pub(super) struct RunGetMethodView {
 }
 
 #[derive(Debug, Serialize)]
-pub(super) struct AccountStateView {
-    pub(super) block: BlockIdExtView,
-    pub(super) shard_block: BlockIdExtView,
-    pub(super) shard_proof_len: usize,
-    pub(super) proof_len: usize,
-    pub(super) state: RawBytesView,
-}
-
-#[derive(Debug, Serialize)]
 pub(super) struct TvmStackView {
     pub(super) entries: Vec<TvmStackEntryView>,
 }
@@ -118,6 +108,7 @@ pub(super) struct NetworkView {
 #[derive(Debug, Serialize)]
 pub(super) struct BackendView {
     pub(super) mode: &'static str,
+    pub(super) provider: &'static str,
     pub(super) ls_index: Option<usize>,
     pub(super) num_servers: Option<usize>,
 }
@@ -209,7 +200,8 @@ pub(super) struct WalletPreparedTransferView {
 #[derive(Debug, Serialize)]
 pub(super) struct WalletSendView {
     pub(super) prepared: WalletPreparedTransferView,
-    pub(super) status: u32,
+    pub(super) status: Option<u32>,
+    pub(super) message_hash: Option<String>,
 }
 
 pub(super) fn block_id_ext_view(block: &BlockIdExt) -> BlockIdExtView {
@@ -945,14 +937,77 @@ pub(super) async fn get_config_params_balancer(
         .await
 }
 
-pub(super) fn account_state_view(state: &LiteServerAccountState) -> AccountStateView {
-    AccountStateView {
-        block: block_id_ext_view(&state.id),
-        shard_block: block_id_ext_view(&state.shardblk),
-        shard_proof_len: state.shard_proof.len(),
-        proof_len: state.proof.len(),
-        state: raw_bytes_view(&state.state),
+pub(super) fn provider_account_state_view(
+    address: &str,
+    state: &tonutils::provider::AccountState,
+    block: &BlockIdExt,
+) -> BestEffortAccountStateView {
+    BestEffortAccountStateView {
+        address: address.to_owned(),
+        block: block_id_ext_view(block),
+        shard_block: block_id_ext_view(block),
+        state: match state.status {
+            tonutils::tlb::AccountStatus::Active => "active",
+            tonutils::tlb::AccountStatus::Uninit => "uninit",
+            tonutils::tlb::AccountStatus::Frozen => "frozen",
+            tonutils::tlb::AccountStatus::Nonexist => "none",
+        }
+        .to_owned(),
+        balance: Some(state.balance.to_str_radix(10)),
+        last_transaction_lt: state.last_transaction_lt,
+        last_transaction_hash: state
+            .last_transaction_hash
+            .as_ref()
+            .map(tonutils::tl::TlInt256::to_hex),
+        shard_proof_len: 0,
+        proof_len: 0,
+        state_len: 0,
+        shard_proof_root_count: None,
+        proof_root_count: None,
+        shard_proof_root_hash: None,
+        proof_root_hash: None,
+        shard_proof_root_hashes: Vec::new(),
+        proof_root_hashes: Vec::new(),
+        state_root_hash: None,
+        account: None,
+        shard_account: None,
+        decode_errors: Vec::new(),
     }
+}
+
+pub(super) fn provider_run_method_view(
+    result: &tonutils::provider::RunMethodResult,
+    fallback_block: &BlockIdExt,
+    method: Option<String>,
+    method_id: u64,
+) -> Result<HighLevelCallView> {
+    let block = result
+        .block
+        .clone()
+        .map(BlockIdExt::from)
+        .unwrap_or_else(|| fallback_block.clone());
+    Ok(HighLevelCallView {
+        address: String::new(),
+        block: block_id_ext_view(&block),
+        shard_block: block_id_ext_view(&block),
+        method,
+        method_id,
+        exit_code: result.exit_code,
+        stack: Some(stack_view(&result.stack)?),
+        decode_errors: Vec::new(),
+    })
+}
+
+pub(super) fn provider_transaction_value(tx: &tonutils::provider::Transaction) -> Value {
+    json!({
+        "lt": tx.lt,
+        "hash": tx.hash.to_hex(),
+        "now": tx.utime,
+        "orig_status": "unknown",
+        "end_status": "unknown",
+        "outmsg_cnt": 0,
+        "raw_boc_len": tx.raw_boc.as_ref().map(Vec::len),
+    })
 }
 
 #[cfg(test)]

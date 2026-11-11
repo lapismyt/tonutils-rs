@@ -255,6 +255,7 @@ impl Cli {
             OutputFormat::Human => {
                 println!("network: {}", value.network.name);
                 println!("backend: {}", value.backend.mode);
+                println!("provider: {}", value.backend.provider);
                 if let Some(ls_index) = value.backend.ls_index {
                     println!("ls_index: {ls_index}");
                 }
@@ -445,7 +446,12 @@ impl Cli {
         match self.output {
             OutputFormat::Human => {
                 self.print_wallet_prepared(&value.prepared)?;
-                println!("send_status: {}", value.status);
+                if let Some(status) = value.status {
+                    println!("send_status: {status}");
+                }
+                if let Some(hash) = &value.message_hash {
+                    println!("message_hash: {hash}");
+                }
                 Ok(())
             }
             _ => self.print_structured(value),

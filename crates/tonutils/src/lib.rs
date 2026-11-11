@@ -29,6 +29,8 @@ pub mod liteclient;
 pub mod metadata;
 #[cfg(feature = "network-config")]
 pub mod network_config;
+#[cfg(feature = "provider")]
+pub mod provider;
 #[cfg(feature = "tl")]
 pub mod tl;
 #[cfg(feature = "tlb")]

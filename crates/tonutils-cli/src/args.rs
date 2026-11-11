@@ -25,11 +25,37 @@ pub enum WalletVersionArg {
     V5R1,
 }
 
+/// Blockchain data provider used by high-level commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProviderArg {
+    /// Direct liteserver access through LiteClient or LiteBalancer.
+    Lite,
+    /// TonAPI HTTP provider.
+    Tonapi,
+    /// Toncenter HTTP API v2.
+    ToncenterV2,
+    /// Toncenter HTTP API v3.
+    ToncenterV3,
+}
+
 /// tonutils command line interface.
 #[derive(Parser, Debug)]
 #[command(name = "tonutils")]
 #[command(about = "Scriptable TON LiteClient and tooling CLI", long_about = None)]
 pub struct Cli {
+    /// Blockchain data provider used by high-level commands.
+    #[arg(long, global = true, value_enum, default_value = "lite")]
+    pub provider: ProviderArg,
+    /// Custom provider endpoint, for example a self-hosted Toncenter instance.
+    #[arg(long, global = true)]
+    pub provider_endpoint: Option<String>,
+    /// Provider API key or bearer token.
+    #[arg(long, global = true)]
+    pub provider_api_key: Option<String>,
+    /// Provider HTTP timeout in seconds.
+    #[arg(long, global = true)]
+    pub provider_timeout: Option<u64>,
     /// Network used when downloading the public global config.
     #[arg(long, global = true, default_value = "mainnet")]
     pub network: Network,

@@ -32,7 +32,10 @@ liteclient = ["adnl", "network-config", "tlb", "tl", "tvm", "dep:derivative",
               "dep:futures", "dep:hex", "dep:log", "dep:pin-project", "dep:rand",
               "dep:thiserror", "dep:tl-proto", "dep:tokio", "dep:tokio-tower",
               "dep:tokio-util", "dep:tower"]
-contracts = ["liteclient", "tlb", "tl", "tvm", "dep:async-trait",
+provider = ["liteclient", "tl", "tvm", "dep:async-trait", "dep:base64",
+            "dep:hex", "dep:reqwest", "dep:serde", "dep:serde_json",
+            "dep:thiserror"]
+contracts = ["provider", "tlb", "tl", "tvm", "dep:async-trait",
              "dep:num-bigint", "dep:thiserror"]
 wallet = ["tlb", "tvm", "dep:bip39", "dep:ed25519-dalek", "dep:hex", "dep:hmac",
           "dep:num-bigint", "dep:pbkdf2", "dep:rand", "dep:sha2", "dep:thiserror"]
@@ -72,6 +75,7 @@ ed25519-dalek = { workspace = true, optional = true }
 bip39 = { workspace = true, optional = true }
 hmac = { workspace = true, optional = true }
 pbkdf2 = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 anyhow.workspace = true

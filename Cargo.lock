@@ -2235,6 +2235,7 @@ dependencies = [
  "pretty_env_logger",
  "quinn",
  "rand 0.8.8",
+ "reqwest",
  "rustls",
  "rustls-pki-types",
  "serde",

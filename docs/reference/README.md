@@ -54,6 +54,32 @@ There are no compatibility aliases for the old names.
   not over the serialized BoC envelope. Proof helpers compare the roots they
   actually decoded, and callers must opt into the relevant checks.
 
+## Provider Adapters
+
+The `provider` feature exposes capability traits rather than one monolithic
+provider. Callers should require only the traits they use; the `Provider` marker
+is a convenience bound for implementations that support every capability.
+
+| Adapter | Default endpoint | Explicit block | Method ids | Notes |
+| --- | --- | --- | --- | --- |
+| `LiteClient` | Configured liteserver | Yes | Yes | Direct LiteAPI calls |
+| `LiteBalancer` | Selected liteservers | Yes | Yes | Balanced LiteAPI calls |
+| `TonApi` | `https://tonapi.io` (`testnet.tonapi.io`) | No | No | Bearer token |
+| `ToncenterV2` | `https://toncenter.com/api/v2` | Yes via `seqno` | Yes | `X-API-Key` |
+| `ToncenterV3` | `https://toncenter.com/api/v3` | No | Yes | `X-API-Key` |
+
+`None` as a block argument always means the latest block. HTTP adapters convert
+stack values through `provider::stack`, and unsupported stack entry kinds return
+`ProviderError::UnsupportedStackEntry` instead of being silently dropped.
+
+### Trust Boundary
+
+HTTP adapters trust the remote service. They do not verify Merkle proofs, block
+signatures, or proof roots. Lite adapters talk directly to liteservers but also
+return the response as received; use the typed `liteclient::boc` proof helpers
+when verification is required. Explicit-block requests are rejected by adapters
+that cannot address them (`ProviderError::UnsupportedBlock`).
+
 ## Typed Error Boundaries
 
 - `tvm::TvmError` is the base error for cells, slices, builders, dictionaries,
@@ -69,10 +95,13 @@ There are no compatibility aliases for the old names.
   flattened into strings.
 - `wallet::WalletError::Tvm(TvmError)` and
   `wallet::WalletError::Tlb(TlbError)` keep construction failures typed.
-- Contract helpers expose `ContractError::Decode(TvmError)`,
-  `ContractBuildError::InvalidCodeBoc(TvmError)`, and
-  `ContractBuildError::StateInitSerialization(TvmError)`. Stack conversion has
-  its own typed error rather than being stringified.
+- Provider capabilities return `provider::ProviderError`, which preserves HTTP,
+  URL, API status, JSON decode, invalid-response, unsupported-capability,
+  TVM-stack, LiteClient, and LiteBalancer sources.
+- Contract helpers expose `ContractError::Provider(ProviderError)`,
+  `ContractError::Decode(TvmError)`, `ContractBuildError::InvalidCodeBoc(TvmError)`,
+  and `ContractBuildError::StateInitSerialization(TvmError)`. Stack conversion
+  has its own typed error rather than being stringified.
 - LiteClient BoC helpers return `liteclient::boc::LiteBocError` for TVM, TL-B,
   root-hash mismatch, account mismatch, non-standard account addresses, and
   account-state mismatch. `LiteError::Boc(LiteBocError)` and
