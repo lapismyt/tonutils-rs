@@ -20,7 +20,8 @@ use crate::provider::{
     },
     stack::{stack_from_json, stack_to_toncenter_v3},
     traits::{
-        GetAccountState, GetMasterchainInfo, GetTransactions, RunGetMethod, SendExternalMessage,
+        GetAccountStateExt, GetMasterchainInfoExt, GetTransactionsExt, RunGetMethodExt,
+        SendExternalMessageExt,
     },
     types::{
         AccountState, BlockId, MasterchainInfo, MethodRef, RunMethodResult, SendMessageResult,
@@ -116,7 +117,7 @@ impl ToncenterV3Builder {
 }
 
 #[async_trait]
-impl GetMasterchainInfo for ToncenterV3 {
+impl GetMasterchainInfoExt for ToncenterV3 {
     async fn get_masterchain_info(&mut self) -> ProviderResult<MasterchainInfo> {
         let request = self.transport.request(Method::GET, "masterchainInfo")?;
         let value = self.transport.send_json_value(request, PROVIDER).await?;
@@ -131,7 +132,7 @@ impl GetMasterchainInfo for ToncenterV3 {
 }
 
 #[async_trait]
-impl GetAccountState for ToncenterV3 {
+impl GetAccountStateExt for ToncenterV3 {
     async fn get_account_state(
         &mut self,
         account: Address,
@@ -159,7 +160,7 @@ impl GetAccountState for ToncenterV3 {
 }
 
 #[async_trait]
-impl RunGetMethod for ToncenterV3 {
+impl RunGetMethodExt for ToncenterV3 {
     async fn run_get_method(
         &mut self,
         account: Address,
@@ -203,7 +204,7 @@ impl RunGetMethod for ToncenterV3 {
 }
 
 #[async_trait]
-impl SendExternalMessage for ToncenterV3 {
+impl SendExternalMessageExt for ToncenterV3 {
     async fn send_external_message_boc(
         &mut self,
         body: Vec<u8>,
@@ -228,7 +229,7 @@ impl SendExternalMessage for ToncenterV3 {
 }
 
 #[async_trait]
-impl GetTransactions for ToncenterV3 {
+impl GetTransactionsExt for ToncenterV3 {
     async fn get_transactions(
         &mut self,
         count: u32,

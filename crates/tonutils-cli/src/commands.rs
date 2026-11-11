@@ -7,9 +7,9 @@ use tonutils::{
         tl::{LiteServerAccountState, MasterchainInfo, RunMethodResult},
     },
     provider::{
-        AccountState as ProviderAccountState, BlockId, GetAccountState, GetMasterchainInfo,
-        GetTransactions, MethodRef, RunGetMethod, RunMethodResult as ProviderRunMethodResult,
-        SendExternalMessage, SendMessageResult, TonApi, ToncenterV2, ToncenterV3,
+        AccountState as ProviderAccountState, BlockId, GetAccountStateExt, GetMasterchainInfoExt,
+        GetTransactionsExt, MethodRef, RunGetMethodExt, RunMethodResult as ProviderRunMethodResult,
+        SendExternalMessageExt, SendMessageResult, TonApi, ToncenterV2, ToncenterV3,
         TransactionList as ProviderTransactionList,
     },
     tlb::{Account, AccountState},
@@ -138,19 +138,19 @@ impl HighLevelBackend {
     ) -> Result<tonutils::provider::MasterchainInfo> {
         match self {
             HighLevelBackend::Single(client) => {
-                Ok(<LiteClient as GetMasterchainInfo>::get_masterchain_info(client).await?)
+                Ok(<LiteClient as GetMasterchainInfoExt>::get_masterchain_info(client).await?)
             }
             HighLevelBackend::Balanced(balancer) => {
-                Ok(<LiteBalancer as GetMasterchainInfo>::get_masterchain_info(balancer).await?)
+                Ok(<LiteBalancer as GetMasterchainInfoExt>::get_masterchain_info(balancer).await?)
             }
             HighLevelBackend::Http(HttpBackend::TonApi(provider)) => {
-                Ok(<TonApi as GetMasterchainInfo>::get_masterchain_info(provider).await?)
+                Ok(<TonApi as GetMasterchainInfoExt>::get_masterchain_info(provider).await?)
             }
             HighLevelBackend::Http(HttpBackend::ToncenterV2(provider)) => {
-                Ok(<ToncenterV2 as GetMasterchainInfo>::get_masterchain_info(provider).await?)
+                Ok(<ToncenterV2 as GetMasterchainInfoExt>::get_masterchain_info(provider).await?)
             }
             HighLevelBackend::Http(HttpBackend::ToncenterV3(provider)) => {
-                Ok(<ToncenterV3 as GetMasterchainInfo>::get_masterchain_info(provider).await?)
+                Ok(<ToncenterV3 as GetMasterchainInfoExt>::get_masterchain_info(provider).await?)
             }
         }
     }
@@ -162,21 +162,22 @@ impl HighLevelBackend {
     ) -> Result<ProviderAccountState> {
         match self {
             HighLevelBackend::Single(client) => Ok(
-                <LiteClient as GetAccountState>::get_account_state(client, address, block).await?,
+                <LiteClient as GetAccountStateExt>::get_account_state(client, address, block)
+                    .await?,
             ),
             HighLevelBackend::Balanced(balancer) => Ok(
-                <LiteBalancer as GetAccountState>::get_account_state(balancer, address, block)
+                <LiteBalancer as GetAccountStateExt>::get_account_state(balancer, address, block)
                     .await?,
             ),
             HighLevelBackend::Http(HttpBackend::TonApi(provider)) => Ok(
-                <TonApi as GetAccountState>::get_account_state(provider, address, block).await?,
+                <TonApi as GetAccountStateExt>::get_account_state(provider, address, block).await?,
             ),
             HighLevelBackend::Http(HttpBackend::ToncenterV2(provider)) => Ok(
-                <ToncenterV2 as GetAccountState>::get_account_state(provider, address, block)
+                <ToncenterV2 as GetAccountStateExt>::get_account_state(provider, address, block)
                     .await?,
             ),
             HighLevelBackend::Http(HttpBackend::ToncenterV3(provider)) => Ok(
-                <ToncenterV3 as GetAccountState>::get_account_state(provider, address, block)
+                <ToncenterV3 as GetAccountStateExt>::get_account_state(provider, address, block)
                     .await?,
             ),
         }
@@ -190,28 +191,32 @@ impl HighLevelBackend {
         stack: TvmStack,
     ) -> Result<ProviderRunMethodResult> {
         match self {
-            HighLevelBackend::Single(client) => Ok(<LiteClient as RunGetMethod>::run_get_method(
-                client, address, method, stack, block,
-            )
-            .await?),
+            HighLevelBackend::Single(client) => {
+                Ok(<LiteClient as RunGetMethodExt>::run_get_method(
+                    client, address, method, stack, block,
+                )
+                .await?)
+            }
             HighLevelBackend::Balanced(balancer) => {
-                Ok(<LiteBalancer as RunGetMethod>::run_get_method(
+                Ok(<LiteBalancer as RunGetMethodExt>::run_get_method(
                     balancer, address, method, stack, block,
                 )
                 .await?)
             }
-            HighLevelBackend::Http(HttpBackend::TonApi(provider)) => Ok(
-                <TonApi as RunGetMethod>::run_get_method(provider, address, method, stack, block)
-                    .await?,
-            ),
+            HighLevelBackend::Http(HttpBackend::TonApi(provider)) => {
+                Ok(<TonApi as RunGetMethodExt>::run_get_method(
+                    provider, address, method, stack, block,
+                )
+                .await?)
+            }
             HighLevelBackend::Http(HttpBackend::ToncenterV2(provider)) => {
-                Ok(<ToncenterV2 as RunGetMethod>::run_get_method(
+                Ok(<ToncenterV2 as RunGetMethodExt>::run_get_method(
                     provider, address, method, stack, block,
                 )
                 .await?)
             }
             HighLevelBackend::Http(HttpBackend::ToncenterV3(provider)) => {
-                Ok(<ToncenterV3 as RunGetMethod>::run_get_method(
+                Ok(<ToncenterV3 as RunGetMethodExt>::run_get_method(
                     provider, address, method, stack, block,
                 )
                 .await?)
@@ -227,28 +232,32 @@ impl HighLevelBackend {
         hash: Int256,
     ) -> Result<ProviderTransactionList> {
         match self {
-            HighLevelBackend::Single(client) => Ok(
-                <LiteClient as GetTransactions>::get_transactions(client, count, address, lt, hash)
-                    .await?,
-            ),
+            HighLevelBackend::Single(client) => {
+                Ok(<LiteClient as GetTransactionsExt>::get_transactions(
+                    client, count, address, lt, hash,
+                )
+                .await?)
+            }
             HighLevelBackend::Balanced(balancer) => {
-                Ok(<LiteBalancer as GetTransactions>::get_transactions(
+                Ok(<LiteBalancer as GetTransactionsExt>::get_transactions(
                     balancer, count, address, lt, hash,
                 )
                 .await?)
             }
-            HighLevelBackend::Http(HttpBackend::TonApi(provider)) => Ok(
-                <TonApi as GetTransactions>::get_transactions(provider, count, address, lt, hash)
-                    .await?,
-            ),
+            HighLevelBackend::Http(HttpBackend::TonApi(provider)) => {
+                Ok(<TonApi as GetTransactionsExt>::get_transactions(
+                    provider, count, address, lt, hash,
+                )
+                .await?)
+            }
             HighLevelBackend::Http(HttpBackend::ToncenterV2(provider)) => {
-                Ok(<ToncenterV2 as GetTransactions>::get_transactions(
+                Ok(<ToncenterV2 as GetTransactionsExt>::get_transactions(
                     provider, count, address, lt, hash,
                 )
                 .await?)
             }
             HighLevelBackend::Http(HttpBackend::ToncenterV3(provider)) => {
-                Ok(<ToncenterV3 as GetTransactions>::get_transactions(
+                Ok(<ToncenterV3 as GetTransactionsExt>::get_transactions(
                     provider, count, address, lt, hash,
                 )
                 .await?)
@@ -262,22 +271,23 @@ impl HighLevelBackend {
     ) -> Result<SendMessageResult> {
         match self {
             HighLevelBackend::Single(client) => Ok(
-                <LiteClient as SendExternalMessage>::send_external_message_boc(client, body)
+                <LiteClient as SendExternalMessageExt>::send_external_message_boc(client, body)
                     .await?,
             ),
             HighLevelBackend::Balanced(balancer) => Ok(
-                <LiteBalancer as SendExternalMessage>::send_external_message_boc(balancer, body)
+                <LiteBalancer as SendExternalMessageExt>::send_external_message_boc(balancer, body)
                     .await?,
             ),
             HighLevelBackend::Http(HttpBackend::TonApi(provider)) => Ok(
-                <TonApi as SendExternalMessage>::send_external_message_boc(provider, body).await?,
+                <TonApi as SendExternalMessageExt>::send_external_message_boc(provider, body)
+                    .await?,
             ),
             HighLevelBackend::Http(HttpBackend::ToncenterV2(provider)) => Ok(
-                <ToncenterV2 as SendExternalMessage>::send_external_message_boc(provider, body)
+                <ToncenterV2 as SendExternalMessageExt>::send_external_message_boc(provider, body)
                     .await?,
             ),
             HighLevelBackend::Http(HttpBackend::ToncenterV3(provider)) => Ok(
-                <ToncenterV3 as SendExternalMessage>::send_external_message_boc(provider, body)
+                <ToncenterV3 as SendExternalMessageExt>::send_external_message_boc(provider, body)
                     .await?,
             ),
         }

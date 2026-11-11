@@ -2,11 +2,11 @@
 //!
 //! The module exposes small traits instead of one monolithic provider:
 //!
-//! - [`GetMasterchainInfo`]
-//! - [`GetAccountState`]
-//! - [`RunGetMethod`]
-//! - [`SendExternalMessage`]
-//! - [`GetTransactions`]
+//! - [`GetMasterchainInfoExt`]
+//! - [`GetAccountStateExt`]
+//! - [`RunGetMethodExt`]
+//! - [`SendExternalMessageExt`]
+//! - [`GetTransactionsExt`]
 //!
 //! [`Provider`] is a convenience marker for implementations that support every
 //! capability, but callers should depend only on the traits they use so the
@@ -33,8 +33,8 @@ pub use error::{ProviderError, ProviderResult};
 pub use tonapi::{TonApi, TonApiBuilder};
 pub use toncenter::{ToncenterV2, ToncenterV2Builder, ToncenterV3, ToncenterV3Builder};
 pub use traits::{
-    GetAccountState, GetMasterchainInfo, GetTransactions, Provider, RunGetMethod,
-    SendExternalMessage,
+    GetAccountStateExt, GetMasterchainInfoExt, GetTransactionsExt, Provider, RunGetMethodExt,
+    SendExternalMessageExt,
 };
 pub use types::{
     AccountState, BlockId, MasterchainInfo, MethodRef, RunMethodResult, SendMessageResult,

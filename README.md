@@ -39,7 +39,7 @@ tonutils = { version = "2", features = ["provider"] }
 ```
 
 ```rust
-use tonutils::provider::{GetMasterchainInfo, TonApi};
+use tonutils::provider::{GetMasterchainInfoExt, TonApi};
 
 async fn latest_seqno() -> Result<i32, Box<dyn std::error::Error>> {
     let mut provider = TonApi::mainnet();
@@ -102,8 +102,8 @@ It is intentionally not a proof that a liteserver answered honestly.
 | `contracts` | Provider-neutral contract reads, account-state views, and get-method stack helpers | Yes for reads |
 | `serde` | Serde support for enabled public types that expose it, currently ADNL public keys | No |
 
-The `provider` feature exposes separate `GetMasterchainInfo`, `GetAccountState`,
-`RunGetMethod`, `SendExternalMessage`, and `GetTransactions` traits. HTTP
+The `provider` feature exposes separate `GetMasterchainInfoExt`, `GetAccountStateExt`,
+`RunGetMethodExt`, `SendExternalMessageExt`, and `GetTransactionsExt` traits. HTTP
 providers trust the remote service and do not verify Merkle proofs; liteserver
 adapters also return responses without validating proof roots. The CLI selects a
 provider with `--provider lite|tonapi|toncenter-v2|toncenter-v3`, and accepts

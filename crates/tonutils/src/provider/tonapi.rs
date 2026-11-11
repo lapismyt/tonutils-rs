@@ -20,7 +20,8 @@ use super::{
     },
     stack::{stack_from_json, stack_to_tonapi},
     traits::{
-        GetAccountState, GetMasterchainInfo, GetTransactions, RunGetMethod, SendExternalMessage,
+        GetAccountStateExt, GetMasterchainInfoExt, GetTransactionsExt, RunGetMethodExt,
+        SendExternalMessageExt,
     },
     types::{
         AccountState, BlockId, MasterchainInfo, MethodRef, RunMethodResult, SendMessageResult,
@@ -116,7 +117,7 @@ impl TonApiBuilder {
 }
 
 #[async_trait]
-impl GetMasterchainInfo for TonApi {
+impl GetMasterchainInfoExt for TonApi {
     async fn get_masterchain_info(&mut self) -> ProviderResult<MasterchainInfo> {
         let request = self
             .transport
@@ -129,7 +130,7 @@ impl GetMasterchainInfo for TonApi {
 }
 
 #[async_trait]
-impl GetAccountState for TonApi {
+impl GetAccountStateExt for TonApi {
     async fn get_account_state(
         &mut self,
         account: Address,
@@ -146,7 +147,7 @@ impl GetAccountState for TonApi {
 }
 
 #[async_trait]
-impl RunGetMethod for TonApi {
+impl RunGetMethodExt for TonApi {
     async fn run_get_method(
         &mut self,
         account: Address,
@@ -190,7 +191,7 @@ impl RunGetMethod for TonApi {
 }
 
 #[async_trait]
-impl SendExternalMessage for TonApi {
+impl SendExternalMessageExt for TonApi {
     async fn send_external_message_boc(
         &mut self,
         body: Vec<u8>,
@@ -208,7 +209,7 @@ impl SendExternalMessage for TonApi {
 }
 
 #[async_trait]
-impl GetTransactions for TonApi {
+impl GetTransactionsExt for TonApi {
     async fn get_transactions(
         &mut self,
         count: u32,

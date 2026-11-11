@@ -26,7 +26,8 @@ use crate::{
 use super::{
     error::{ProviderError, ProviderResult},
     traits::{
-        GetAccountState, GetMasterchainInfo, GetTransactions, RunGetMethod, SendExternalMessage,
+        GetAccountStateExt, GetMasterchainInfoExt, GetTransactionsExt, RunGetMethodExt,
+        SendExternalMessageExt,
     },
     types::{
         AccountState, BlockId, MasterchainInfo, MethodRef, RunMethodResult, SendMessageResult,
@@ -37,7 +38,7 @@ use super::{
 macro_rules! impl_lite_provider {
     ($client:ty, $name:literal) => {
         #[async_trait]
-        impl GetMasterchainInfo for $client {
+        impl GetMasterchainInfoExt for $client {
             async fn get_masterchain_info(&mut self) -> ProviderResult<MasterchainInfo> {
                 let info = <$client>::get_masterchain_info(self).await?;
                 Ok(MasterchainInfo {
@@ -47,7 +48,7 @@ macro_rules! impl_lite_provider {
         }
 
         #[async_trait]
-        impl GetAccountState for $client {
+        impl GetAccountStateExt for $client {
             async fn get_account_state(
                 &mut self,
                 account: Address,
@@ -61,7 +62,7 @@ macro_rules! impl_lite_provider {
         }
 
         #[async_trait]
-        impl RunGetMethod for $client {
+        impl RunGetMethodExt for $client {
             async fn run_get_method(
                 &mut self,
                 account: Address,
@@ -101,7 +102,7 @@ macro_rules! impl_lite_provider {
         }
 
         #[async_trait]
-        impl SendExternalMessage for $client {
+        impl SendExternalMessageExt for $client {
             async fn send_external_message_boc(
                 &mut self,
                 body: Vec<u8>,
@@ -115,7 +116,7 @@ macro_rules! impl_lite_provider {
         }
 
         #[async_trait]
-        impl GetTransactions for $client {
+        impl GetTransactionsExt for $client {
             async fn get_transactions(
                 &mut self,
                 count: u32,

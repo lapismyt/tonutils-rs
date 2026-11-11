@@ -15,13 +15,13 @@ use super::{
 
 /// Read the latest masterchain block.
 #[async_trait]
-pub trait GetMasterchainInfo: Send {
+pub trait GetMasterchainInfoExt: Send {
     async fn get_masterchain_info(&mut self) -> ProviderResult<MasterchainInfo>;
 }
 
 /// Read an account state.
 #[async_trait]
-pub trait GetAccountState: Send {
+pub trait GetAccountStateExt: Send {
     /// Reads an account state at the latest block when `block` is `None`.
     ///
     /// Providers that cannot address an explicit block return
@@ -35,7 +35,7 @@ pub trait GetAccountState: Send {
 
 /// Execute a TVM get-method.
 #[async_trait]
-pub trait RunGetMethod: Send {
+pub trait RunGetMethodExt: Send {
     /// Executes a get-method at the latest block when `block` is `None`.
     ///
     /// Providers that cannot address an explicit block return
@@ -51,7 +51,7 @@ pub trait RunGetMethod: Send {
 
 /// Submit a serialized external message.
 #[async_trait]
-pub trait SendExternalMessage: Send {
+pub trait SendExternalMessageExt: Send {
     async fn send_external_message_boc(
         &mut self,
         body: Vec<u8>,
@@ -60,7 +60,7 @@ pub trait SendExternalMessage: Send {
 
 /// Read account transaction history.
 #[async_trait]
-pub trait GetTransactions: Send {
+pub trait GetTransactionsExt: Send {
     async fn get_transactions(
         &mut self,
         count: u32,
@@ -75,16 +75,21 @@ pub trait GetTransactions: Send {
 /// Individual capabilities remain separate traits so callers can require only
 /// what they use.
 pub trait Provider:
-    GetMasterchainInfo + GetAccountState + RunGetMethod + SendExternalMessage + GetTransactions + Send
+    GetMasterchainInfoExt
+    + GetAccountStateExt
+    + RunGetMethodExt
+    + SendExternalMessageExt
+    + GetTransactionsExt
+    + Send
 {
 }
 
 impl<T> Provider for T where
-    T: GetMasterchainInfo
-        + GetAccountState
-        + RunGetMethod
-        + SendExternalMessage
-        + GetTransactions
+    T: GetMasterchainInfoExt
+        + GetAccountStateExt
+        + RunGetMethodExt
+        + SendExternalMessageExt
+        + GetTransactionsExt
         + Send
 {
 }
