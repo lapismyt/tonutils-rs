@@ -153,7 +153,7 @@ mod tests {
         boc[last] ^= 1;
 
         let err = inspect_boc(&boc).unwrap_err().to_string();
-        assert!(err.contains("CRC32 mismatch"));
+        assert!(err.contains("CRC32C mismatch"));
     }
 
     #[test]
@@ -304,7 +304,7 @@ mod tests {
         boc[last] ^= 1;
 
         let err = deserialize_boc(&boc).unwrap_err().to_string();
-        assert!(err.contains("CRC32 mismatch"));
+        assert!(err.contains("CRC32C mismatch"));
     }
 
     #[test]

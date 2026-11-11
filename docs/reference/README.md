@@ -80,6 +80,13 @@ return the response as received; use the typed `liteclient::boc` proof helpers
 when verification is required. Explicit-block requests are rejected by adapters
 that cannot address them (`ProviderError::UnsupportedBlock`).
 
+## Emulator
+
+`tonutils::emulator` wraps `libemulator` through a runtime-loaded dynamic
+library. Wire ABI ownership, library resolution, the standard
+`tvm::VmStack` layout, config-root requirements, CRC32C output checksums, and
+upstream response shapes are documented in [emulator.md](emulator.md).
+
 ## Typed Error Boundaries
 
 - `tvm::TvmError` is the base error for cells, slices, builders, dictionaries,
@@ -239,7 +246,7 @@ network, an empty response, or no public payload is a failure.
 Check each standalone feature surface:
 
 ```bash
-for feature in adnl tl tvm tlb network-config metadata liteclient contracts wallet crc serde; do
+for feature in adnl tl tvm tlb network-config metadata liteclient contracts wallet crc serde emulator; do
   cargo check -p tonutils --no-default-features --features "$feature"
 done
 ```

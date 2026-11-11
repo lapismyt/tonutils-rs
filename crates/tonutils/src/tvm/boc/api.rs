@@ -2,7 +2,7 @@
     clippy::cast_possible_truncation,
     reason = "TON and ADNL wire fields are intentionally represented at protocol widths"
 )]
-use crate::crc::CRC32;
+use crate::crc::CRC32C;
 use crate::tvm::cell::Cell;
 use crate::tvm::{TvmError, TvmResult as Result, error::boc_bail as bail};
 use base64::Engine;
@@ -14,7 +14,7 @@ use std::sync::Arc;
 /// BoC magic number for standard format
 pub(super) const BOC_GENERIC_MAGIC: u32 = 0xb5ee9c72;
 
-/// BoC magic number for indexed format (with CRC32)
+/// BoC magic number for the legacy indexed format.
 pub(super) const BOC_INDEXED_MAGIC: u32 = 0x68ff65f3;
 
 /// BoC magic number for indexed format (with CRC32C)
@@ -39,8 +39,11 @@ impl BocInspection {
     }
 }
 
-/// Serializes a cell and its references into a Bag of Cells (BoC) format
-pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
+/// Serializes a cell and its references into a Bag of Cells (BoC) format.
+///
+/// When `has_crc32c` is true, the trailing checksum is computed with CRC32C as
+/// required by the TON BoC format and emitted output from `libemulator`.
+pub fn serialize_boc(root: &Arc<Cell>, has_crc32c: bool) -> Result<Vec<u8>> {
     // Collect all unique cells
     let cells = collect_cells(root)?;
 
@@ -74,7 +77,7 @@ pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
 
     // Flags and size
     let has_idx = 0u8;
-    let has_crc32_flag = u8::from(has_crc32);
+    let has_crc32_flag = u8::from(has_crc32c);
     let has_cache_bits = 0u8;
     let flags = (has_idx << 7) | (has_crc32_flag << 6) | (has_cache_bits << 5);
     let flags_and_size = flags | (size_bytes as u8);
@@ -103,9 +106,9 @@ pub fn serialize_boc(root: &Arc<Cell>, has_crc32: bool) -> Result<Vec<u8>> {
         result.extend_from_slice(&cell_data);
     }
 
-    // Add CRC32 if requested
-    if has_crc32 {
-        let crc = CRC32.checksum(&result);
+    // Add CRC32C if requested
+    if has_crc32c {
+        let crc = CRC32C.checksum(&result);
         result.extend_from_slice(&crc.to_le_bytes());
     }
 
@@ -205,7 +208,7 @@ pub(super) fn parse_boc_generic_layout(
     pos += 1;
 
     let has_idx = (flags_and_size & 0x80) != 0;
-    let has_crc32 = (flags_and_size & 0x40) != 0;
+    let has_crc32c = (flags_and_size & 0x40) != 0;
     let has_cache_bits = (flags_and_size & 0x20) != 0;
     let size_bytes = (flags_and_size & 0x07) as usize;
 
@@ -277,11 +280,11 @@ pub(super) fn parse_boc_generic_layout(
         .checked_add(cells_size)
         .ok_or_else(|| TvmError::Boc("Invalid cells size".to_owned()))?;
 
-    let checksum_size = if has_crc32 { 4 } else { 0 };
+    let checksum_size = if has_crc32c { 4 } else { 0 };
     let payload_end = data
         .len()
         .checked_sub(checksum_size)
-        .ok_or_else(|| TvmError::Boc("Missing CRC32".to_owned()))?;
+        .ok_or_else(|| TvmError::Boc("Missing CRC32C".to_owned()))?;
 
     if cells_end > payload_end {
         bail!("Invalid cells size");
@@ -292,10 +295,10 @@ pub(super) fn parse_boc_generic_layout(
         bail!("Trailing bytes after BoC cell payload");
     }
 
-    // Verify CRC32 if present
-    if has_crc32 {
+    // Verify CRC32C if present
+    if has_crc32c {
         if data.len() < cells_end + 4 {
-            bail!("Missing CRC32");
+            bail!("Missing CRC32C");
         }
         let expected_crc = u32::from_le_bytes([
             data[cells_end],
@@ -303,10 +306,10 @@ pub(super) fn parse_boc_generic_layout(
             data[cells_end + 2],
             data[cells_end + 3],
         ]);
-        let actual_crc = CRC32.checksum(&data[..cells_end]);
+        let actual_crc = CRC32C.checksum(&data[..cells_end]);
         if expected_crc != actual_crc {
             bail!(
-                "CRC32 mismatch: expected 0x{:08x}, got 0x{:08x}",
+                "CRC32C mismatch: expected 0x{:08x}, got 0x{:08x}",
                 expected_crc,
                 actual_crc
             );
@@ -770,14 +773,14 @@ pub fn hex_to_boc(hex: &str) -> Result<Arc<Cell>> {
 }
 
 /// Converts a BoC to a hex string
-pub fn boc_to_hex(cell: &Arc<Cell>, has_crc32: bool) -> Result<String> {
-    let bytes = serialize_boc(cell, has_crc32)?;
+pub fn boc_to_hex(cell: &Arc<Cell>, has_crc32c: bool) -> Result<String> {
+    let bytes = serialize_boc(cell, has_crc32c)?;
     Ok(hex::encode(bytes))
 }
 
 /// Converts a BoC to base64
-pub fn boc_to_base64(cell: &Arc<Cell>, has_crc32: bool) -> Result<String> {
-    let bytes = serialize_boc(cell, has_crc32)?;
+pub fn boc_to_base64(cell: &Arc<Cell>, has_crc32c: bool) -> Result<String> {
+    let bytes = serialize_boc(cell, has_crc32c)?;
     Ok(B64_STANDARD.encode(bytes))
 }
 

@@ -31,6 +31,7 @@ pub mod stack;
 pub mod tests;
 #[doc(hidden)]
 pub mod uint;
+pub mod vm_stack;
 
 pub use address::{Address, ExternalAddress};
 pub use boc::{
@@ -46,6 +47,7 @@ pub use dict::{
 pub use error::{TvmError, TvmResult};
 pub use slice::Slice;
 pub use stack::{TvmStack, TvmStackEntry};
+pub use vm_stack::{MAX_VM_STACK_DEPTH, MAX_VM_TUPLE_LEN, VmSlice, VmStack, VmStackValue};
 
 use crate::crc::CRC16;
 

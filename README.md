@@ -93,7 +93,8 @@ It is intentionally not a proof that a liteserver answered honestly.
 | `tl` | Shared TL primitives, TL schema snapshots, generated metadata, and schema helpers | No |
 | `tlb` | Typed TL-B blocks, messages, transactions, accounts, and proof structures | No |
 | `wallet` | TON mnemonic handling, Ed25519 signing, Wallet V4R2/V5R1 addresses, and external message BoCs | No |
-| `crc` | CRC16 and CRC32 helpers used by TON identifiers and BoC formats | No |
+| `crc` | CRC16, CRC32, and CRC32C helpers used by TON identifiers and BoC formats | No |
+| `emulator` | Runtime-loaded `libemulator` wrappers for transactions, tick/tock, get-methods, and message execution | No, but requires `libemulator` at runtime |
 | `metadata` | TEP-64 on-chain and off-chain content parsing | No |
 | `network-config` | Global network configuration parsing and liteserver selection | No |
 | `adnl` | ADNL identity, encrypted UDP transport, QUIC transport, and ADNL TL wire types | Yes for transport |
@@ -101,6 +102,12 @@ It is intentionally not a proof that a liteserver answered honestly.
 | `provider` | Capability traits for liteservers, TonAPI, Toncenter v2/v3, and their HTTP/lite adapters | Yes |
 | `contracts` | Provider-neutral contract reads, account-state views, and get-method stack helpers | Yes for reads |
 | `serde` | Serde support for enabled public types that expose it, currently ADNL public keys | No |
+
+The `emulator` feature is the only module that needs a native library at
+runtime. It loads `libemulator` with `libloading` and never builds C++ during
+`cargo build`; set `TONUTILS_EMULATOR_LIB` or pass an explicit path to
+`EmulatorEngine::open`. Emulator inputs and outputs use the standard
+`tvm::VmStack` codec. See [docs/reference/emulator.md](docs/reference/emulator.md).
 
 The `provider` feature exposes separate `GetMasterchainInfoExt`, `GetAccountStateExt`,
 `RunGetMethodExt`, `SendExternalMessageExt`, and `GetTransactionsExt` traits. HTTP
