@@ -23,6 +23,8 @@ pub mod adnl;
 pub mod contracts;
 #[cfg(feature = "crc")]
 pub mod crc;
+#[cfg(feature = "emulator")]
+pub mod emulator;
 #[cfg(feature = "liteclient")]
 pub mod liteclient;
 #[cfg(feature = "metadata")]

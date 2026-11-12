@@ -28,6 +28,16 @@ not a release tag or release date.
   provider adapters with configurable endpoints and credentials.
 - Added CLI provider selection (`--provider`), self-hosted endpoint, API key,
   and timeout flags for high-level commands.
+- Added the opt-in `emulator` feature with runtime-loaded `libemulator`
+  wrappers for transaction, tick/tock, get-method, and message emulation,
+  including typed results, configurable builders, and raw JSON escape hatches.
+- Added the `emulator-download` feature, which downloads a released upstream
+  `libemulator` shared library during `cargo build` and embeds its path for
+  `EmulatorEngine::open_default`.
+- Added ignored live emulator tests against a wallet v4r2 code/data fixture,
+  plus a CI job that runs them with the downloaded library.
+- Added the upstream-compatible `tvm::VmStack`, `VmStackValue`, and `VmSlice`
+  standard stack codec, with conversions from the existing `TvmStack`.
 
 ### Changed
 
@@ -43,6 +53,15 @@ not a release tag or release date.
   `num-bigint` 0.5, `base64` 0.23).
 - Refresh crate documentation, README, and CLI layout for the new feature and
   crate boundaries.
+- Switched Bag-of-Cells checksum generation and validation from CRC32/ISO-HDLC
+  to the protocol-correct CRC32C required by TON and `libemulator`.
+- Switched get-method identifier hashing from CRC16/IBM-SDLC to the
+  TON-compatible CRC16/XMODEM.
+
+### Fixed
+
+- Fixed Bag-of-Cells serialization to emit parent cells before their
+  references; upstream TVM rejects the previous child-first ordering.
 
 ### Removed
 

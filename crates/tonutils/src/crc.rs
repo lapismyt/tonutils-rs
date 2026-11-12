@@ -1,14 +1,17 @@
-use crc::{CRC_16_IBM_SDLC, CRC_32_ISO_HDLC, Crc};
+use crc::{CRC_16_XMODEM, CRC_32_ISCSI, CRC_32_ISO_HDLC, Crc};
 
-/// CRC16 implementation
-pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_IBM_SDLC);
+/// CRC16/XMODEM implementation used by TON get-method identifiers.
+pub const CRC16: Crc<u16> = Crc::<u16>::new(&CRC_16_XMODEM);
 
-/// CRC32 implementation
+/// CRC32 (ISO-HDLC) implementation for non-BoC checksums.
 pub const CRC32: Crc<u32> = Crc::<u32>::new(&CRC_32_ISO_HDLC);
+
+/// CRC32C (Castagnoli) implementation used by TON Bag-of-Cells checksums.
+pub const CRC32C: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 
 #[cfg(test)]
 mod tests {
-    use super::{CRC16, CRC32};
+    use super::{CRC16, CRC32, CRC32C};
 
     #[test]
     fn test_crc16_basic() {
@@ -17,6 +20,13 @@ mod tests {
 
         // CRC16 should produce 16-bit value
         let _: u16 = checksum;
+    }
+
+    #[test]
+    fn test_crc16_known_ton_method_vector() {
+        // TON uses CRC-16/XMODEM for get-method identifiers. The wallet
+        // `seqno` method is a widely used reference value.
+        assert_eq!(CRC16.checksum(b"seqno"), 0x4C97);
     }
 
     #[test]
@@ -280,6 +290,12 @@ mod tests {
 
         // Order should matter
         assert_ne!(checksum1, checksum2);
+    }
+
+    #[test]
+    fn test_crc32c_known_vector() {
+        // Standard CRC-32C check value for "123456789".
+        assert_eq!(CRC32C.checksum(b"123456789"), 0xE306_9283);
     }
 
     #[test]

@@ -56,6 +56,57 @@ jobs:
             exit 1
           fi
 
+  emulator-tests:
+    name: Live libemulator gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUST_LOG: tonutils=debug
+      TON_LIVE_FEATURES: emulator-download
+      TON_LIVE_LOG_DIR: ${{ github.workspace }}/emulator-logs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache Cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-emulator-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-emulator-
+            ${{ runner.os }}-cargo-
+
+      - name: Run libemulator version gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh lib emulator::tests::live_engine_reports_version_and_accepts_verbosity
+
+      - name: Run wallet seqno get-method gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh lib emulator::tests::live_wallet_v4r2_seqno_get_method
+
+      - name: Run wallet public-key get-method gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh lib emulator::tests::live_wallet_v4r2_public_key_get_method
+
+      - name: Run wallet internal-message gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh lib emulator::tests::live_wallet_v4r2_internal_message_is_accepted
+
+      - name: Upload emulator logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: emulator-logs
+          path: ${{ github.workspace }}/emulator-logs
+          retention-days: 7
+          if-no-files-found: warn
+
   live-tests:
     name: Live mainnet DHT and liteserver gates
     runs-on: ubuntu-latest

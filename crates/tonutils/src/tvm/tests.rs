@@ -491,3 +491,9 @@ fn test_boc_conversions() {
     let from_b64 = base64_to_boc(&b64).unwrap();
     assert_eq!(cell.hash(), from_b64.hash());
 }
+
+#[test]
+fn test_get_method_id_uses_ton_crc16_convention() {
+    assert_eq!(super::method_name_to_id("seqno"), 0x1_4C97);
+    assert_eq!(super::method_name_to_id("get_public_key"), 0x1_339C);
+}
