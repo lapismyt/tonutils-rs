@@ -79,7 +79,9 @@ impl EmulatorEngine {
     ///
     /// 1. `TONUTILS_EMULATOR_LIB`;
     /// 2. `TON_EMULATOR_LIB`;
-    /// 3. `libemulator` with the platform dynamic-library extension.
+    /// 3. the library downloaded by the `emulator-download` feature, if that
+    ///    build-time path still exists;
+    /// 4. `libemulator` with the platform dynamic-library extension.
     ///
     /// # Errors
     ///
@@ -92,6 +94,13 @@ impl EmulatorEngine {
             {
                 return Self::open(value);
             }
+        }
+
+        if let Some(downloaded) = option_env!("TONUTILS_EMULATOR_DOWNLOADED_LIB")
+            && !downloaded.is_empty()
+            && Path::new(downloaded).exists()
+        {
+            return Self::open(downloaded);
         }
 
         let candidate = PathBuf::from(format!("libemulator.{DLL_EXTENSION}"));

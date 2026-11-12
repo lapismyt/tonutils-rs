@@ -40,6 +40,7 @@ contracts = ["provider", "tlb", "tl", "tvm", "dep:async-trait",
 wallet = ["tlb", "tvm", "dep:bip39", "dep:ed25519-dalek", "dep:hex", "dep:hmac",
           "dep:num-bigint", "dep:pbkdf2", "dep:rand", "dep:sha2", "dep:thiserror"]
 emulator = ["tvm", "tlb", "dep:libloading", "dep:serde_json"]
+emulator-download = ["emulator"]
 crc = ["dep:crc"]
 serde = ["dep:serde"]
 

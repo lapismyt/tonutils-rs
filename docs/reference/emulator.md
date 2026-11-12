@@ -33,11 +33,38 @@ Resolution order:
 1. `EmulatorEngine::open(path)` for an explicit path;
 2. `TONUTILS_EMULATOR_LIB`;
 3. `TON_EMULATOR_LIB`;
-4. `libemulator.<platform extension>` on the dynamic-loader search path.
+4. the library downloaded by the `emulator-download` feature, if that
+   build-time path still exists;
+5. `libemulator.<platform extension>` on the dynamic-loader search path.
 
 The library is loaded with `libloading::Library`. A missing symbol fails the
 engine load with `EmulatorError::MissingSymbol` instead of panicking or
 silently degrading.
+
+## Compile-time download
+
+The `emulator-download` feature enables `build.rs`. It maps the Cargo target to
+an upstream release asset and downloads it into `OUT_DIR`:
+
+| Target | Asset |
+| --- | --- |
+| Linux x86_64 | `libemulator-linux-x86_64.so` |
+| Linux aarch64 | `libemulator-linux-arm64.so` |
+| macOS x86_64 | `libemulator-mac-x86-64.dylib` |
+| macOS aarch64 | `libemulator-mac-arm64.dylib` |
+| Windows x86_64 | `libemulator.dll` |
+
+By default the latest GitHub release is used. Set
+`TONUTILS_EMULATOR_RELEASE=v2026.10` to pin a tag, or
+`TONUTILS_EMULATOR_LIB_URL=https://...` to use an internal mirror. The build
+requires `curl`. The download is skipped on docs.rs (`DOCS_RS` is set) and the
+result is cached inside the Cargo `OUT_DIR` for the selected release.
+
+The feature does **not** statically link `libemulator`. GitHub releases publish
+only shared libraries, and the `ton-*` archives contain `libemulator.so`, not an
+`libemulator.a`. Static linking would require building the upstream C++ tree
+with `-DEMULATOR_STATIC=ON`, so this crate intentionally leaves that to
+downstream packaging.
 
 ## Configuration root
 

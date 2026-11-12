@@ -13,12 +13,23 @@
 //! 1. pass an explicit path to [`EmulatorEngine::open`];
 //! 2. set `TONUTILS_EMULATOR_LIB`;
 //! 3. set `TON_EMULATOR_LIB`;
-//! 4. place `libemulator.so`, `libemulator.dylib`, or `libemulator.dll` in the
+//! 4. enable the `emulator-download` feature to fetch a released library at
+//!    build time;
+//! 5. place `libemulator.so`, `libemulator.dylib`, or `libemulator.dll` in the
 //!    dynamic loader search path.
 //!
 //! The library is part of the reference TON build. Build it from
 //! `ton-blockchain/ton` with the `emulator` target, or obtain a matching
 //! prebuilt artifact from the TON release pipeline.
+//!
+//! # Compile-time download
+//!
+//! `emulator-download` makes `build.rs` fetch the latest upstream shared
+//! library for the target platform (or a pinned release via
+//! `TONUTILS_EMULATOR_RELEASE`). The downloaded path is embedded into the
+//! crate and used by [`EmulatorEngine::open_default`]. Upstream does not
+//! publish static archives, so the library remains dynamically loaded at
+//! runtime; this feature does not statically link it.
 //!
 //! # Transaction emulation
 //!

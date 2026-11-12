@@ -28,8 +28,10 @@ evidence.
 
 ## `tonutils::emulator`
 - [x] Add opt-in runtime-loaded `libemulator` wrappers, standard `VmStack`, typed results, and fully configurable builders.
-- [ ] Add checked-in `libemulator` integration fixtures and an optional CI job that downloads a released library.
+- [x] Add live `libemulator` integration tests and a CI job that downloads a released library.
+- [x] Add an optional build-time `libemulator` download feature (`emulator-download`).
 - [ ] Wrap the optimized `tvm_emulator_emulate_run_method` and config-object APIs if upstream consumers need them.
+- [ ] Support true static `libemulator` linking if upstream starts publishing static archives.
 
 ## Cargo
 - [x] Remove unused workspace dependencies. Make dependencies tightly tied to features in `tonutils`.

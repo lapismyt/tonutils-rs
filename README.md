@@ -95,6 +95,7 @@ It is intentionally not a proof that a liteserver answered honestly.
 | `wallet` | TON mnemonic handling, Ed25519 signing, Wallet V4R2/V5R1 addresses, and external message BoCs | No |
 | `crc` | CRC16, CRC32, and CRC32C helpers used by TON identifiers and BoC formats | No |
 | `emulator` | Runtime-loaded `libemulator` wrappers for transactions, tick/tock, get-methods, and message execution | No, but requires `libemulator` at runtime |
+| `emulator-download` | `emulator` plus a build-time download of the latest upstream `libemulator` shared library for the target platform | Only during `cargo build` |
 | `metadata` | TEP-64 on-chain and off-chain content parsing | No |
 | `network-config` | Global network configuration parsing and liteserver selection | No |
 | `adnl` | ADNL identity, encrypted UDP transport, QUIC transport, and ADNL TL wire types | Yes for transport |
@@ -107,7 +108,11 @@ The `emulator` feature is the only module that needs a native library at
 runtime. It loads `libemulator` with `libloading` and never builds C++ during
 `cargo build`; set `TONUTILS_EMULATOR_LIB` or pass an explicit path to
 `EmulatorEngine::open`. Emulator inputs and outputs use the standard
-`tvm::VmStack` codec. See [docs/reference/emulator.md](docs/reference/emulator.md).
+`tvm::VmStack` codec. The optional `emulator-download` feature fetches a released
+shared library during `cargo build` (pin with `TONUTILS_EMULATOR_RELEASE`) and
+embeds its path for `EmulatorEngine::open_default`. Upstream publishes only
+shared libraries, so this does not statically link `libemulator`. See
+[docs/reference/emulator.md](docs/reference/emulator.md).
 
 The `provider` feature exposes separate `GetMasterchainInfoExt`, `GetAccountStateExt`,
 `RunGetMethodExt`, `SendExternalMessageExt`, and `GetTransactionsExt` traits. HTTP
