@@ -225,6 +225,22 @@ TON_GLOBAL_CONFIG_JSON="$TON_TESTNET_GLOBAL_CONFIG_JSON" \
   scripts/run-live-test.sh lib liteclient::tests::live_workflows::live_testnet_liteserver_smoke
 ```
 
+HTTP provider gates run against mainnet without API keys:
+
+```bash
+export TON_LIVE_FEATURES=provider
+scripts/run-live-test.sh provider_live toncenter_v2_live_masterchain_info
+scripts/run-live-test.sh provider_live toncenter_v3_live_account_state_and_get_method
+scripts/run-live-test.sh provider_live tonapi_live_transactions
+```
+
+The complete list follows `<provider>_live_<capability>` and is available with
+`cargo test -p tonutils --features provider --test provider_live -- --list`.
+Toncenter permits one request per second without a key, so the probes serialize
+HTTP calls with a 1.2-second interval and retry `429`/`5xx` responses with
+backoff. The provider gates only read chain state; they never submit external
+messages.
+
 `TON_GLOBAL_CONFIG_JSON` and `TON_TESTNET_GLOBAL_CONFIG_JSON` are required for
 their respective network gates. The DHT gates derive seeds directly from
 those configs. CI runs every live step with `if: ${{ !cancelled() }}` and

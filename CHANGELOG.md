@@ -26,6 +26,10 @@ not a release tag or release date.
   account state, get-methods, external messages, and transaction history.
 - Added TonAPI, Toncenter v2, Toncenter v3, LiteClient, and LiteBalancer
   provider adapters with configurable endpoints and credentials.
+- Added ignored mainnet live probes for the TonAPI, Toncenter v2, and Toncenter
+  v3 adapters, covering masterchain info, account state, get-methods,
+  transactions, and unsupported-capability boundaries, plus a keyless
+  rate-limit-aware CI job.
 - Added CLI provider selection (`--provider`), self-hosted endpoint, API key,
   and timeout flags for high-level commands.
 - Added the opt-in `emulator` feature with runtime-loaded `libemulator`
