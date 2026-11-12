@@ -8,9 +8,9 @@
       "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb@3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
       "decoded_type": "Block",
       "root_hash": "b53be2d7849ef9313cadea0e4874fc267b164ef09972e4931b0be87ec6b9f9d2",
-      "payload_sha256": "18ab34064be0c91224a88776409cc5cf14fa4e5a71a9992d7c45f4bb440a03ea",
+      "payload_sha256": "5c952460b6d45abba5a755ed893e593ed65ed6b8bf5a6bb3d9d536a367f20637",
       "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
-      "boc_hex": "b5ee9c72010102010010010000041011ef55aaffffff1100000000"
+      "boc_hex": "b5ee9c7201010201001000041011ef55aaffffff11010101010000"
     },
     {
       "name": "typed-shard-state-unsplit-stable-fields",
@@ -19,9 +19,9 @@
       "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb@3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
       "decoded_type": "ShardStateUnsplit",
       "root_hash": "07565d3b7b541947939af06236649997ed86c84739213fe27a5becc13606c7d3",
-      "payload_sha256": "15c9b31c1f391761078aa5a47c5d42b19766caf35b597a703fcc9db8cad1f082",
+      "payload_sha256": "f13487b4b8a4b1e9eae1c2d6ce9c8564656b9b88bd93d37eb02b4454ec4a1de3",
       "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
-      "boc_hex": "b5ee9c72010104010050030000000300100127000000000000000500000000000000061070841000035b9023afe2ffffff113c00000000800000000000000000000001000000026553f100000000000000000300000004a0000102"
+      "boc_hex": "b5ee9c7201010401005000035b9023afe2ffffff113c00000000800000000000000000000001000000026553f100000000000000000300000004a00102030000000300100127000000000000000500000000000000061070841001"
     },
     {
       "name": "typed-config-gas-prices",
@@ -52,9 +52,9 @@
       "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb@3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
       "decoded_type": "MERKLE_PROOF",
       "root_hash": "c4090e1912b84dabee7b62c4ea9ef268c0a198c81855aacb2ba458d59a2f9a88",
-      "payload_sha256": "8ff6f50c8c9323583795609bd65a625db33832d20b1a1b394794987bc50c54f1",
+      "payload_sha256": "a0a54faf8b47a98ef32328ab0017a863084ae5715c5420e5f3cbb7e4a9cfc137",
       "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
-      "boc_hex": "b5ee9c7201010201002801000009460396a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7000000"
+      "boc_hex": "b5ee9c720101020100280009460396a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc70000010000"
     },
     {
       "name": "typed-merkle-update",
@@ -63,9 +63,9 @@
       "upstream_commit_or_endpoint": "ton-blockchain/ton crypto/block/block.tlb@3d478cbde854be03a18ab2a59f8fc3c565cf7d14",
       "decoded_type": "MERKLE_UPDATE",
       "root_hash": "68ee9909f0e6dc8d39ecaf7880f07e7fa5e92d0df0e61f1acbacc8f6574e7f05",
-      "payload_sha256": "3918f90c63be26404021498aa41ecbc673d05aaead2e31c3467b2238f714f1e6",
+      "payload_sha256": "bc3a15c7ccc0b61828553a7e857eb52df5335f64a5f539679649bd40f6080d54",
       "canonical_reserialization": "canonical BoC without index table or CRC32 must match fixture bytes",
-      "boc_hex": "b5ee9c7201010201004b0100000a8a0496a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc796a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc7000000000000"
+      "boc_hex": "b5ee9c7201010201004b000a8a0496a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc796a296d224f285c67bee93c30f8a309157f0daa35dc5b87e410b78630a09cfc70000000001010000"
     }
   ]
 }

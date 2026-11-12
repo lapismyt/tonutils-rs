@@ -53,13 +53,16 @@ pub fn serialize_boc(root: &Arc<Cell>, has_crc32c: bool) -> Result<Vec<u8>> {
         .position(|cell| cell.hash() == root.hash())
         .ok_or_else(|| TvmError::Boc("Root cell not found in collected cells".to_owned()))?;
 
-    // Serialize each cell
+    // Build the index map before serializing so every reference is resolvable
+    // regardless of traversal order.
     let mut serialized_cells = Vec::new();
     let mut cell_map = HashMap::new();
     let size_bytes = bytes_needed(cells.len());
 
     for (idx, cell) in cells.iter().enumerate() {
         cell_map.insert(cell_hash(cell), idx);
+    }
+    for cell in &cells {
         serialized_cells.push(serialize_cell(cell, &cell_map, size_bytes)?);
     }
 
@@ -703,9 +706,9 @@ pub(super) fn collect_cells(root: &Arc<Cell>) -> Result<Vec<Arc<Cell>>> {
     let mut visited = HashMap::new();
     collect_cells_recursive(root, &mut cells, &mut visited)?;
 
-    // Cells are already in topological order (children before parents)
-    // No reverse needed for BoC serialization
-
+    // Cells are stored parent-first. The BoC format requires every reference
+    // to point to a cell with a larger index, so the root is cell 0 and
+    // children follow their parents.
     Ok(cells)
 }
 
@@ -720,14 +723,13 @@ pub(super) fn collect_cells_recursive(
         return Ok(());
     }
 
-    // Visit children first
+    // Add this cell before its children so every reference points forward.
+    visited.insert(hash, cells.len());
+    cells.push(cell.clone());
+
     for reference in cell.references() {
         collect_cells_recursive(reference, cells, visited)?;
     }
-
-    // Add this cell
-    visited.insert(hash, cells.len());
-    cells.push(cell.clone());
 
     Ok(())
 }

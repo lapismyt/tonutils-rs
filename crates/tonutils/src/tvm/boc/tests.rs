@@ -22,7 +22,7 @@ mod tests {
 
     const EMPTY_CELL_BOC_HEX: &str = "b5ee9c72010101010002000000";
     const ONE_BYTE_CELL_BOC_HEX: &str = "b5ee9c72010101010003000002aa";
-    const REF_CELL_BOC_HEX: &str = "b5ee9c72010102010007010002aa0102bb00";
+    const REF_CELL_BOC_HEX: &str = "b5ee9c72010102010007000102bb010002aa";
     const INDEXED_REF_CELL_BOC_HEX: &str = "b5ee9c728101020100070103070002aa0102bb00";
     const LIBRARY_REFERENCE_BOC_HEX: &str = "b5ee9c72010101010023000842023333333333333333333333333333333333333333333333333333333333333333";
     const TWO_ROOT_BOC_HEX: &str = "b5ee9c72010102020005000100000002aa";
@@ -164,11 +164,13 @@ mod tests {
         let root = Arc::new(root);
 
         let mut boc = serialize_boc(&root, false).unwrap();
-        let last = boc.len() - 1;
-        boc[last] = 2;
+        // Cells are parent-first: the root reference index is the fourth byte
+        // from the end, before the child descriptor and payload.
+        let reference_index = boc.len() - 4;
+        boc[reference_index] = 2;
 
         let err = inspect_boc(&boc).unwrap_err().to_string();
-        assert!(err.contains("Invalid reference index"));
+        assert!(err.contains("Invalid reference index"), "{err}");
     }
 
     #[test]
@@ -325,11 +327,13 @@ mod tests {
         let root = Arc::new(root);
 
         let mut boc = serialize_boc(&root, false).unwrap();
-        let last = boc.len() - 1;
-        boc[last] = 2;
+        // Cells are parent-first: the root reference index is the fourth byte
+        // from the end, before the child descriptor and payload.
+        let reference_index = boc.len() - 4;
+        boc[reference_index] = 2;
 
         let err = deserialize_boc(&boc).unwrap_err().to_string();
-        assert!(err.contains("Invalid reference index"));
+        assert!(err.contains("Invalid reference index"), "{err}");
     }
 
     #[test]
