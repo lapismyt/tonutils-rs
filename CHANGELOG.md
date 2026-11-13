@@ -62,6 +62,12 @@ not a release tag or release date.
 
 - Fixed Bag-of-Cells serialization to emit parent cells before their
   references; upstream TVM rejects the previous child-first ordering.
+- Fixed crates.io packaging by versioning the intra-workspace `tonutils` and
+  `tonutils-macros` path dependencies, publishing in dependency order, and
+  waiting for each crate to appear in the registry index before publishing
+  dependents.
+- Moved the `tonutils` crate `keywords` and `categories` out of
+  `[package.metadata.docs.rs]` so they reach crates.io metadata.
 
 ### Removed
 

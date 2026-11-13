@@ -59,8 +59,8 @@ tokio = { version = "1.47", features = ["full", "time"] }
 tokio-tower = "0.6"
 tokio-util = { version = "0.7", features = ["codec"] }
 tower = { version = "0.5", features = ["make", "util"] }
-tonutils = { path = "crates/tonutils" }
-tonutils-macros = { path = "crates/tonutils-macros" }
+tonutils = { version = "2.0.0", path = "crates/tonutils" }
+tonutils-macros = { version = "2.0.0", path = "crates/tonutils-macros" }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
