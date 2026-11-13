@@ -52,22 +52,8 @@ fn parse_entry(kind: &str, payload: &Value) -> ProviderResult<TvmStackEntry> {
                 .ok_or_else(|| invalid_stack("numeric stack value is not a string"))?;
             Ok(TvmStackEntry::Int(parse_bigint(value)?))
         }
-        "cell" => Ok(TvmStackEntry::Cell(
-            decode_boc_value(
-                payload
-                    .as_str()
-                    .ok_or_else(|| invalid_stack("cell stack value is not a string"))?,
-            )
-            .map_err(invalid_stack)?,
-        )),
-        "slice" => Ok(TvmStackEntry::Slice(
-            decode_boc_value(
-                payload
-                    .as_str()
-                    .ok_or_else(|| invalid_stack("slice stack value is not a string"))?,
-            )
-            .map_err(invalid_stack)?,
-        )),
+        "cell" => Ok(TvmStackEntry::Cell(parse_boc_payload(payload, "cell")?)),
+        "slice" => Ok(TvmStackEntry::Slice(parse_boc_payload(payload, "slice")?)),
         "null" | "nan" => Ok(TvmStackEntry::Null),
         "tuple" => {
             let entries = payload
@@ -97,6 +83,23 @@ fn parse_entry(kind: &str, payload: &Value) -> ProviderResult<TvmStackEntry> {
         }
         other => Err(invalid_stack(format!("unknown stack entry type `{other}`"))),
     }
+}
+
+/// Toncenter v2 returns cell and slice values as `{"bytes": "<boc>"}` objects,
+/// while Toncenter v3 and TonAPI return plain strings.
+fn parse_boc_payload(
+    payload: &Value,
+    kind: &str,
+) -> ProviderResult<std::sync::Arc<crate::tvm::Cell>> {
+    let value = payload
+        .as_str()
+        .or_else(|| payload.get("bytes").and_then(Value::as_str))
+        .ok_or_else(|| {
+            invalid_stack(format!(
+                "{kind} stack value is neither a string nor a `bytes` object"
+            ))
+        })?;
+    decode_boc_value(value).map_err(invalid_stack)
 }
 
 fn parse_bigint(value: &str) -> ProviderResult<BigInt> {
@@ -244,6 +247,21 @@ mod tests {
                 TvmStackEntry::Tuple(vec![TvmStackEntry::Int(BigInt::from(1))]),
             ]
         );
+    }
+
+    #[test]
+    fn parses_toncenter_v2_cell_bytes_objects() {
+        let boc = "te6cckEBAQEAJAAAQ4AMiB/HjSggcHLHKKLniWIo834XNprhIcsO73tLA4XzMxC89RGs";
+        let stack = stack_from_json(
+            &json!([
+                ["cell", {"bytes": boc}],
+                ["slice", {"bytes": boc}],
+            ]),
+            "test",
+        )
+        .expect("valid stack");
+        assert!(matches!(stack.entries()[0], TvmStackEntry::Cell(_)));
+        assert!(matches!(stack.entries()[1], TvmStackEntry::Slice(_)));
     }
 
     #[test]

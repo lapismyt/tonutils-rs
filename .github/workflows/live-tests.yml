@@ -107,6 +107,77 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+  provider-tests:
+    name: Live mainnet HTTP provider gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUST_LOG: tonutils=debug
+      TON_LIVE_FEATURES: provider
+      TON_LIVE_LOG_DIR: ${{ github.workspace }}/provider-logs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache Cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-provider-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-provider-
+            ${{ runner.os }}-cargo-
+
+      - name: Run Toncenter v2 masterchain info gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh provider_live toncenter_v2_live_masterchain_info
+
+      - name: Run Toncenter v2 account state and get-method gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh provider_live toncenter_v2_live_account_state_and_get_method
+
+      - name: Run Toncenter v2 transactions gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh provider_live toncenter_v2_live_transactions
+
+      - name: Run Toncenter v3 masterchain info gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh provider_live toncenter_v3_live_masterchain_info
+
+      - name: Run Toncenter v3 account state and get-method gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh provider_live toncenter_v3_live_account_state_and_get_method
+
+      - name: Run Toncenter v3 transactions gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh provider_live toncenter_v3_live_transactions
+
+      - name: Run TonAPI masterchain info gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh provider_live tonapi_live_masterchain_info
+
+      - name: Run TonAPI account state and get-method gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh provider_live tonapi_live_account_state_and_get_method
+
+      - name: Run TonAPI transactions gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh provider_live tonapi_live_transactions
+
+      - name: Upload provider logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: provider-logs
+          path: ${{ github.workspace }}/provider-logs
+          retention-days: 7
+          if-no-files-found: warn
+
   live-tests:
     name: Live mainnet DHT and liteserver gates
     runs-on: ubuntu-latest
