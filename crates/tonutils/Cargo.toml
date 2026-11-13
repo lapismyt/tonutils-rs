@@ -7,11 +7,11 @@ repository.workspace = true
 description = "Pure-Rust SDK for The Open Network (TON)."
 readme = "../../README.md"
 documentation = "https://docs.rs/tonutils"
+keywords = ["ton", "blockchain", "liteclient", "tvm", "sdk"]
+categories = ["api-bindings", "cryptography::cryptocurrencies", "network-programming"]
 
 [package.metadata.docs.rs]
 all-features = true
-keywords = ["ton", "blockchain", "liteclient", "tvm", "sdk"]
-categories = ["api-bindings", "cryptography::cryptocurrencies", "network-programming"]
 
 [lints]
 workspace = true

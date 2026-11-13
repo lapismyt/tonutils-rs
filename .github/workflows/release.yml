@@ -48,6 +48,21 @@ jobs:
             exit 1
           fi
 
+          # Packaging strips path dependencies, so every intra-workspace
+          # dependency must keep an explicit version requirement in sync with
+          # the workspace version.
+          metadata="$(cargo metadata --no-deps --format-version 1)"
+          for spec in "tonutils tonutils-macros" "tonutils-cli tonutils"; do
+            read -r package dependency <<< "$spec"
+            req="$(jq -r --arg package "$package" --arg dependency "$dependency" \
+              '.packages[] | select(.name == $package) | .dependencies[]
+               | select(.name == $dependency) | .req' <<< "$metadata")"
+            if [[ "$req" != "^$version" ]]; then
+              echo "Package $package requires $dependency $req, expected ^$version."
+              exit 1
+            fi
+          done
+
       - name: Verify workspace packages
         run: |
           cargo fmt --check
@@ -55,13 +70,66 @@ jobs:
           cargo check -p tonutils-cli
           cargo test --workspace --all-features
           cargo clippy --workspace --all-targets --all-features -- -D warnings
-          for package in tonutils tonutils-macros tonutils-cli; do
-            cargo package -p "$package"
-          done
+          # Dependent crates cannot be packaged before their internal
+          # dependencies are on crates.io, so only the leaf crate is verified
+          # here. The version-requirement guard above protects the others.
+          cargo package -p tonutils-macros
 
       - name: Publish workspace packages
         shell: bash
         run: |
-          for package in tonutils tonutils-macros tonutils-cli; do
-            cargo publish -p "$package"
+          set -euo pipefail
+
+          # crates.io sparse index layout: 1 char, 2 chars, 3 chars, then
+          # "ab/cd" for longer names.
+          index_path() {
+            local name="$1"
+            case "${#name}" in
+              1) echo "${name}" ;;
+              2) echo "${name}" ;;
+              3) echo "3/${name:0:1}" ;;
+              *) echo "${name:0:2}/${name:2:2}" ;;
+            esac
+          }
+
+          crate_versions() {
+            curl -sf "https://index.crates.io/$(index_path "$1")/$1" || true
+          }
+
+          wait_for_version() {
+            local name="$1" version="$2"
+            for _ in $(seq 1 60); do
+              if crate_versions "$name" | grep -Fq "\"vers\":\"$version\""; then
+                return 0
+              fi
+              sleep 5
+            done
+            echo "Timed out waiting for $name $version in the crates.io index."
+            return 1
+          }
+
+          # Dependency order matters: dependents cannot be published before
+          # their internal dependencies are visible in the registry index.
+          for package in tonutils-macros tonutils tonutils-cli; do
+            version="$(cargo metadata --no-deps --format-version 1 \
+              | jq -r --arg package "$package" \
+                '.packages[] | select(.name == $package) | .version')"
+
+            if crate_versions "$package" | grep -Fq "\"vers\":\"$version\""; then
+              echo "$package $version is already published; skipping."
+              continue
+            fi
+
+            for attempt in $(seq 1 5); do
+              if cargo publish -p "$package"; then
+                break
+              fi
+              if [[ "$attempt" -eq 5 ]]; then
+                echo "Failed to publish $package $version."
+                exit 1
+              fi
+              sleep 15
+            done
+
+            wait_for_version "$package" "$version"
           done
