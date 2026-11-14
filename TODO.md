@@ -12,7 +12,9 @@ evidence.
 - [x] Migrate TL schemes specific for ADNL, LiteAPI, etc. to their respectful modules. Module `tonutils::tl` should remain only for TL types and protocol implementation. Make sure there is no duplicate names anywhere in the library afterwards.
 
 ## `tonutils::contracts`
-- [ ] Just fix it. Make it work. 
+- [x] Add `ContractDefinition`, `ContractSpec`, `ContractData`, `DeployRequest`, and `ForwardPayload` instrumentation with embedded default code, offline `StateInit`/address derivation, and deploy requests.
+- [x] Add `ContractCodeError`, typed build/data error variants, and shared get-method helpers.
+- [ ] Revisit provider-facing contract read helpers if the provider abstraction changes.
 
 ## `tonutils::overlay`
 - [ ] Reimplement from scratch.
@@ -21,10 +23,12 @@ evidence.
 - [ ] Make high-level provider abstractions that will open possibilities to connect to custom providers, i.e. Toncenter or TonAPI. Providers must be defined not by one big trait, but with separate trait for each feature, because some providers can miss some functionality and some providers can have extra functionality - i want to be able to check it on type-system level, not with runtime panics. It must replace ContractProvider.
 
 ## `tonutils::jetton`
-- [ ] Reimplement from scratch.
+- [x] Reimplement TEP-74 standard, stablecoin, and sharded stablecoin V2 master/wallet wrappers with embedded code, custom code, offline addresses, deploy requests, messages, and get-methods.
+- [ ] Validate wrapper addresses against live mainnet fixtures.
 
 ## `tonutils::nft`
-- [ ] Reimplement from scratch.
+- [x] Reimplement TEP-62 standard and editable collections/items plus TEP-85 soulbound items with embedded code, custom code, offline addresses, deploy requests, messages, and get-methods.
+- [ ] Validate wrapper addresses and get-method decoding against live mainnet fixtures.
 
 ## `tonutils::emulator`
 - [x] Add opt-in runtime-loaded `libemulator` wrappers, standard `VmStack`, typed results, and fully configurable builders.

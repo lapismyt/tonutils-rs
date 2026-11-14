@@ -15,15 +15,24 @@ pub(super) use tonutils::tlb::{
 pub(super) use tonutils::tvm::{Address, HashmapE, Slice};
 
 mod code;
+#[cfg(feature = "contracts")]
+mod contracts;
 mod errors;
 mod message;
 mod mnemonic;
+#[cfg(feature = "contracts")]
+mod outgoing;
 mod provider;
 #[cfg(test)]
 mod tests;
 mod v4r2;
 mod v5r1;
 
+#[cfg(feature = "contracts")]
+pub use contracts::{
+    WalletState, get_is_signature_auth_allowed, get_public_key, get_seqno, get_subwallet_id,
+    get_wallet_state,
+};
 pub use message::{
     WalletV4R2, WalletV4R2SignedBody, WalletV5R1, WalletV5R1ExtendedAction,
     WalletV5R1ExtendedActionList, WalletV5R1ExternalBody, WalletV5R1SignedBody,
@@ -35,6 +44,8 @@ pub use mnemonic::{
     WalletV5R1Data, WalletV5R1Extensions, WalletV5R1WalletId, WalletVersion, ton_mnemonic_seed,
     wallet_v4r2_code, wallet_v5r1_code,
 };
+#[cfg(feature = "contracts")]
+pub use outgoing::WalletOutgoingMessage;
 
 #[cfg(test)]
 use mnemonic::{

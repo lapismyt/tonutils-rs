@@ -21,21 +21,21 @@ For offline cells, TL-B structures, and wallet construction:
 
 ```toml
 [dependencies]
-tonutils = { version = "2.0", features = ["tvm", "tlb", "wallet"] }
+tonutils = { version = "2.1", features = ["tvm", "tlb", "wallet"] }
 ```
 
 For a direct liteserver client, add the network layers you need:
 
 ```toml
 [dependencies]
-tonutils = { version = "2.0", features = ["liteclient"] }
+tonutils = { version = "2.1", features = ["liteclient"] }
 ```
 
 For provider-neutral reads across liteservers, TonAPI, and Toncenter:
 
 ```toml
 [dependencies]
-tonutils = { version = "2", features = ["provider"] }
+tonutils = { version = "2.1", features = ["provider"] }
 ```
 
 ```rust
@@ -96,12 +96,14 @@ It is intentionally not a proof that a liteserver answered honestly.
 | `crc` | CRC16, CRC32, and CRC32C helpers used by TON identifiers and BoC formats | No |
 | `emulator` | Runtime-loaded `libemulator` wrappers for transactions, tick/tock, get-methods, and message execution | No, but requires `libemulator` at runtime |
 | `emulator-download` | `emulator` plus a build-time download of the latest upstream `libemulator` shared library for the target platform | Only during `cargo build` |
-| `metadata` | TEP-64 on-chain and off-chain content parsing | No |
+| `metadata` | TEP-64 on-chain and off-chain content parsing and encoding | No |
+| `jetton` | TEP-74 jetton master and wallet wrappers, message bodies, get-methods, and embedded default code | Only for get-methods |
+| `nft` | TEP-62/TEP-85 collection and item wrappers, message bodies, get-methods, and embedded default code | Only for get-methods |
 | `network-config` | Global network configuration parsing and liteserver selection | No |
 | `adnl` | ADNL identity, encrypted UDP transport, QUIC transport, and ADNL TL wire types | Yes for transport |
 | `liteclient` | LiteAPI types, direct client, balancer, and typed BoC decode helpers | Yes |
 | `provider` | Capability traits for liteservers, TonAPI, Toncenter v2/v3, and their HTTP/lite adapters | Yes |
-| `contracts` | Provider-neutral contract reads, account-state views, and get-method stack helpers | Yes for reads |
+| `contracts` | Contract wrapper instrumentation (`ContractDefinition`, typed data, offline `StateInit`/address, deploy requests), provider-neutral reads, and get-method stack helpers | Yes for reads |
 | `serde` | Serde support for enabled public types that expose it, currently ADNL public keys | No |
 
 The `emulator` feature is the only module that needs a native library at
@@ -113,6 +115,15 @@ shared library during `cargo build` (pin with `TONUTILS_EMULATOR_RELEASE`) and
 embeds its path for `EmulatorEngine::open_default`. Upstream publishes only
 shared libraries, so this does not statically link `libemulator`. See
 [docs/reference/emulator.md](docs/reference/emulator.md).
+
+The `jetton` and `nft` features provide edition-specific wrappers because the
+reference contracts differ in storage and get-method shapes. Every wrapper
+supports embedded default code, custom code, offline address calculation,
+deploy requests, and typed get-methods; message bodies are plain TL-B values.
+Wallet V4R2 and V5R1 can attach a deploy `StateInit` to an outgoing message, so
+one signed external message can deploy and fund a contract. See
+[docs/reference/jetton-nft.md](docs/reference/jetton-nft.md) for layouts and
+address rules.
 
 The `provider` feature exposes separate `GetMasterchainInfoExt`, `GetAccountStateExt`,
 `RunGetMethodExt`, `SendExternalMessageExt`, and `GetTransactionsExt` traits. HTTP

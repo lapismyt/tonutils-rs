@@ -7,8 +7,52 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-Planned as `2.0.0`. This section describes the net changes since `1.1.0` and is
-not a release tag or release date.
+Planned as `2.1.0`. This section describes the net changes since `2.0.0`.
+
+### Added
+
+- Reintroduced the `jetton` feature with edition-specific TEP-74 wrappers:
+  `JettonMasterStandard`/`JettonWalletStandard`,
+  `JettonMasterStablecoin`/`JettonWalletStablecoin`, and the sharded
+  `JettonMasterStablecoinV2`/`JettonWalletStablecoinV2`. Each wrapper supports
+  embedded default code, custom code, offline address calculation, deploy
+  requests, typed storage data, and get-method decoding.
+- Reintroduced the `nft` feature with `NFTCollectionStandard`,
+  `NFTCollectionEditable`, `NFTItemStandard`, `NFTItemEditable`, and
+  `NFTItemSoulbound`, covering TEP-62 collections and items plus TEP-85
+  soulbound revocation, offline item-address derivation, and typed get-methods.
+- Added embedded default contract code for every supported jetton and NFT
+  edition through `contracts::ContractVersion`, so addresses and deployments can
+  be prepared offline without downloading code.
+- Added jetton and NFT message bodies for transfers, mints, burns, metadata and
+  admin updates, upgrades, batch minting, editorship, destroy, and revoke
+  operations.
+- Added `contracts::ContractDefinition`, `ContractSpec`, `ContractData`,
+  `DeployRequest`, and `ForwardPayload` as shared instrumentation for building
+  contract wrappers, including offline `StateInit`/address computation and
+  deploy requests.
+- Added wallet deployment support with `WalletOutgoingMessage`, deploy
+  requests, and outgoing external-message builders for Wallet V4R2 and Wallet
+  V5R1.
+- Added `ContractDefinition` implementations and typed get-methods (`seqno`,
+  `get_subwallet_id`, `get_public_key`, signature-auth status) for Wallet V4R2
+  and Wallet V5R1 under the `contracts` feature.
+- Added TEP-64 content encoding helpers (`off_chain`, `on_chain`, prefixed and
+  bare cells, snake and chunked fields) plus bare off-chain content parsing for
+  stablecoin and NFT storage layouts.
+
+### Changed
+
+- Bumped the workspace to `2.1.0`.
+- TEP-64 content equality now compares decoded content instead of the preserved
+  raw cell, because the same URI is stored with a prefix in some editions and
+  without one in others.
+- Extended `ContractError` and `ContractBuildError` with build, data-decoding,
+  and missing-field variants used by the new wrappers.
+
+## [2.0.0] - 2026-11-13
+
+This release describes the net changes since `1.1.0`.
 
 ### Added
 
@@ -125,6 +169,7 @@ not a release tag or release date.
 - Made `tonutils-tlb-derive` publishable and versioned the root crate's optional
   path dependency for crates.io packaging.
 
-[Unreleased]: https://github.com/lapismyt/tonutils-rs/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/lapismyt/tonutils-rs/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/lapismyt/tonutils-rs/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/lapismyt/tonutils-rs/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/lapismyt/tonutils-rs/releases/tag/v1.0.0

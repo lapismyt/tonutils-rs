@@ -87,6 +87,12 @@ library. Wire ABI ownership, library resolution, the standard
 `tvm::VmStack` layout, config-root requirements, CRC32C output checksums, and
 upstream response shapes are documented in [emulator.md](emulator.md).
 
+## Jetton And NFT Contracts
+
+Edition-specific jetton and NFT storage layouts, embedded-code provenance,
+address derivation, message opcodes, get-method shapes, and wallet deployment
+wiring are recorded in [jetton-nft.md](jetton-nft.md).
+
 ## Typed Error Boundaries
 
 - `tvm::TvmError` is the base error for cells, slices, builders, dictionaries,
@@ -106,9 +112,17 @@ upstream response shapes are documented in [emulator.md](emulator.md).
   URL, API status, JSON decode, invalid-response, unsupported-capability,
   TVM-stack, LiteClient, and LiteBalancer sources.
 - Contract helpers expose `ContractError::Provider(ProviderError)`,
-  `ContractError::Decode(TvmError)`, `ContractBuildError::InvalidCodeBoc(TvmError)`,
-  and `ContractBuildError::StateInitSerialization(TvmError)`. Stack conversion
-  has its own typed error rather than being stringified.
+  `ContractError::Decode(TvmError)`, `ContractError::Build(ContractBuildError)`,
+  `ContractError::Data`, `ContractBuildError::InvalidCodeBoc(TvmError)`,
+  `ContractBuildError::Code(ContractCodeError)`,
+  `ContractBuildError::DataSerialization(TlbError)`,
+  `ContractBuildError::DataDecode(TlbError)`,
+  `ContractBuildError::MissingField`, and
+  `ContractBuildError::StateInitSerialization(TvmError)`. Stack conversion has
+  its own typed error rather than being stringified.
+- Embedded contract-code decoding returns `ContractCodeError` and is cached per
+  `ContractVersion`; failures preserve the version identifier and decoder
+  diagnostic.
 - LiteClient BoC helpers return `liteclient::boc::LiteBocError` for TVM, TL-B,
   root-hash mismatch, account mismatch, non-standard account addresses, and
   account-state mismatch. `LiteError::Boc(LiteBocError)` and

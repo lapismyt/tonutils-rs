@@ -25,3 +25,8 @@ pub use wallet_impl::{
     WalletV5R1SignedBody, WalletV5R1WalletId, WalletVersion, ton_mnemonic_seed, wallet_v4r2_code,
     wallet_v5r1_code,
 };
+#[cfg(feature = "contracts")]
+pub use wallet_impl::{
+    WalletOutgoingMessage, WalletState, get_is_signature_auth_allowed, get_public_key, get_seqno,
+    get_subwallet_id, get_wallet_state,
+};

@@ -39,6 +39,8 @@ contracts = ["provider", "tlb", "tl", "tvm", "dep:async-trait",
              "dep:num-bigint", "dep:thiserror"]
 wallet = ["tlb", "tvm", "dep:bip39", "dep:ed25519-dalek", "dep:hex", "dep:hmac",
           "dep:num-bigint", "dep:pbkdf2", "dep:rand", "dep:sha2", "dep:thiserror"]
+jetton = ["contracts", "metadata", "dep:num-bigint", "dep:sha2"]
+nft = ["contracts", "metadata", "dep:num-bigint", "dep:sha2"]
 emulator = ["tvm", "tlb", "dep:libloading", "dep:serde_json"]
 emulator-download = ["emulator"]
 crc = ["dep:crc"]
