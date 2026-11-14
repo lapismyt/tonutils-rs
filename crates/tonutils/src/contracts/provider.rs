@@ -22,6 +22,10 @@ pub enum ContractError {
     Decode(#[source] TvmError),
     #[error("failed to convert TVM stack value: {0}")]
     StackConversion(#[source] TvmStackConversionError),
+    #[error(transparent)]
+    Build(#[from] ContractBuildError),
+    #[error("contract data error: {0}")]
+    Data(#[source] Box<dyn std::error::Error + Send + Sync>),
 }
 
 impl ContractError {
@@ -36,10 +40,16 @@ impl ContractError {
 pub enum ContractBuildError {
     #[error("failed to decode contract code BoC: {0}")]
     InvalidCodeBoc(#[source] TvmError),
+    #[error("failed to resolve embedded contract code: {0}")]
+    Code(#[from] super::codes::ContractCodeError),
     #[error("failed to serialize contract data as TL-B: {0}")]
     DataSerialization(#[source] TlbError),
+    #[error("failed to decode contract data from TL-B: {0}")]
+    DataDecode(#[source] TlbError),
     #[error("failed to serialize contract StateInit: {0}")]
     StateInitSerialization(#[source] TvmError),
+    #[error("contract data is missing required field {0}")]
+    MissingField(&'static str),
 }
 
 /// A smart contract bound to an address and a provider.
