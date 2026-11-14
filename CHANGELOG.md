@@ -43,6 +43,8 @@ Planned as `2.1.0`. This section describes the net changes since `2.0.0`.
 
 ### Changed
 
+- Relicensed the workspace under `MIT OR Apache-2.0`; replaced the single
+  `LICENSE` file with `LICENSE-MIT` and `LICENSE-APACHE`.
 - Bumped the workspace to `2.1.0`.
 - TEP-64 content equality now compares decoded content instead of the preserved
   raw cell, because the same URI is stored with a prefix in some editions and

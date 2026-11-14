@@ -147,5 +147,17 @@ invariants are documented in [docs/reference/README.md](docs/reference/README.md
 - `tonutils-schema-gen` validates checked-in schema metadata and inventory.
 
 Use the crate's rustdoc for the public API. Repository-level development and
-verification instructions are in [CONTRIBUTING.md](CONTRIBUTING.md). The crate
-is licensed under MIT.
+verification instructions are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Licensed under either of:
+
+- [MIT License](LICENSE-MIT)
+- [Apache License, Version 2.0](LICENSE-APACHE)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in this crate by you, as defined in the Apache-2.0 license, shall
+be dual licensed as above, without any additional terms or conditions.
