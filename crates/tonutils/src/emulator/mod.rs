@@ -118,6 +118,7 @@ pub mod config;
 pub mod engine;
 pub mod error;
 mod ffi;
+pub mod run_method;
 pub mod transaction;
 pub mod tvm;
 pub mod types;
@@ -126,9 +127,10 @@ pub mod types;
 mod tests;
 
 pub use crate::tvm::{VmSlice, VmStack, VmStackValue};
-pub use config::BlockchainConfig;
+pub use config::{BlockchainConfig, EmulatorConfig};
 pub use engine::{EMULATOR_LIB_ENV, EMULATOR_LIB_FALLBACK_ENV, EmulatorEngine, EmulatorLogLevel};
 pub use error::EmulatorError;
+pub use run_method::{DetailedRunMethodResult, EmulatedRunMethodResult, RunMethodParams};
 pub use transaction::{TransactionEmulator, TransactionEmulatorBuilder};
 pub use tvm::{C7Config, TvmEmulator, TvmEmulatorBuilder};
 pub use types::{

@@ -40,6 +40,15 @@ Planned as `2.1.0`. This section describes the net changes since `2.0.0`.
 - Added TEP-64 content encoding helpers (`off_chain`, `on_chain`, prefixed and
   bare cells, snake and chunked fields) plus bare off-chain content parsing for
   stablecoin and NFT storage layouts.
+- Added `emulator::EmulatorConfig` and config-object setters/builders so a
+  decoded blockchain configuration can be reused across transaction and TVM
+  emulators created by the same engine.
+- Added optimized `EmulatorEngine::emulate_run_method` and
+  `emulate_run_method_detailed` APIs (`RunMethodParams`,
+  `EmulatedRunMethodResult`, `DetailedRunMethodResult`) that call
+  `tvm_emulator_emulate_run_method*` without allocating a `TvmEmulator`.
+- Added live mainnet jetton and NFT contract probes and a rate-limit-aware CI
+  job for offline/on-chain wallet and item address validation.
 
 ### Changed
 
@@ -51,6 +60,14 @@ Planned as `2.1.0`. This section describes the net changes since `2.0.0`.
   without one in others.
 - Extended `ContractError` and `ContractBuildError` with build, data-decoding,
   and missing-field variants used by the new wrappers.
+- `contracts::Contract` and the jetton/NFT/wallet get-method helpers now require
+  only the individual provider capability traits they use, so custom providers
+  no longer need the full `Provider` marker.
+- `nft::get_collection_data` now decodes the returned content cell as
+  `Tep64Content` instead of decompressing a two-reference collection-content
+  root, matching the TEP-62 `get_collection_data` layout.
+- Address stack conversion accepts both `slice` and `cell` entries, because
+  Toncenter and TonAPI return get-method addresses as cell values.
 
 ## [2.0.0] - 2026-11-13
 

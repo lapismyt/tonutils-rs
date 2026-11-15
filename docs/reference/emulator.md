@@ -11,20 +11,22 @@ and does not vendor a prebuilt binary. The `emulator` feature adds `tvm`, `tlb`,
 `emulator/emulator-extern.h`. Every used symbol is resolved once when an
 `EmulatorEngine` is loaded:
 
-- transaction emulator create/destroy, emulate, tick/tock, and all setters;
-- TVM emulator create/destroy, get-method, external/internal send, and all
-  setters;
-- `emulator_set_verbosity_level`, `emulator_version`, `string_destroy`.
+- transaction emulator create/destroy, emulate, tick/tock, config-object setter,
+  and all setters;
+- TVM emulator create/destroy, get-method, optimized run-method,
+  external/internal send, config-object setter, and all setters;
+- `emulator_config_create`/`emulator_config_destroy`,
+  `run_method_detailed_result_destroy`, `emulator_set_verbosity_level`,
+  `emulator_version`, `string_destroy`.
 
 Safe wrappers keep an `Arc<EmulatorEngine>` for the lifetime of every emulator
 object. Returned `const char *` values are copied with `CStr` and then released
 with `string_destroy`; they are never freed through Rust's allocator. Emulator
 handles are opaque `void *` values and are not sent across threads.
 
-Skipped initially: the optimized `tvm_emulator_emulate_run_method*` request BoC
-API and the config-object APIs (`emulator_config_create` and
-`*_set_config_object`). All equivalent configuration knobs are available
-through typed setters, including `C7Config.config`.
+Because every symbol is resolved at engine load, a library older than the
+config-object or optimized run-method ABI fails with `MissingSymbol` rather than
+partially working. Use the typed setters when targeting older builds.
 
 ## Library resolution
 
@@ -79,6 +81,48 @@ downstream packaging.
 
 The crate does not embed a default mainnet config. Emulation determinism and
 trust depend on the caller supplying the intended config snapshot.
+
+## Config objects
+
+`EmulatorConfig::new(engine, &BlockchainConfig)` decodes the configuration once
+through `emulator_config_create`. The resulting object can be shared by cloning
+it and attached with `TransactionEmulator::set_config_object` or
+`TvmEmulator::set_config_object`, or through the builders'
+`.config_object(...)`. A config object is tied to the `EmulatorEngine` that
+created it; attaching it to an emulator from another engine returns
+`EmulatorError::InvalidInput`. The emulator retains the object for as long as
+the handle may reference it.
+
+## Optimized run-method
+
+`EmulatorEngine::emulate_run_method` and `emulate_run_method_detailed` call
+`tvm_emulator_emulate_run_method*` directly, without allocating a `TvmEmulator`.
+`RunMethodParams` encodes the upstream request root:
+
+```text
+request$ = code:^Cell data:^Cell stack:^VmStack params:^[c7:^VmStack libs:^Cell]
+           method_id:(## 32)
+```
+
+The method id lives in the root cell's trailing 32 bits, not in the `params`
+cell. `libs` is a `HashmapE 256 ^Cell`; when omitted, an absent dictionary root
+(the single `0` bit) is encoded.
+
+The optimized response is a native-endian `u32` length prefix followed by a BoC
+cell:
+
+```text
+result$ = exit_code:(## 32) gas_used:(## 64) stack:^VmStack
+```
+
+`emulate_run_method` frees the response buffer with `string_destroy`.
+`emulate_run_method_detailed` returns a struct with separate response and log
+pointers and must be freed only through `run_method_detailed_result_destroy`;
+the individual fields must never be released with `string_destroy`.
+
+`RunMethodParams.c7` is a full `VmStack` whose top value is the `c7` tuple, so
+callers can pass an empty tuple `VmStack::new(vec![VmStackValue::Tuple(vec![])])`
+for stateless get-methods.
 
 ## Standard stack codec
 
@@ -205,3 +249,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p tonutils --all-features --no-deps
 
 Optional integration coverage requires a locally built or downloaded
 `libemulator` and is not part of the default test matrix.
+
+```bash
+cargo test -p tonutils --no-default-features --features emulator-download \
+  emulator::tests::live_wallet_v4r2_optimized_get_method -- --ignored
+```

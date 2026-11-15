@@ -6,7 +6,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::c_string;
-use super::config::BlockchainConfig;
+use super::config::{BlockchainConfig, EmulatorConfig};
 use super::engine::EmulatorEngine;
 use super::error::EmulatorError;
 use super::types::{
@@ -38,6 +38,7 @@ pub struct C7Config {
 pub struct TvmEmulator {
     engine: Arc<EmulatorEngine>,
     handle: *mut std::ffi::c_void,
+    config_object: Option<EmulatorConfig>,
 }
 
 impl TvmEmulator {
@@ -111,6 +112,36 @@ impl TvmEmulator {
         } else {
             Err(EmulatorError::Rejected {
                 operation: "tvm_emulator_set_c7",
+            })
+        }
+    }
+
+    /// Sets a decoded [`EmulatorConfig`] object.
+    ///
+    /// The config object must have been created by the same engine as this
+    /// emulator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulatorError::InvalidInput`] when the config object belongs
+    /// to another engine, or [`EmulatorError::Rejected`] when the library
+    /// rejects it.
+    pub fn set_config_object(&mut self, config: EmulatorConfig) -> Result<(), EmulatorError> {
+        if !Arc::ptr_eq(&self.engine, config.engine()) {
+            return Err(EmulatorError::InvalidInput(
+                "config object belongs to a different emulator engine".to_owned(),
+            ));
+        }
+        // SAFETY: both handles come from this engine, the config object is
+        // retained for as long as this emulator, and the setter borrows it for
+        // the duration of the call.
+        if unsafe { (self.engine.ffi.tvm_emulator_set_config_object)(self.handle, config.handle()) }
+        {
+            self.config_object = Some(config);
+            Ok(())
+        } else {
+            Err(EmulatorError::Rejected {
+                operation: "tvm_emulator_set_config_object",
             })
         }
     }
@@ -391,6 +422,7 @@ pub struct TvmEmulatorBuilder {
     prev_blocks_info: Option<VmStackValue>,
     gas_limit: Option<i64>,
     debug_enabled: Option<bool>,
+    config_object: Option<EmulatorConfig>,
 }
 
 impl TvmEmulatorBuilder {
@@ -407,6 +439,7 @@ impl TvmEmulatorBuilder {
             prev_blocks_info: None,
             gas_limit: None,
             debug_enabled: None,
+            config_object: None,
         }
     }
 
@@ -458,6 +491,12 @@ impl TvmEmulatorBuilder {
         self
     }
 
+    /// Uses a decoded configuration object after the emulator is created.
+    pub fn config_object(mut self, config: EmulatorConfig) -> Self {
+        self.config_object = Some(config);
+        self
+    }
+
     /// Creates the emulator and applies configured setters.
     ///
     /// # Errors
@@ -486,7 +525,14 @@ impl TvmEmulatorBuilder {
             });
         }
 
-        let mut emulator = TvmEmulator { engine, handle };
+        let mut emulator = TvmEmulator {
+            engine,
+            handle,
+            config_object: None,
+        };
+        if let Some(value) = self.config_object {
+            emulator.set_config_object(value)?;
+        }
         if let Some(value) = self.libraries.as_ref() {
             emulator.set_libraries(Some(value))?;
         }

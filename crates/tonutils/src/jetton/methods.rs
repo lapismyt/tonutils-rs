@@ -10,7 +10,7 @@ use crate::{
         run_get_method as run,
     },
     metadata::{Tep64Content, parse_tep64_content},
-    provider::Provider,
+    provider::RunGetMethodExt,
     tvm::{Address, Cell},
 };
 
@@ -48,7 +48,7 @@ pub struct JettonWalletInfo {
 }
 
 /// Runs `get_jetton_data` on a master.
-pub async fn get_jetton_data<P: Provider + ?Sized>(
+pub async fn get_jetton_data<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<JettonMasterInfo, ContractError> {
@@ -72,7 +72,7 @@ pub async fn get_jetton_data<P: Provider + ?Sized>(
 }
 
 /// Runs `get_wallet_address` on a master.
-pub async fn get_wallet_address<P: Provider + ?Sized>(
+pub async fn get_wallet_address<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     master: Address,
     owner: &Address,
@@ -85,7 +85,7 @@ pub async fn get_wallet_address<P: Provider + ?Sized>(
 }
 
 /// Runs `get_next_admin_address` on a stablecoin master.
-pub async fn get_next_admin_address<P: Provider + ?Sized>(
+pub async fn get_next_admin_address<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     master: Address,
 ) -> Result<Option<Address>, ContractError> {
@@ -97,7 +97,7 @@ pub async fn get_next_admin_address<P: Provider + ?Sized>(
 }
 
 /// Runs `get_wallet_data` on a jetton wallet.
-pub async fn get_wallet_data<P: Provider + ?Sized>(
+pub async fn get_wallet_data<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<JettonWalletInfo, ContractError> {
@@ -121,7 +121,7 @@ pub async fn get_wallet_data<P: Provider + ?Sized>(
 }
 
 /// Runs `get_status` on a stablecoin jetton wallet.
-pub async fn get_status<P: Provider + ?Sized>(
+pub async fn get_status<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<u8, ContractError> {
@@ -134,7 +134,7 @@ pub async fn get_status<P: Provider + ?Sized>(
 
 impl JettonMasterStandard {
     /// Runs `get_jetton_data`.
-    pub async fn get_jetton_data<P: Provider + ?Sized>(
+    pub async fn get_jetton_data<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<JettonMasterInfo, ContractError> {
@@ -142,7 +142,7 @@ impl JettonMasterStandard {
     }
 
     /// Runs `get_wallet_address`.
-    pub async fn get_wallet_address<P: Provider + ?Sized>(
+    pub async fn get_wallet_address<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
         owner: &Address,
@@ -153,7 +153,7 @@ impl JettonMasterStandard {
 
 impl JettonMasterStablecoin {
     /// Runs `get_jetton_data`.
-    pub async fn get_jetton_data<P: Provider + ?Sized>(
+    pub async fn get_jetton_data<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<JettonMasterInfo, ContractError> {
@@ -161,7 +161,7 @@ impl JettonMasterStablecoin {
     }
 
     /// Runs `get_wallet_address`.
-    pub async fn get_wallet_address<P: Provider + ?Sized>(
+    pub async fn get_wallet_address<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
         owner: &Address,
@@ -170,7 +170,7 @@ impl JettonMasterStablecoin {
     }
 
     /// Runs `get_next_admin_address`.
-    pub async fn get_next_admin_address<P: Provider + ?Sized>(
+    pub async fn get_next_admin_address<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<Option<Address>, ContractError> {
@@ -180,7 +180,7 @@ impl JettonMasterStablecoin {
 
 impl JettonMasterStablecoinV2 {
     /// Runs `get_jetton_data`.
-    pub async fn get_jetton_data<P: Provider + ?Sized>(
+    pub async fn get_jetton_data<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<JettonMasterInfo, ContractError> {
@@ -188,7 +188,7 @@ impl JettonMasterStablecoinV2 {
     }
 
     /// Runs `get_wallet_address`.
-    pub async fn get_wallet_address<P: Provider + ?Sized>(
+    pub async fn get_wallet_address<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
         owner: &Address,
@@ -197,7 +197,7 @@ impl JettonMasterStablecoinV2 {
     }
 
     /// Runs `get_next_admin_address`.
-    pub async fn get_next_admin_address<P: Provider + ?Sized>(
+    pub async fn get_next_admin_address<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<Option<Address>, ContractError> {
@@ -207,7 +207,7 @@ impl JettonMasterStablecoinV2 {
 
 impl JettonWalletStandard {
     /// Runs `get_wallet_data`.
-    pub async fn get_wallet_data<P: Provider + ?Sized>(
+    pub async fn get_wallet_data<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<JettonWalletInfo, ContractError> {
@@ -217,7 +217,7 @@ impl JettonWalletStandard {
 
 impl JettonWalletStablecoin {
     /// Runs `get_wallet_data`.
-    pub async fn get_wallet_data<P: Provider + ?Sized>(
+    pub async fn get_wallet_data<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<JettonWalletInfo, ContractError> {
@@ -225,7 +225,7 @@ impl JettonWalletStablecoin {
     }
 
     /// Runs `get_status`.
-    pub async fn get_status<P: Provider + ?Sized>(
+    pub async fn get_status<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<u8, ContractError> {
@@ -235,7 +235,7 @@ impl JettonWalletStablecoin {
 
 impl JettonWalletStablecoinV2 {
     /// Runs `get_wallet_data`.
-    pub async fn get_wallet_data<P: Provider + ?Sized>(
+    pub async fn get_wallet_data<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<JettonWalletInfo, ContractError> {

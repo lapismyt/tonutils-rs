@@ -104,7 +104,7 @@ verbatim.
 | `get_next_admin_address` | stablecoin master | `next_admin` |
 | `get_wallet_data` | wallet | `balance, owner, master` and optionally `wallet_code` |
 | `get_status` | stablecoin wallet | `status` |
-| `get_collection_data` | collection | `next_item_index, content_root, owner` |
+| `get_collection_data` | collection | `next_item_index, content (TEP-64), owner` |
 | `get_nft_address_by_index` | collection | `item_address` |
 | `get_nft_content` | collection | `full_content` for `(index, individual_content)` |
 | `royalty_params` | collection | `numerator, denominator, address` |
@@ -114,6 +114,8 @@ verbatim.
 | `get_revoked_time` | soulbound item | `revoked_at` |
 
 Typed decoders reject extra stack entries instead of silently ignoring them.
+Address-typed entries accept both `slice` and `cell` provider payloads, because
+Toncenter and TonAPI serialize get-method addresses as cells.
 
 ## Wallet Deployments
 

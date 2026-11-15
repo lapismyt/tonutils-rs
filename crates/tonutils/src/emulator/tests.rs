@@ -10,10 +10,12 @@ use serde_json::json;
 use super::config::BlockchainConfig;
 use super::engine::{EmulatorEngine, EmulatorLogLevel};
 use super::error::EmulatorError;
+use super::run_method::RunMethodParams;
 use super::tvm::TvmEmulator;
 use super::types::{parse_get_method_result, parse_message_result};
 use crate::tvm::{
     Builder, Cell, VmStack, VmStackValue, boc::boc_to_base64, boc::hex_to_boc, boc::serialize_boc,
+    method_name_to_id,
 };
 
 fn tiny_cell(byte: u8) -> Arc<Cell> {
@@ -246,4 +248,31 @@ fn live_wallet_v4r2_internal_message_is_accepted() {
         .expect("internal message emulation must succeed");
     assert!(result.accepted, "wallet must accept the internal message");
     assert_eq!(result.vm_exit_code, 0);
+}
+
+#[test]
+#[ignore = "requires libemulator; set TONUTILS_EMULATOR_LIB or enable emulator-download"]
+fn live_wallet_v4r2_optimized_get_method() {
+    let (code, data) = wallet_v4r2();
+    let engine = live_engine();
+    let params = RunMethodParams::new(
+        code,
+        data,
+        VmStack::default(),
+        VmStack::new(vec![VmStackValue::Tuple(Vec::new())]),
+        u32::try_from(method_name_to_id("seqno")).expect("seqno method id must fit u32"),
+    );
+
+    let result = engine
+        .emulate_run_method(&params, 1_000_000)
+        .expect("optimized get-method must succeed");
+    assert_eq!(result.exit_code, 0);
+    assert!(result.gas_used > 0);
+    assert_single_int(&result.stack, "70");
+
+    let detailed = engine
+        .emulate_run_method_detailed(&params, 1_000_000)
+        .expect("detailed optimized get-method must succeed");
+    assert_eq!(detailed.result, result);
+    assert_ne!(detailed.vm_log, "");
 }

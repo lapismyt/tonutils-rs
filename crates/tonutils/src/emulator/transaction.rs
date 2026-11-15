@@ -6,7 +6,7 @@ use crate::tlb::{Message, ShardAccount, TlbSerialize};
 use crate::tvm::{Cell, VmStackValue, boc::boc_to_base64};
 
 use super::c_string;
-use super::config::BlockchainConfig;
+use super::config::{BlockchainConfig, EmulatorConfig};
 use super::engine::EmulatorEngine;
 use super::error::EmulatorError;
 use super::types::{TransactionEmulationResult, VmLogVerbosity, parse_transaction_result};
@@ -19,6 +19,7 @@ use super::types::{TransactionEmulationResult, VmLogVerbosity, parse_transaction
 pub struct TransactionEmulator {
     engine: Arc<EmulatorEngine>,
     handle: *mut std::ffi::c_void,
+    config_object: Option<EmulatorConfig>,
 }
 
 impl TransactionEmulator {
@@ -122,6 +123,38 @@ impl TransactionEmulator {
         } else {
             Err(EmulatorError::Rejected {
                 operation: "transaction_emulator_set_config",
+            })
+        }
+    }
+
+    /// Replaces the blockchain configuration using a decoded
+    /// [`EmulatorConfig`] object.
+    ///
+    /// The config object must have been created by the same engine as this
+    /// emulator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulatorError::InvalidInput`] when the config object belongs
+    /// to another engine, or [`EmulatorError::Rejected`] when the library
+    /// rejects it.
+    pub fn set_config_object(&mut self, config: EmulatorConfig) -> Result<(), EmulatorError> {
+        if !Arc::ptr_eq(&self.engine, config.engine()) {
+            return Err(EmulatorError::InvalidInput(
+                "config object belongs to a different emulator engine".to_owned(),
+            ));
+        }
+        // SAFETY: both handles come from this engine, the config object is
+        // retained for as long as this emulator, and the setter borrows it for
+        // the duration of the call.
+        if unsafe {
+            (self.engine.ffi.transaction_emulator_set_config_object)(self.handle, config.handle())
+        } {
+            self.config_object = Some(config);
+            Ok(())
+        } else {
+            Err(EmulatorError::Rejected {
+                operation: "transaction_emulator_set_config_object",
             })
         }
     }
@@ -340,6 +373,7 @@ pub struct TransactionEmulatorBuilder {
     libraries: Option<Arc<Cell>>,
     debug_enabled: Option<bool>,
     prev_blocks_info: Option<VmStackValue>,
+    config_object: Option<EmulatorConfig>,
 }
 
 impl TransactionEmulatorBuilder {
@@ -356,6 +390,7 @@ impl TransactionEmulatorBuilder {
             libraries: None,
             debug_enabled: None,
             prev_blocks_info: None,
+            config_object: None,
         }
     }
 
@@ -413,6 +448,12 @@ impl TransactionEmulatorBuilder {
         self
     }
 
+    /// Uses a decoded configuration object after the emulator is created.
+    pub fn config_object(mut self, config: EmulatorConfig) -> Self {
+        self.config_object = Some(config);
+        self
+    }
+
     /// Creates the emulator and applies configured setters.
     ///
     /// # Errors
@@ -440,7 +481,14 @@ impl TransactionEmulatorBuilder {
             });
         }
 
-        let mut emulator = TransactionEmulator { engine, handle };
+        let mut emulator = TransactionEmulator {
+            engine,
+            handle,
+            config_object: None,
+        };
+        if let Some(value) = self.config_object {
+            emulator.set_config_object(value)?;
+        }
         if let Some(value) = self.unixtime {
             emulator.set_unixtime(value)?;
         }

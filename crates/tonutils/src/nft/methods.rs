@@ -9,14 +9,14 @@ use crate::{
         ContractDefinition, ContractError, ensure_consumed, next_entry as next,
         run_get_method as run,
     },
-    metadata::Tep64Content,
-    provider::Provider,
+    metadata::{Tep64Content, parse_tep64_content},
+    provider::RunGetMethodExt,
     tvm::{Address, Cell},
 };
 
 use super::{
     collection::{NFTCollectionEditable, NFTCollectionStandard},
-    data::{NFTCollectionContent, RoyaltyParams},
+    data::RoyaltyParams,
     item::{NFTItemEditable, NFTItemSoulbound, NFTItemStandard},
 };
 
@@ -25,8 +25,8 @@ use super::{
 pub struct NFTCollectionInfo {
     /// Index that will be assigned to the next item.
     pub next_item_index: u64,
-    /// Collection metadata.
-    pub content: NFTCollectionContent,
+    /// Collection metadata (a TEP-64 content cell).
+    pub content: Tep64Content,
     /// Collection owner.
     pub owner_address: Option<Address>,
 }
@@ -47,7 +47,7 @@ pub struct NFTItemInfo {
 }
 
 /// Runs `get_collection_data`.
-pub async fn get_collection_data<P: Provider + ?Sized>(
+pub async fn get_collection_data<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<NFTCollectionInfo, ContractError> {
@@ -57,8 +57,8 @@ pub async fn get_collection_data<P: Provider + ?Sized>(
     let content_cell: Arc<Cell> = next(&mut entries)?;
     let owner_address = next(&mut entries)?;
     ensure_consumed(&entries)?;
-    let content = NFTCollectionContent::from_cell(&content_cell)
-        .map_err(|error| ContractError::Data(Box::new(error)))?;
+    let content =
+        parse_tep64_content(content_cell).map_err(|error| ContractError::Data(Box::new(error)))?;
     Ok(NFTCollectionInfo {
         next_item_index,
         content,
@@ -67,7 +67,7 @@ pub async fn get_collection_data<P: Provider + ?Sized>(
 }
 
 /// Runs `get_nft_address_by_index`.
-pub async fn get_nft_address_by_index<P: Provider + ?Sized>(
+pub async fn get_nft_address_by_index<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     collection: Address,
     index: u64,
@@ -80,7 +80,7 @@ pub async fn get_nft_address_by_index<P: Provider + ?Sized>(
 }
 
 /// Runs `get_nft_content`.
-pub async fn get_nft_content<P: Provider + ?Sized>(
+pub async fn get_nft_content<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     collection: Address,
     index: u64,
@@ -100,7 +100,7 @@ pub async fn get_nft_content<P: Provider + ?Sized>(
 }
 
 /// Runs `royalty_params`.
-pub async fn get_royalty_params<P: Provider + ?Sized>(
+pub async fn get_royalty_params<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     collection: Address,
 ) -> Result<RoyaltyParams, ContractError> {
@@ -118,7 +118,7 @@ pub async fn get_royalty_params<P: Provider + ?Sized>(
 }
 
 /// Runs `get_nft_data`.
-pub async fn get_nft_data<P: Provider + ?Sized>(
+pub async fn get_nft_data<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<NFTItemInfo, ContractError> {
@@ -142,7 +142,7 @@ pub async fn get_nft_data<P: Provider + ?Sized>(
 }
 
 /// Runs `get_editor`.
-pub async fn get_editor<P: Provider + ?Sized>(
+pub async fn get_editor<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<Option<Address>, ContractError> {
@@ -154,7 +154,7 @@ pub async fn get_editor<P: Provider + ?Sized>(
 }
 
 /// Runs `get_authority_address`.
-pub async fn get_authority_address<P: Provider + ?Sized>(
+pub async fn get_authority_address<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<Option<Address>, ContractError> {
@@ -166,7 +166,7 @@ pub async fn get_authority_address<P: Provider + ?Sized>(
 }
 
 /// Runs `get_revoked_time`.
-pub async fn get_revoked_time<P: Provider + ?Sized>(
+pub async fn get_revoked_time<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<u64, ContractError> {
@@ -181,7 +181,7 @@ macro_rules! collection_getters {
     ($ty:ty) => {
         impl $ty {
             /// Runs `get_collection_data`.
-            pub async fn get_collection_data<P: Provider + ?Sized>(
+            pub async fn get_collection_data<P: RunGetMethodExt + ?Sized>(
                 &self,
                 provider: &mut P,
             ) -> Result<NFTCollectionInfo, ContractError> {
@@ -189,7 +189,7 @@ macro_rules! collection_getters {
             }
 
             /// Runs `get_nft_address_by_index`.
-            pub async fn get_nft_address_by_index<P: Provider + ?Sized>(
+            pub async fn get_nft_address_by_index<P: RunGetMethodExt + ?Sized>(
                 &self,
                 provider: &mut P,
                 index: u64,
@@ -198,7 +198,7 @@ macro_rules! collection_getters {
             }
 
             /// Runs `get_nft_content`.
-            pub async fn get_nft_content<P: Provider + ?Sized>(
+            pub async fn get_nft_content<P: RunGetMethodExt + ?Sized>(
                 &self,
                 provider: &mut P,
                 index: u64,
@@ -208,7 +208,7 @@ macro_rules! collection_getters {
             }
 
             /// Runs `royalty_params`.
-            pub async fn get_royalty_params<P: Provider + ?Sized>(
+            pub async fn get_royalty_params<P: RunGetMethodExt + ?Sized>(
                 &self,
                 provider: &mut P,
             ) -> Result<RoyaltyParams, ContractError> {
@@ -225,7 +225,7 @@ macro_rules! item_getters {
     ($ty:ty) => {
         impl $ty {
             /// Runs `get_nft_data`.
-            pub async fn get_nft_data<P: Provider + ?Sized>(
+            pub async fn get_nft_data<P: RunGetMethodExt + ?Sized>(
                 &self,
                 provider: &mut P,
             ) -> Result<NFTItemInfo, ContractError> {
@@ -241,7 +241,7 @@ item_getters!(NFTItemSoulbound);
 
 impl NFTItemEditable {
     /// Runs `get_editor`.
-    pub async fn get_editor<P: Provider + ?Sized>(
+    pub async fn get_editor<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<Option<Address>, ContractError> {
@@ -251,7 +251,7 @@ impl NFTItemEditable {
 
 impl NFTItemSoulbound {
     /// Runs `get_authority_address`.
-    pub async fn get_authority_address<P: Provider + ?Sized>(
+    pub async fn get_authority_address<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<Option<Address>, ContractError> {
@@ -259,7 +259,7 @@ impl NFTItemSoulbound {
     }
 
     /// Runs `get_revoked_time`.
-    pub async fn get_revoked_time<P: Provider + ?Sized>(
+    pub async fn get_revoked_time<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<u64, ContractError> {
