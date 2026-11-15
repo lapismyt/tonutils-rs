@@ -14,7 +14,7 @@ default-members = [
 [workspace.package]
 version = "2.1.0"
 edition = "2024"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/lapismyt/tonutils-rs"
 rust-version = "1.85"
 
