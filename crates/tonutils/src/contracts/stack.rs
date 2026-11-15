@@ -187,8 +187,11 @@ impl ToTvmStackEntry for Address {
 
 impl FromTvmStackEntry for Address {
     fn from_tvm_stack_entry(entry: TvmStackEntry) -> Result<Self, TvmStackConversionError> {
-        let TvmStackEntry::Slice(cell) = entry else {
-            return Err(type_mismatch("address slice", &entry));
+        // Providers return get-method address values as either `slice` or
+        // `cell` stack entries; both carry the same address bits.
+        let cell = match entry {
+            TvmStackEntry::Slice(cell) | TvmStackEntry::Cell(cell) => cell,
+            other => return Err(type_mismatch("address slice", &other)),
         };
         let mut slice = Slice::new(cell);
         let address = MsgAddress::load_tlb(&mut slice).map_err(|source| {
@@ -438,5 +441,27 @@ fn stack_entry_name(entry: &TvmStackEntry) -> &'static str {
         TvmStackEntry::Tuple(_) => "tuple",
         TvmStackEntry::List(_) => "list",
         TvmStackEntry::Unsupported(_) => "unsupported",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        contracts::FromTvmStackEntry,
+        tlb::{MsgAddressInt, TlbSerialize},
+        tvm::{Address, TvmStackEntry},
+    };
+
+    #[test]
+    fn decodes_address_from_cell_stack_entry() {
+        let address = Address::new(0, [7; 32]);
+        let cell = MsgAddressInt::std(address.clone())
+            .to_cell()
+            .expect("standard address must serialize");
+
+        let decoded = Address::from_tvm_stack_entry(TvmStackEntry::Cell(cell))
+            .expect("providers may return addresses as cell entries");
+
+        assert_eq!(decoded, address);
     }
 }

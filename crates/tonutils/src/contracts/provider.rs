@@ -3,7 +3,8 @@ use std::borrow::Cow;
 use crate::{
     contracts::stack::{FromTvmStack, ToTvmStack, TvmStackConversionError},
     provider::{
-        AccountState, BlockId, MethodRef, Provider, ProviderError, ProviderResult, RunMethodResult,
+        AccountState, BlockId, GetAccountStateExt, GetTransactionsExt, MethodRef, ProviderError,
+        ProviderResult, RunGetMethodExt, RunMethodResult, SendExternalMessageExt,
         SendMessageResult, TransactionList,
     },
     tl::TlInt256 as Int256,
@@ -53,12 +54,15 @@ pub enum ContractBuildError {
 }
 
 /// A smart contract bound to an address and a provider.
-pub struct Contract<'a, P: Provider + ?Sized> {
+///
+/// Capability access is checked at the method level: a provider that only
+/// implements [`RunGetMethodExt`] can still use the get-method helpers.
+pub struct Contract<'a, P: ?Sized> {
     provider: &'a mut P,
     address: Address,
 }
 
-impl<'a, P: Provider + ?Sized> Contract<'a, P> {
+impl<'a, P: ?Sized> Contract<'a, P> {
     pub fn new(provider: &'a mut P, address: Address) -> Self {
         Self { provider, address }
     }
@@ -66,7 +70,9 @@ impl<'a, P: Provider + ?Sized> Contract<'a, P> {
     pub fn address(&self) -> &Address {
         &self.address
     }
+}
 
+impl<P: GetAccountStateExt + ?Sized> Contract<'_, P> {
     /// Reads the account state at `block`, or at the latest block when `None`.
     pub async fn get_state(&mut self, block: Option<BlockId>) -> ProviderResult<AccountState> {
         self.provider
@@ -78,7 +84,9 @@ impl<'a, P: Provider + ?Sized> Contract<'a, P> {
     pub async fn get_state_latest(&mut self) -> ProviderResult<AccountState> {
         self.get_state(None).await
     }
+}
 
+impl<P: RunGetMethodExt + ?Sized> Contract<'_, P> {
     /// Runs a get-method at `block`, or at the latest block when `None`.
     pub async fn run_get_method(
         &mut self,
@@ -210,14 +218,18 @@ impl<'a, P: Provider + ?Sized> Contract<'a, P> {
         self.run_get_method_latest_as(MethodRef::Name(method_name), args)
             .await
     }
+}
 
+impl<P: SendExternalMessageExt + ?Sized> Contract<'_, P> {
     pub async fn send_external_message_boc(
         &mut self,
         body: Vec<u8>,
     ) -> ProviderResult<SendMessageResult> {
         self.provider.send_external_message_boc(body).await
     }
+}
 
+impl<P: GetTransactionsExt + ?Sized> Contract<'_, P> {
     pub async fn get_transactions(
         &mut self,
         count: u32,
@@ -254,7 +266,7 @@ pub trait ContractBlueprint {
         address_from_state_init(self.workchain(), &self.state_init()?)
             .map_err(ContractBuildError::StateInitSerialization)
     }
-    fn bind<'a, P: Provider + ?Sized>(
+    fn bind<'a, P: ?Sized>(
         &self,
         provider: &'a mut P,
     ) -> Result<Contract<'a, P>, ContractBuildError> {
@@ -276,4 +288,48 @@ pub(super) fn decode_success_stack(
         });
     }
     Ok(result.stack.entries().to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use async_trait::async_trait;
+
+    use crate::{
+        provider::{ProviderResult, RunGetMethodExt, RunMethodResult},
+        tvm::{Address, TvmStack},
+    };
+
+    use super::{Contract, MethodRef};
+
+    struct GetMethodOnly;
+
+    #[async_trait]
+    impl RunGetMethodExt for GetMethodOnly {
+        async fn run_get_method(
+            &mut self,
+            _account: Address,
+            _method: MethodRef<'_>,
+            _stack: TvmStack,
+            _block: Option<crate::provider::BlockId>,
+        ) -> ProviderResult<RunMethodResult> {
+            Ok(RunMethodResult {
+                exit_code: 0,
+                stack: TvmStack::empty(),
+                block: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn contract_reads_need_only_the_get_method_capability() {
+        let mut provider = GetMethodOnly;
+        let mut contract = Contract::new(&mut provider, Address::new(0, [1; 32]));
+
+        let entries = contract
+            .run_get_method_by_name_typed_latest("seqno", TvmStack::empty())
+            .await
+            .expect("typed get-method must succeed");
+
+        assert_eq!(entries, Vec::new());
+    }
 }

@@ -98,6 +98,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: ./scripts/run-live-test.sh lib emulator::tests::live_wallet_v4r2_internal_message_is_accepted
 
+      - name: Run optimized get-method gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh lib emulator::tests::live_wallet_v4r2_optimized_get_method
+
       - name: Upload emulator logs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
@@ -175,6 +179,49 @@ jobs:
         with:
           name: provider-logs
           path: ${{ github.workspace }}/provider-logs
+          retention-days: 7
+          if-no-files-found: warn
+
+  contracts-tests:
+    name: Live mainnet jetton and NFT contract gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUST_LOG: tonutils=debug
+      TON_LIVE_FEATURES: provider,jetton,nft
+      TON_LIVE_LOG_DIR: ${{ github.workspace }}/contracts-logs
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Cache Cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-contracts-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-contracts-
+            ${{ runner.os }}-cargo-
+
+      - name: Run jetton master and wallet gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh contracts_live live_jetton_standard_master_and_wallet
+
+      - name: Run NFT collection and item gate
+        if: ${{ !cancelled() }}
+        run: ./scripts/run-live-test.sh contracts_live live_nft_standard_collection_and_item
+
+      - name: Upload contract logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: contracts-logs
+          path: ${{ github.workspace }}/contracts-logs
           retention-days: 7
           if-no-files-found: warn
 

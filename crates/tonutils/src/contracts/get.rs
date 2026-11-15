@@ -3,7 +3,7 @@
 use std::vec::IntoIter;
 
 use crate::{
-    provider::Provider,
+    provider::RunGetMethodExt,
     tvm::{Address, TvmStack, TvmStackEntry},
 };
 
@@ -20,7 +20,7 @@ pub async fn run_get_method<P, A>(
     args: A,
 ) -> Result<Vec<TvmStackEntry>, ContractError>
 where
-    P: Provider + ?Sized,
+    P: RunGetMethodExt + ?Sized,
     A: ToTvmStack,
 {
     let stack: TvmStack = args

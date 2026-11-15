@@ -1,6 +1,7 @@
 //! Blockchain configuration inputs for emulation.
 
 use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -9,7 +10,87 @@ use base64::engine::general_purpose::STANDARD as B64_STANDARD;
 use crate::tlb::{ConfigParams, TlbDeserialize};
 use crate::tvm::{Cell, boc::boc_to_base64, boc::deserialize_boc};
 
+use super::engine::EmulatorEngine;
 use super::error::EmulatorError;
+
+/// A decoded blockchain configuration object shared with an emulator.
+///
+/// Creating this object decodes the configuration once. It can then be passed
+/// to [`crate::emulator::TransactionEmulator::set_config_object`] or
+/// [`crate::emulator::TvmEmulator::set_config_object`], including through the
+/// emulator builders. The object must come from the same
+/// [`EmulatorEngine`] as the emulator it is attached to.
+#[derive(Clone)]
+pub struct EmulatorConfig {
+    inner: Rc<EmulatorConfigInner>,
+}
+
+struct EmulatorConfigInner {
+    engine: Arc<EmulatorEngine>,
+    handle: *mut std::ffi::c_void,
+}
+
+impl std::fmt::Debug for EmulatorConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EmulatorConfig")
+            .finish_non_exhaustive()
+    }
+}
+
+impl EmulatorConfig {
+    /// Decodes a configuration object with an explicit engine.
+    ///
+    /// # Errors
+    ///
+    /// Propagates BoC serialization errors and returns
+    /// [`EmulatorError::CreationFailed`] when the library rejects the
+    /// configuration.
+    pub fn new(
+        engine: Arc<EmulatorEngine>,
+        config: &BlockchainConfig,
+    ) -> Result<Self, EmulatorError> {
+        let encoded = super::c_string(&config.to_base64()?, "config_boc")?;
+        // SAFETY: the engine keeps the library loaded, `encoded` is a valid
+        // NUL-terminated base64 BoC, and the returned pointer is checked.
+        let handle = unsafe { (engine.ffi.emulator_config_create)(encoded.as_ptr()) };
+        if handle.is_null() {
+            return Err(EmulatorError::CreationFailed {
+                kind: "emulator config",
+            });
+        }
+        Ok(Self {
+            inner: Rc::new(EmulatorConfigInner { engine, handle }),
+        })
+    }
+
+    /// Decodes a configuration object with the default engine.
+    ///
+    /// # Errors
+    ///
+    /// Propagates library loading, BoC serialization, and decoding errors.
+    pub fn open(config: &BlockchainConfig) -> Result<Self, EmulatorError> {
+        Self::new(EmulatorEngine::open_default()?, config)
+    }
+
+    pub(crate) fn engine(&self) -> &Arc<EmulatorEngine> {
+        &self.inner.engine
+    }
+
+    pub(crate) fn handle(&self) -> *mut std::ffi::c_void {
+        self.inner.handle
+    }
+}
+
+impl Drop for EmulatorConfigInner {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            // SAFETY: `handle` was created by `emulator_config_create` from
+            // this engine and is destroyed exactly once here.
+            unsafe { (self.engine.ffi.emulator_config_destroy)(self.handle) };
+        }
+    }
+}
 
 /// The `Hashmap 32 ^Cell` blockchain configuration dictionary.
 ///

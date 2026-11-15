@@ -11,7 +11,7 @@ use crate::{
         ContractCodeError, ContractDefinition, ContractError, ensure_consumed, next_entry as next,
         run_get_method as run,
     },
-    provider::Provider,
+    provider::RunGetMethodExt,
     tvm::{Address, Cell},
 };
 
@@ -32,7 +32,7 @@ pub struct WalletState {
 }
 
 /// Runs `seqno` on a wallet.
-pub async fn get_seqno<P: Provider + ?Sized>(
+pub async fn get_seqno<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<u32, ContractError> {
@@ -44,7 +44,7 @@ pub async fn get_seqno<P: Provider + ?Sized>(
 }
 
 /// Runs `get_subwallet_id` on a wallet.
-pub async fn get_subwallet_id<P: Provider + ?Sized>(
+pub async fn get_subwallet_id<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<u32, ContractError> {
@@ -56,7 +56,7 @@ pub async fn get_subwallet_id<P: Provider + ?Sized>(
 }
 
 /// Runs `get_public_key` on a wallet.
-pub async fn get_public_key<P: Provider + ?Sized>(
+pub async fn get_public_key<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<[u8; 32], ContractError> {
@@ -76,7 +76,7 @@ pub async fn get_public_key<P: Provider + ?Sized>(
 }
 
 /// Runs `get_is_signature_auth_allowed` on a Wallet V5R1.
-pub async fn get_is_signature_auth_allowed<P: Provider + ?Sized>(
+pub async fn get_is_signature_auth_allowed<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<bool, ContractError> {
@@ -88,7 +88,7 @@ pub async fn get_is_signature_auth_allowed<P: Provider + ?Sized>(
 }
 
 /// Reads the common wallet state in one place.
-pub async fn get_wallet_state<P: Provider + ?Sized>(
+pub async fn get_wallet_state<P: RunGetMethodExt + ?Sized>(
     provider: &mut P,
     address: Address,
 ) -> Result<WalletState, ContractError> {
@@ -104,7 +104,7 @@ pub async fn get_wallet_state<P: Provider + ?Sized>(
 
 impl WalletV4R2 {
     /// Runs `seqno`.
-    pub async fn get_seqno<P: Provider + ?Sized>(
+    pub async fn get_seqno<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<u32, ContractError> {
@@ -112,7 +112,7 @@ impl WalletV4R2 {
     }
 
     /// Runs `get_subwallet_id`.
-    pub async fn get_subwallet_id<P: Provider + ?Sized>(
+    pub async fn get_subwallet_id<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<u32, ContractError> {
@@ -120,7 +120,7 @@ impl WalletV4R2 {
     }
 
     /// Runs `get_public_key`.
-    pub async fn get_public_key<P: Provider + ?Sized>(
+    pub async fn get_public_key<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<[u8; 32], ContractError> {
@@ -128,7 +128,7 @@ impl WalletV4R2 {
     }
 
     /// Reads the common wallet state.
-    pub async fn get_wallet_state<P: Provider + ?Sized>(
+    pub async fn get_wallet_state<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<WalletState, ContractError> {
@@ -138,7 +138,7 @@ impl WalletV4R2 {
 
 impl WalletV5R1 {
     /// Runs `seqno`.
-    pub async fn get_seqno<P: Provider + ?Sized>(
+    pub async fn get_seqno<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<u32, ContractError> {
@@ -146,7 +146,7 @@ impl WalletV5R1 {
     }
 
     /// Runs `get_subwallet_id`.
-    pub async fn get_subwallet_id<P: Provider + ?Sized>(
+    pub async fn get_subwallet_id<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<u32, ContractError> {
@@ -154,7 +154,7 @@ impl WalletV5R1 {
     }
 
     /// Runs `get_public_key`.
-    pub async fn get_public_key<P: Provider + ?Sized>(
+    pub async fn get_public_key<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<[u8; 32], ContractError> {
@@ -162,7 +162,7 @@ impl WalletV5R1 {
     }
 
     /// Runs `get_is_signature_auth_allowed`.
-    pub async fn get_is_signature_auth_allowed<P: Provider + ?Sized>(
+    pub async fn get_is_signature_auth_allowed<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<bool, ContractError> {
@@ -170,7 +170,7 @@ impl WalletV5R1 {
     }
 
     /// Reads the common wallet state.
-    pub async fn get_wallet_state<P: Provider + ?Sized>(
+    pub async fn get_wallet_state<P: RunGetMethodExt + ?Sized>(
         &self,
         provider: &mut P,
     ) -> Result<WalletState, ContractError> {

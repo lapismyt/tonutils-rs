@@ -21,6 +21,8 @@ pub(crate) type TransactionEmulatorSetIgnoreChksig =
     unsafe extern "C" fn(*mut c_void, bool) -> bool;
 pub(crate) type TransactionEmulatorSetConfig =
     unsafe extern "C" fn(*mut c_void, *const c_char) -> bool;
+pub(crate) type TransactionEmulatorSetConfigObject =
+    unsafe extern "C" fn(*mut c_void, *mut c_void) -> bool;
 pub(crate) type TransactionEmulatorSetLibs =
     unsafe extern "C" fn(*mut c_void, *const c_char) -> bool;
 pub(crate) type TransactionEmulatorSetDebugEnabled =
@@ -48,8 +50,13 @@ pub(crate) type TvmEmulatorSetExtraCurrencies =
     unsafe extern "C" fn(*mut c_void, *const c_char) -> bool;
 pub(crate) type TvmEmulatorSetPrevBlocksInfo =
     unsafe extern "C" fn(*mut c_void, *const c_char) -> bool;
+pub(crate) type TvmEmulatorSetConfigObject = unsafe extern "C" fn(*mut c_void, *mut c_void) -> bool;
 pub(crate) type TvmEmulatorSetGasLimit = unsafe extern "C" fn(*mut c_void, i64) -> bool;
 pub(crate) type TvmEmulatorSetDebugEnabled = unsafe extern "C" fn(*mut c_void, bool) -> bool;
+pub(crate) type TvmEmulatorEmulateRunMethod =
+    unsafe extern "C" fn(u32, *const c_char, i64) -> *const c_char;
+pub(crate) type TvmEmulatorEmulateRunMethodDetailed =
+    unsafe extern "C" fn(u32, *const c_char, i64) -> *mut c_void;
 pub(crate) type TvmEmulatorRunGetMethod =
     unsafe extern "C" fn(*mut c_void, c_int, *const c_char) -> *const c_char;
 pub(crate) type TvmEmulatorSendExternalMessage =
@@ -57,6 +64,9 @@ pub(crate) type TvmEmulatorSendExternalMessage =
 pub(crate) type TvmEmulatorSendInternalMessage =
     unsafe extern "C" fn(*mut c_void, *const c_char, u64) -> *const c_char;
 pub(crate) type TvmEmulatorDestroy = unsafe extern "C" fn(*mut c_void);
+pub(crate) type RunMethodDetailedResultDestroy = unsafe extern "C" fn(*mut c_void);
+pub(crate) type EmulatorConfigCreate = unsafe extern "C" fn(*const c_char) -> *mut c_void;
+pub(crate) type EmulatorConfigDestroy = unsafe extern "C" fn(*mut c_void);
 pub(crate) type StringDestroy = unsafe extern "C" fn(*const c_char);
 pub(crate) type EmulatorVersion = unsafe extern "C" fn() -> *const c_char;
 
@@ -69,6 +79,7 @@ pub(crate) struct EmulatorFfi {
     pub(crate) transaction_emulator_set_rand_seed: TransactionEmulatorSetRandSeed,
     pub(crate) transaction_emulator_set_ignore_chksig: TransactionEmulatorSetIgnoreChksig,
     pub(crate) transaction_emulator_set_config: TransactionEmulatorSetConfig,
+    pub(crate) transaction_emulator_set_config_object: TransactionEmulatorSetConfigObject,
     pub(crate) transaction_emulator_set_libs: TransactionEmulatorSetLibs,
     pub(crate) transaction_emulator_set_debug_enabled: TransactionEmulatorSetDebugEnabled,
     pub(crate) transaction_emulator_set_prev_blocks_info: TransactionEmulatorSetPrevBlocksInfo,
@@ -82,12 +93,18 @@ pub(crate) struct EmulatorFfi {
     pub(crate) tvm_emulator_set_c7: TvmEmulatorSetC7,
     pub(crate) tvm_emulator_set_extra_currencies: TvmEmulatorSetExtraCurrencies,
     pub(crate) tvm_emulator_set_prev_blocks_info: TvmEmulatorSetPrevBlocksInfo,
+    pub(crate) tvm_emulator_set_config_object: TvmEmulatorSetConfigObject,
     pub(crate) tvm_emulator_set_gas_limit: TvmEmulatorSetGasLimit,
     pub(crate) tvm_emulator_set_debug_enabled: TvmEmulatorSetDebugEnabled,
+    pub(crate) tvm_emulator_emulate_run_method: TvmEmulatorEmulateRunMethod,
+    pub(crate) tvm_emulator_emulate_run_method_detailed: TvmEmulatorEmulateRunMethodDetailed,
+    pub(crate) run_method_detailed_result_destroy: RunMethodDetailedResultDestroy,
     pub(crate) tvm_emulator_run_get_method: TvmEmulatorRunGetMethod,
     pub(crate) tvm_emulator_send_external_message: TvmEmulatorSendExternalMessage,
     pub(crate) tvm_emulator_send_internal_message: TvmEmulatorSendInternalMessage,
     pub(crate) tvm_emulator_destroy: TvmEmulatorDestroy,
+    pub(crate) emulator_config_create: EmulatorConfigCreate,
+    pub(crate) emulator_config_destroy: EmulatorConfigDestroy,
     pub(crate) string_destroy: StringDestroy,
     pub(crate) emulator_version: EmulatorVersion,
 }
@@ -150,6 +167,11 @@ impl EmulatorFfi {
                 "transaction_emulator_set_config",
                 TransactionEmulatorSetConfig
             ),
+            transaction_emulator_set_config_object: load_symbol!(
+                library,
+                "transaction_emulator_set_config_object",
+                TransactionEmulatorSetConfigObject
+            ),
             transaction_emulator_set_libs: load_symbol!(
                 library,
                 "transaction_emulator_set_libs",
@@ -202,6 +224,11 @@ impl EmulatorFfi {
                 "tvm_emulator_set_prev_blocks_info",
                 TvmEmulatorSetPrevBlocksInfo
             ),
+            tvm_emulator_set_config_object: load_symbol!(
+                library,
+                "tvm_emulator_set_config_object",
+                TvmEmulatorSetConfigObject
+            ),
             tvm_emulator_set_gas_limit: load_symbol!(
                 library,
                 "tvm_emulator_set_gas_limit",
@@ -211,6 +238,21 @@ impl EmulatorFfi {
                 library,
                 "tvm_emulator_set_debug_enabled",
                 TvmEmulatorSetDebugEnabled
+            ),
+            tvm_emulator_emulate_run_method: load_symbol!(
+                library,
+                "tvm_emulator_emulate_run_method",
+                TvmEmulatorEmulateRunMethod
+            ),
+            tvm_emulator_emulate_run_method_detailed: load_symbol!(
+                library,
+                "tvm_emulator_emulate_run_method_detailed",
+                TvmEmulatorEmulateRunMethodDetailed
+            ),
+            run_method_detailed_result_destroy: load_symbol!(
+                library,
+                "run_method_detailed_result_destroy",
+                RunMethodDetailedResultDestroy
             ),
             tvm_emulator_run_get_method: load_symbol!(
                 library,
@@ -228,6 +270,16 @@ impl EmulatorFfi {
                 TvmEmulatorSendInternalMessage
             ),
             tvm_emulator_destroy: load_symbol!(library, "tvm_emulator_destroy", TvmEmulatorDestroy),
+            emulator_config_create: load_symbol!(
+                library,
+                "emulator_config_create",
+                EmulatorConfigCreate
+            ),
+            emulator_config_destroy: load_symbol!(
+                library,
+                "emulator_config_destroy",
+                EmulatorConfigDestroy
+            ),
             string_destroy: load_symbol!(library, "string_destroy", StringDestroy),
             emulator_version: load_symbol!(library, "emulator_version", EmulatorVersion),
             _library: library,
