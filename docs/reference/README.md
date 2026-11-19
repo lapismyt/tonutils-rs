@@ -173,8 +173,6 @@ their serialization vectors in the same change.
 
 Network and filesystem work stays on Tokio on every normal async path:
 
-- `QuicServer::bind` and `QuicSession::connect` bind through
-  `tokio::net::UdpSocket` before handing the socket to Quinn.
 - The UDP demultiplexer heartbeat reads `/proc/net/udp` with
   `tokio::fs::read_to_string` on Linux.
 - Capture records are formatted on the receive path but written by a dedicated
@@ -276,7 +274,7 @@ network, an empty response, or no public payload is a failure.
 Check each standalone feature surface:
 
 ```bash
-for feature in adnl tl tvm tlb network-config metadata liteclient contracts wallet crc serde emulator; do
+for feature in adnl tl tvm tlb network-config metadata liteclient provider contracts jetton nft wallet crc serde emulator; do
   cargo check -p tonutils --no-default-features --features "$feature"
 done
 ```

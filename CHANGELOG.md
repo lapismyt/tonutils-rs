@@ -7,7 +7,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-Planned as `2.1.0`. This section describes the net changes since `2.0.0`.
+## [2.1.0] - 2026-11-19
+
+This release describes the net changes since `2.0.0`.
 
 ### Added
 
@@ -54,7 +56,8 @@ Planned as `2.1.0`. This section describes the net changes since `2.0.0`.
 
 - Relicensed the workspace under `MIT OR Apache-2.0`; replaced the single
   `LICENSE` file with `LICENSE-MIT` and `LICENSE-APACHE`.
-- Bumped the workspace to `2.1.0`.
+- Bumped the workspace to `2.1.0` and the workspace dependency `libloading`
+  from 0.8 to 0.9.
 - TEP-64 content equality now compares decoded content instead of the preserved
   raw cell, because the same URI is stored with a prefix in some editions and
   without one in others.
@@ -188,7 +191,8 @@ This release describes the net changes since `1.1.0`.
 - Made `tonutils-tlb-derive` publishable and versioned the root crate's optional
   path dependency for crates.io packaging.
 
-[Unreleased]: https://github.com/lapismyt/tonutils-rs/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/lapismyt/tonutils-rs/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/lapismyt/tonutils-rs/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/lapismyt/tonutils-rs/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/lapismyt/tonutils-rs/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/lapismyt/tonutils-rs/releases/tag/v1.0.0
