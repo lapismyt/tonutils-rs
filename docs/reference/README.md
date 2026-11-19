@@ -276,7 +276,7 @@ network, an empty response, or no public payload is a failure.
 Check each standalone feature surface:
 
 ```bash
-for feature in adnl tl tvm tlb network-config metadata liteclient contracts wallet crc serde emulator; do
+for feature in adnl tl tvm tlb network-config metadata liteclient provider contracts jetton nft wallet crc serde emulator; do
   cargo check -p tonutils --no-default-features --features "$feature"
 done
 ```

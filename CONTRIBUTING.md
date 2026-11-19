@@ -49,7 +49,7 @@ cargo run -p tonutils-schema-gen -- check
 Check the individual public features when changing feature gates, imports, error types:
 
 ```bash
-for feature in adnl tl tvm tlb network-config metadata liteclient contracts wallet crc serde; do
+for feature in adnl tl tvm tlb network-config metadata liteclient provider contracts jetton nft wallet crc serde emulator; do
   cargo check -p tonutils --no-default-features --features "$feature"
 done
 ```
