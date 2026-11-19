@@ -3,14 +3,12 @@
 [![CI](https://github.com/lapismyt/tonutils-rs/actions/workflows/live-tests.yml/badge.svg)](https://github.com/lapismyt/tonutils-rs/actions/workflows/live-tests.yml)
 [![crates.io](https://img.shields.io/crates/v/tonutils.svg)](https://crates.io/crates/tonutils)
 [![codecov](https://codecov.io/gh/lapismyt/tonutils-rs/branch/main/graph/badge.svg)](https://codecov.io/gh/lapismyt/tonutils-rs)
+[![tg channel](https://img.shields.io/badge/channel-tonutils__rs-blue?logo=telegram)](https://t.me/tonutils_rs)
 
 > [!NOTE]
-> Unfortunately I can't dedicate much time to this project, so most of the code is AI-generated.
+> Unfortunately I can't dedicate much time to this project, so most of the code is AI-generated. You can [help the project](#Contributing) if you want it to be better.
 
-`tonutils` is a pure-Rust SDK for The Open Network (TON). It implements TON
-cells, Bag of Cells (BoC), TL-B structures, TL/LiteAPI wire types, ADNL,
-wallets, and a direct liteserver client without depending on
-a third-party TON SDK or a runtime native library.
+`tonutils` is a pure-Rust SDK for The Open Network (TON). It implements Bag of Cells (BoC), TL-B structures, TVM types, contract wrappers (wallets, Jetton, NFTs), and multiple providers including direct liteserver client via ADNL.
 
 Features are opt-in and the default feature set is empty. Enable only the
 layers your application uses.
@@ -105,39 +103,6 @@ It is intentionally not a proof that a liteserver answered honestly.
 | `provider` | Capability traits for liteservers, TonAPI, Toncenter v2/v3, and their HTTP/lite adapters | Yes |
 | `contracts` | Contract wrapper instrumentation (`ContractDefinition`, typed data, offline `StateInit`/address, deploy requests), provider-neutral reads, and get-method stack helpers | Yes for reads |
 | `serde` | Serde support for enabled public types that expose it, currently ADNL public keys | No |
-
-The `emulator` feature is the only module that needs a native library at
-runtime. It loads `libemulator` with `libloading` and never builds C++ during
-`cargo build`; set `TONUTILS_EMULATOR_LIB` or pass an explicit path to
-`EmulatorEngine::open`. Emulator inputs and outputs use the standard
-`tvm::VmStack` codec. The optional `emulator-download` feature fetches a released
-shared library during `cargo build` (pin with `TONUTILS_EMULATOR_RELEASE`) and
-embeds its path for `EmulatorEngine::open_default`. Upstream publishes only
-shared libraries, so this does not statically link `libemulator`. See
-[docs/reference/emulator.md](docs/reference/emulator.md).
-
-The `jetton` and `nft` features provide edition-specific wrappers because the
-reference contracts differ in storage and get-method shapes. Every wrapper
-supports embedded default code, custom code, offline address calculation,
-deploy requests, and typed get-methods; message bodies are plain TL-B values.
-Wallet V4R2 and V5R1 can attach a deploy `StateInit` to an outgoing message, so
-one signed external message can deploy and fund a contract. See
-[docs/reference/jetton-nft.md](docs/reference/jetton-nft.md) for layouts and
-address rules.
-
-The `provider` feature exposes separate `GetMasterchainInfoExt`, `GetAccountStateExt`,
-`RunGetMethodExt`, `SendExternalMessageExt`, and `GetTransactionsExt` traits. HTTP
-providers trust the remote service and do not verify Merkle proofs; liteserver
-adapters also return responses without validating proof roots. The CLI selects a
-provider with `--provider lite|tonapi|toncenter-v2|toncenter-v3`, and accepts
-`--provider-endpoint`, `--provider-api-key`, and `--provider-timeout` for
-self-hosted instances. Raw `liteclient`, `balancer`, and `contract` commands
-require `--provider lite`.
-
-`tl` owns the snapshots and shared primitives, not every TON protocol schema.
-Handwritten ADNL and LiteAPI wire types live in `adnl::tl` and
-`liteclient::tl` respectively. The ownership map and wire
-invariants are documented in [docs/reference/README.md](docs/reference/README.md).
 
 ## Workspace
 
