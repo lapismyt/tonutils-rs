@@ -100,7 +100,7 @@ It is intentionally not a proof that a liteserver answered honestly.
 | `jetton` | TEP-74 jetton master and wallet wrappers, message bodies, get-methods, and embedded default code | Only for get-methods |
 | `nft` | TEP-62/TEP-85 collection and item wrappers, message bodies, get-methods, and embedded default code | Only for get-methods |
 | `network-config` | Global network configuration parsing and liteserver selection | No |
-| `adnl` | ADNL identity, encrypted UDP transport, QUIC transport, and ADNL TL wire types | Yes for transport |
+| `adnl` | ADNL identity, encrypted UDP transport, and ADNL TL wire types | Yes for transport |
 | `liteclient` | LiteAPI types, direct client, balancer, and typed BoC decode helpers | Yes |
 | `provider` | Capability traits for liteservers, TonAPI, Toncenter v2/v3, and their HTTP/lite adapters | Yes |
 | `contracts` | Contract wrapper instrumentation (`ContractDefinition`, typed data, offline `StateInit`/address, deploy requests), provider-neutral reads, and get-method stack helpers | Yes for reads |
@@ -148,6 +148,33 @@ invariants are documented in [docs/reference/README.md](docs/reference/README.md
 
 Use the crate's rustdoc for the public API. Repository-level development and
 verification instructions are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Roadmap
+
+The 2.x series is a ground-up rewrite. Future work focuses on
+backwards-compatible improvements:
+
+- Polishing the public API and implementing more standard-library traits.
+- Adding contract wrappers, including Telegram Wallet.
+- Adding more blockchain providers.
+- Long-term work: WebAssembly (WASM) support and overlay communication.
+
+## Contributing
+
+Issues and pull requests are welcome:
+
+- Open an issue to request an enhancement or report a bug.
+- Open a pull request to fix or add something.
+
+You can also support development by sending GRAM or USDT on TON to:
+
+```text
+UQAoG1NPcVB66n8HeQq7QiRVWXJZ07Q2Z536blaYROGgD3Cw
+```
+
+For every $2 sent, at least one hour will be dedicated to the project through
+hands-on, manual development. Add a transfer comment to specify which feature
+or area should be prioritized.
 
 ## License
 

@@ -20,7 +20,7 @@ workspace = true
 default = []
 adnl = ["tl", "dep:aes", "dep:ctr", "dep:curve25519-dalek", "dep:derivative",
         "dep:ed25519-dalek", "dep:futures", "dep:hex", "dep:log", "dep:pin-project",
-        "dep:quinn", "dep:rand", "dep:rustls", "dep:rustls-pki-types", "dep:sha2",
+        "dep:rand", "dep:rustls", "dep:rustls-pki-types", "dep:sha2",
         "dep:subtle", "dep:thiserror", "dep:tl-proto", "dep:tokio", "dep:tokio-util"]
 tl = ["dep:derivative", "dep:hex", "dep:rand", "dep:thiserror", "dep:tl-proto"]
 tvm = ["crc", "dep:base64", "dep:hex", "dep:num-bigint", "dep:sha2", "dep:thiserror"]
@@ -51,7 +51,6 @@ aes = { workspace = true, optional = true }
 derivative = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 subtle = { workspace = true, optional = true }
-quinn = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }

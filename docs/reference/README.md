@@ -173,8 +173,6 @@ their serialization vectors in the same change.
 
 Network and filesystem work stays on Tokio on every normal async path:
 
-- `QuicServer::bind` and `QuicSession::connect` bind through
-  `tokio::net::UdpSocket` before handing the socket to Quinn.
 - The UDP demultiplexer heartbeat reads `/proc/net/udp` with
   `tokio::fs::read_to_string` on Linux.
 - Capture records are formatted on the receive path but written by a dedicated
