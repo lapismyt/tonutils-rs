@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-11-19
+
+This release describes the net changes since `2.1.0`.
+
+### Changed
+- Cleaned up README: removed some niche info that won't be useful for most users, added Telegram channel link, updated description in the header.
+
 ## [2.1.0] - 2026-11-19
 
 This release describes the net changes since `2.0.0`.
