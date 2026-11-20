@@ -1,63 +1,48 @@
 # Contributing
 
-`tonutils-rs` is a pure-Rust SDK for The Open Network
+`tonutils-rs` is a pure-Rust SDK for The Open Network (TON).
 
-## Documentation Layout
+## Setup
 
-The maintained documentation surface is intentionally small:
-
-- `README.md` for the project overview, quickstart, feature matrix.
-- Rustdoc for the public API and item-level invariants.
-- `docs/reference/` for maintainer notes, protocol ownership, wire formats,
-  error boundaries, and schema workflow.
-
-`TODO.md` tracks deferred work and known gaps. Do not add a separate user-guide
-site or recreate removed guide pages.
-
-## Toolchain
-
-The workspace targets Rust 1.85 or newer and uses the stable toolchain:
+The workspace targets Rust 1.85 or newer with the stable toolchain. Install the
+local tooling with [`cargo-binstall`](https://github.com/cargo-bins/cargo-binstall):
 
 ```bash
-rustup toolchain install stable
-rustup default stable
-rustc --version
-cargo --version
+cargo binstall just cargo-deny prek --locked
 ```
 
-All code, comments, tests, documentation, and commit messages must be in
-English.
+Without `cargo-binstall`, use `cargo install --locked just cargo-deny prek`.
 
-## Design Constraints
-
-- Prefer explicit imports and readable code. Do not add function-local `use`
-  statements, glob imports, or `use super::*`.
-- Add focused tests for protocol, wire-format, serialization, and error-boundary
-  changes.
-
-## Verification
-
-Run formatting, linting, tests, schema validation:
+Install the Git hooks once per clone:
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-cargo run -p tonutils-schema-gen -- check
+prek install --prepare-hooks
 ```
 
-Check the individual public features when changing feature gates, imports, error types:
+The hooks run formatting, clippy, and `cargo-deny` before each commit.
+
+## Checks
 
 ```bash
-for feature in adnl tl tvm tlb network-config metadata liteclient provider contracts jetton nft wallet crc serde emulator; do
-  cargo check -p tonutils --no-default-features --features "$feature"
-done
+just ci
 ```
 
-## Branches, Commits, And Versions
+`just ci` runs the same gates as CI. Individual recipes are available:
 
-Use a focused topic branch for each change. Use Conventional Commits for pull requests names, for
-example:
+```bash
+just fmt        # format
+just fmt-check  # check formatting
+just check      # clippy, workspace, all features
+just check-cli  # clippy for the CLI
+just test       # workspace tests
+just schema     # validate checked-in schema metadata
+just deny       # licenses, advisories, bans, sources
+```
+
+## Branches And Commits
+
+Use a focused topic branch for each change. Use Conventional Commits for pull
+request titles, for example:
 
 ```text
 feat: add wallet transfer helper
@@ -65,5 +50,15 @@ fix: reject invalid cell descriptors
 docs: clarify LiteClient proof limits
 ```
 
-You can use any commit names inside of pull request (branch). Call out feature-flag,
-protocol, trust-model, and live-network impact in the pull request.
+Call out feature-flag, protocol, trust-model, and live-network impact in the
+pull request.
+
+## Documentation
+
+- `README.md` for the project overview and a minimal example.
+- Rustdoc for the public API and item-level invariants.
+- `docs/reference/` for maintainer notes on protocols, wire formats, and error
+  boundaries.
+
+All code, comments, tests, documentation, and commit messages must be in
+English.

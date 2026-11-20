@@ -2223,7 +2223,7 @@ dependencies = [
 
 [[package]]
 name = "tonutils"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "aes",
  "anyhow",
@@ -2265,7 +2265,7 @@ dependencies = [
 
 [[package]]
 name = "tonutils-cli"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -2282,7 +2282,7 @@ dependencies = [
 
 [[package]]
 name = "tonutils-macros"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2291,7 +2291,7 @@ dependencies = [
 
 [[package]]
 name = "tonutils-schema-gen"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "clap",
  "sha2 0.10.9",

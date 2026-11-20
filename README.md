@@ -6,130 +6,103 @@
 [![tg channel](https://img.shields.io/badge/channel-tonutils__rs-blue?logo=telegram)](https://t.me/tonutils_rs)
 
 > [!NOTE]
-> Unfortunately I can't dedicate much time to this project, so most of the code is AI-generated. You can [help the project](#Contributing) if you want it to be better.
+> Unfortunately I can't dedicate much time to this project, so most of the code is AI-generated. You can [help the project](#contributing) if you want it to be better.
 
-`tonutils` is a pure-Rust SDK for The Open Network (TON). It implements Bag of Cells (BoC), TL-B structures, TVM types, contract wrappers (wallets, Jetton, NFTs), and multiple providers including direct liteserver client via ADNL.
+`tonutils` is a pure-Rust SDK for The Open Network (TON): cells and TL-B,
+wallets, jettons and NFTs, a direct liteserver client, and HTTP providers.
 
-Features are opt-in and the default feature set is empty. Enable only the
-layers your application uses.
-
-## Quickstart
-
-For offline cells, TL-B structures, and wallet construction:
+## Install
 
 ```toml
 [dependencies]
-tonutils = { version = "2.1", features = ["tvm", "tlb", "wallet"] }
+tonutils = { version = "2.1", features = ["wallet", "provider", "jetton"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-For a direct liteserver client, add the network layers you need:
+## Wallet example
 
-```toml
-[dependencies]
-tonutils = { version = "2.1", features = ["liteclient"] }
-```
-
-For provider-neutral reads across liteservers, TonAPI, and Toncenter:
-
-```toml
-[dependencies]
-tonutils = { version = "2.1", features = ["provider"] }
-```
+Read the balance and latest transactions, then send TON or jettons:
 
 ```rust
-use tonutils::provider::{GetMasterchainInfoExt, TonApi};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-async fn latest_seqno() -> Result<i32, Box<dyn std::error::Error>> {
+use tonutils::{
+    jetton::{JettonTransfer, get_wallet_address},
+    provider::{GetAccountStateExt, GetTransactionsExt, SendExternalMessageExt, TonApi},
+    tvm::Address,
+    wallet::{TonMnemonic, WalletOutgoingMessage, WalletV4R2, get_seqno, wallet_v4r2_code},
+};
+
+const MNEMONIC: &str = "word1 word2 ... word24";
+const JETTON_MASTER: &str = "EQ...";
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mnemonic = TonMnemonic::from_phrase(MNEMONIC, None)?;
+    let wallet = WalletV4R2::default(
+        mnemonic.signing_key().verifying_key().to_bytes(),
+        wallet_v4r2_code()?,
+        0,
+    );
+    let address = wallet.address()?;
     let mut provider = TonApi::mainnet();
-    let info = provider.get_masterchain_info().await?;
-    Ok(info.last.seqno)
+
+    // Balance in nanotons.
+    let state = provider.get_account_state(address.clone(), None).await?;
+    println!("balance: {} nanoTON", state.balance);
+
+    // Latest transactions.
+    if let (Some(lt), Some(hash)) = (state.last_transaction_lt, state.last_transaction_hash.clone()) {
+        let history = provider.get_transactions(10, address.clone(), lt, hash).await?;
+        for tx in history.transactions {
+            println!("lt={} utime={:?}", tx.lt, tx.utime);
+        }
+    }
+
+    let destination = Address::parse("UQ...")?;
+
+    // Send 0.01 TON.
+    let ton_message = WalletOutgoingMessage::new(destination.clone(), 10_000_000);
+    send(&mut provider, &wallet, &mnemonic, vec![ton_message]).await?;
+
+    // Send 1 jetton (amounts use the jetton's base units).
+    let jetton_master = Address::parse(JETTON_MASTER)?;
+    let jetton_wallet = get_wallet_address(&mut provider, jetton_master, &address).await?;
+    let body = JettonTransfer::new(destination.clone(), 1_000_000, address.clone()).to_cell()?;
+    let jetton_message = WalletOutgoingMessage::new(jetton_wallet, 50_000_000).with_body(body);
+    send(&mut provider, &wallet, &mnemonic, vec![jetton_message]).await?;
+
+    Ok(())
 }
-```
 
-### Offline Cell Example
-
-```rust
-use tonutils::tvm::{Builder, deserialize_boc, serialize_boc};
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut builder = Builder::new();
-    builder.store_u32(0xdead_beef)?;
-
-    let root = builder.build()?;
-    let boc = serialize_boc(&root, true)?;
-    let decoded = deserialize_boc(&boc)?;
-
-    assert_eq!(root.hash(), decoded.hash());
-    println!("encoded {} bytes", boc.len());
+async fn send(
+    provider: &mut TonApi,
+    wallet: &WalletV4R2,
+    mnemonic: &TonMnemonic,
+    messages: Vec<WalletOutgoingMessage>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let seqno = get_seqno(provider, wallet.address()?).await?;
+    let valid_until = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() as u32 + 60;
+    let boc = wallet.build_external_message_boc_outgoing(
+        seqno,
+        valid_until,
+        messages,
+        mnemonic.signing_key(),
+        false,
+    )?;
+    provider.send_external_message_boc(boc).await?;
     Ok(())
 }
 ```
 
-### Live Read Shape
-
-```rust
-use tonutils::{liteclient::LiteClient, network_config::ConfigGlobal};
-
-async fn latest_masterchain_seqno(
-    config_json: &str,
-) -> Result<i32, Box<dyn std::error::Error>> {
-    let config: ConfigGlobal = config_json.parse()?;
-    let mut client = LiteClient::connect_first(&config).await?;
-    let info = client.get_masterchain_info().await?;
-    Ok(info.last.seqno)
-}
-```
-
-The live example requires a Tokio runtime and application-selected configuration.
-It is intentionally not a proof that a liteserver answered honestly.
-
-## Features
-
-| Feature | Provides | Requires live network |
-| --- | --- | --- |
-| `tvm` | Cells, builders, slices, BoC, addresses, dictionaries, TVM stacks, and `TvmError` | No |
-| `tl` | Shared TL primitives, TL schema snapshots, generated metadata, and schema helpers | No |
-| `tlb` | Typed TL-B blocks, messages, transactions, accounts, and proof structures | No |
-| `wallet` | TON mnemonic handling, Ed25519 signing, Wallet V4R2/V5R1 addresses, and external message BoCs | No |
-| `crc` | CRC16, CRC32, and CRC32C helpers used by TON identifiers and BoC formats | No |
-| `emulator` | Runtime-loaded `libemulator` wrappers for transactions, tick/tock, get-methods, and message execution | No, but requires `libemulator` at runtime |
-| `emulator-download` | `emulator` plus a build-time download of the latest upstream `libemulator` shared library for the target platform | Only during `cargo build` |
-| `metadata` | TEP-64 on-chain and off-chain content parsing and encoding | No |
-| `jetton` | TEP-74 jetton master and wallet wrappers, message bodies, get-methods, and embedded default code | Only for get-methods |
-| `nft` | TEP-62/TEP-85 collection and item wrappers, message bodies, get-methods, and embedded default code | Only for get-methods |
-| `network-config` | Global network configuration parsing and liteserver selection | No |
-| `adnl` | ADNL identity, encrypted UDP transport, and ADNL TL wire types | Yes for transport |
-| `liteclient` | LiteAPI types, direct client, balancer, and typed BoC decode helpers | Yes |
-| `provider` | Capability traits for liteservers, TonAPI, Toncenter v2/v3, and their HTTP/lite adapters | Yes |
-| `contracts` | Contract wrapper instrumentation (`ContractDefinition`, typed data, offline `StateInit`/address, deploy requests), provider-neutral reads, and get-method stack helpers | Yes for reads |
-| `serde` | Serde support for enabled public types that expose it, currently ADNL public keys | No |
-
-## Workspace
-
-- `tonutils` is the library.
-- `tonutils-cli` provides the `tonutils` command-line binary.
-- `tonutils-macros` provides TL-B derive macros.
-- `tonutils-schema-gen` validates checked-in schema metadata and inventory.
-
-Use the crate's rustdoc for the public API. Repository-level development and
-verification instructions are in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Roadmap
-
-The 2.x series is a ground-up rewrite. Future work focuses on
-backwards-compatible improvements:
-
-- Polishing the public API and implementing more standard-library traits.
-- Adding contract wrappers, including Telegram Wallet.
-- Adding more blockchain providers.
-- Long-term work: WebAssembly (WASM) support and overlay communication.
+The example is illustrative: it uses mainnet, has no retry logic, and does not
+prove that a liteserver or HTTP provider answered honestly. API documentation
+lives on [docs.rs](https://docs.rs/tonutils).
 
 ## Contributing
 
-Issues and pull requests are welcome:
-
-- Open an issue to request an enhancement or report a bug.
-- Open a pull request to fix or add something.
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for
+local setup and checks.
 
 You can also support development by sending GRAM or USDT on TON to:
 
