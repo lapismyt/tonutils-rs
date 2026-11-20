@@ -34,20 +34,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Check formatting
-        run: cargo fmt --check
+      - name: Install just
+        uses: taiki-e/install-action@just
 
-      - name: Check workspace feature build
-        run: cargo check --workspace --all-features
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@cargo-deny
 
-      - name: Check CLI with its declared features
-        run: cargo check -p tonutils-cli
-
-      - name: Test workspace feature build
-        run: cargo test --workspace --all-features
-
-      - name: Lint workspace feature build
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Run CI checks
+        run: just ci
 
       - name: Reject retired full feature commands
         run: |

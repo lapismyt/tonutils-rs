@@ -8,7 +8,7 @@
 - **Idiomatic Rust:** Standard patterns > matching other SDKs' quirks. Copy existing project style.
 
 ## 2. Rust & Code Standards
-- **Errors:** Use `thiserror` for lib, `anyhow` for bins/tests. 
+- **Errors:** Use `thiserror` for lib, `anyhow` for bins/tests.
 - **Panics:** `.unwrap()`/`.expect()` are allowed ONLY if logically guaranteed to succeed (e.g., parsing known-valid internal data). MUST include a comment explaining *why* it cannot fail.
 - **Unsafe:** Banned unless accompanied by `// SAFETY:` explaining invariants.
 - **Readability >= Performance:** Readable code is easier to optimize. Optimize algorithms first, not syntax. Do not sacrifice readability for micro-optimizations.
