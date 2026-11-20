@@ -12,7 +12,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "2.1.1"
+version = "2.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/lapismyt/tonutils-rs"
@@ -58,8 +58,8 @@ tokio = { version = "1.47", features = ["full", "time"] }
 tokio-tower = "0.6"
 tokio-util = { version = "0.7", features = ["codec"] }
 tower = { version = "0.5", features = ["make", "util"] }
-tonutils = { version = "2.1.1", path = "crates/tonutils" }
-tonutils-macros = { version = "2.1.1", path = "crates/tonutils-macros" }
+tonutils = { version = "2.1.2", path = "crates/tonutils" }
+tonutils-macros = { version = "2.1.2", path = "crates/tonutils-macros" }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

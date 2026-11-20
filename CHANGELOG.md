@@ -7,6 +7,24 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-11-21
+
+This release describes the net changes since `2.1.1`.
+
+### Added
+- Added `deny.toml` for `cargo-deny`, covering advisories, licenses, duplicate
+  dependency versions, wildcard requirements, and registry sources.
+- Added a modular `Justfile` with `fmt`, `check`, `test`, `deny`, and `ci`
+  recipes.
+- Added `prek.toml` for local Git hooks that run file hygiene checks plus the
+  project's `just fmt`, `just check`, and `just deny` recipes.
+
+### Changed
+- CI now runs the shared `just ci` entry point, which also performs
+  `cargo-deny` checks.
+- Shortened `README.md` to a minimal wallet example and trimmed
+  `CONTRIBUTING.md` to the essential local setup and verification commands.
+
 ## [2.1.1] - 2026-11-19
 
 This release describes the net changes since `2.1.0`.
